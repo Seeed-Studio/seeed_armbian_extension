@@ -430,25 +430,83 @@ function pre_umount_final_image__901_create_ota_payload_pkg() {
     # Ensure output directory exists
     mkdir -p "${DEST}/images/"
 
-    # For AB partition OTA, don't include armbian_ota_tools (manager is already installed)
-    # For recovery OTA, include the tools
-    if [[ "${AB_PART_OTA}" != "yes" ]]; then
-        local tools_source_dir="${SRC}/extensions/armbian-ota/armbian_ota_tools"
-        if [[ -d "$tools_source_dir" ]]; then
-            cp -r "$tools_source_dir" "$ota_temp_dir/" || {
-                display_alert "Error: Failed to copy arbian_ota_tools" "$tools_source_dir" "err"
-                rm -rf "$ota_temp_dir"
-                return 1
-            }
-            display_alert "Copied OTA tools" "armbian_ota_tools -> ${ota_package_name}" "info"
-        else
-            display_alert "Warning: armbian_ota_tools directory not found" "$tools_source_dir" "warn"
-        fi
-    else
-        display_alert "AB partition OTA" "Skipping armbian_ota_tools (manager already installed in image)" "info"
+    local manifest_mode="recovery"
+    if [[ "${AB_PART_OTA}" == "yes" ]]; then
+        manifest_mode="ab"
     fi
 
-    # Create version info file for armbian-ota-manager
+    local ota_mode_file="$ota_temp_dir/ota_manifest.env"
+    cat > "$ota_mode_file" << EOF
+OTA_MODE=${manifest_mode}
+BOARD=${BOARD}
+RELEASE=${RELEASE}
+BRANCH=${BRANCH}
+VERSION=${IMAGE_VERSION:-"${REVISION}"}
+KERNEL=${KERNEL_VERSION:-"${IMAGE_INSTALLED_KERNEL_VERSION}"}
+EOF
+
+    # Package OTA runtime tools into payload as a fallback/offline bundle.
+    local ota_ext_dir
+    ota_ext_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+    local runtime_src="${ota_ext_dir}/runtime"
+    local ab_src="${ota_ext_dir}/ab_ota"
+    local recovery_src="${ota_ext_dir}/recovery_ota"
+    local payload_tools_dir="${ota_temp_dir}/ota_tools"
+
+    mkdir -p "${payload_tools_dir}"
+
+    if [[ -d "${runtime_src}" ]]; then
+        mkdir -p "${payload_tools_dir}/runtime"
+        cp -a "${runtime_src}/." "${payload_tools_dir}/runtime/" || {
+            display_alert "OTA payload" "Failed to copy runtime tools into payload" "err"
+            rm -rf "$ota_temp_dir"
+            return 1
+        }
+    else
+        display_alert "OTA payload" "runtime source dir not found: ${runtime_src}" "warn"
+    fi
+
+    if [[ -d "${ab_src}" ]]; then
+        mkdir -p "${payload_tools_dir}/ab_ota"
+        cp -a "${ab_src}/userspace" "${payload_tools_dir}/ab_ota/" 2>/dev/null || true
+        cp -a "${ab_src}/systemd" "${payload_tools_dir}/ab_ota/" 2>/dev/null || true
+    fi
+
+    if [[ -d "${recovery_src}" ]]; then
+        mkdir -p "${payload_tools_dir}/recovery_ota"
+        cp -a "${recovery_src}/armbian-ota-manager" "${payload_tools_dir}/recovery_ota/" 2>/dev/null || true
+        cp -a "${recovery_src}/start_prepare_ota.sh" "${payload_tools_dir}/recovery_ota/" 2>/dev/null || true
+        cp -a "${recovery_src}/initramfs_hooks" "${payload_tools_dir}/recovery_ota/" 2>/dev/null || true
+        cp -a "${recovery_src}/fit" "${payload_tools_dir}/recovery_ota/" 2>/dev/null || true
+    fi
+
+    cat > "${payload_tools_dir}/README_INSTALL.txt" << 'EOF'
+Armbian OTA Runtime Tools
+
+This payload contains OTA runtime scripts for fallback/offline installation.
+
+If firmware was built with OTA enabled:
+- AB firmware (`AB_PART_OTA=yes`) already includes AB OTA runtime/tools.
+- Recovery firmware (`OTA_ENABLE=yes`, no `AB_PART_OTA`) already includes Recovery OTA runtime/tools.
+
+In those cases, you only need to copy the OTA package and run `armbian-ota start --mode=...`.
+
+Typical usage:
+1) If your firmware does not include OTA runtime, copy ota_tools/ to target board.
+2) Install runtime CLI and libraries manually (as root), for example:
+   cp -a runtime/armbian-ota /usr/sbin/armbian-ota
+   chmod +x /usr/sbin/armbian-ota
+   mkdir -p /usr/share/armbian-ota
+   cp -a runtime/common.sh runtime/backend-*.sh /usr/share/armbian-ota/
+   mkdir -p /usr/share/armbian-ota/recovery
+   cp -a recovery_ota /usr/share/armbian-ota/recovery/
+
+3) Trigger OTA:
+   armbian-ota start --mode=ab <ota-package.tar.gz>
+   armbian-ota start --mode=recovery <ota-package.tar.gz>
+EOF
+
+    # Create version info file for compatibility wrapper
     if [[ "${AB_PART_OTA}" == "yes" ]]; then
         local version_file="$ota_temp_dir/version.txt"
         cat > "$version_file" << EOF
@@ -485,11 +543,10 @@ EOF
         echo "- rootfs.tar.gz: Root filesystem image" >> "$manifest_file"
     fi
     if [[ "${AB_PART_OTA}" == "yes" && -f "$ota_temp_dir/version.txt" ]]; then
-        echo "- version.txt: Version information for armbian-ota-manager" >> "$manifest_file"
+        echo "- version.txt: Version information" >> "$manifest_file"
     fi
-    if [[ "${AB_PART_OTA}" != "yes" && -d "${SRC}/extensions/armbian-ota/armbian_ota_tools" ]]; then
-        echo "- arbian_ota_tools/: OTA update tools and utilities" >> "$manifest_file"
-    fi
+    echo "- ota_manifest.env: OTA runtime metadata" >> "$manifest_file"
+    echo "- ota_tools/: OTA runtime scripts and helpers" >> "$manifest_file"
 
     # Create final OTA tar.gz package
     display_alert "Creating final OTA package" "${ota_package_name}" "info"
@@ -532,107 +589,160 @@ EOF
 }
 
 function pre_package_uboot_image__build_fw_env_tool(){
-    
-    if [[ "${AB_PART_OTA}" == "yes" ]]; then
-    
-        local secure_config_dir="${SRC}/extensions/rk_secure-disk-encryption/secure-boot-config"
-        if compgen -G "${secure_config_dir}"/*.patch > /dev/null; then
-            display_alert "A/B partition OTA" "Applying secure boot patches" "info"
-            local patch_applied=0
-            local patch_failed=0
-            for patch_file in "${secure_config_dir}"/*.patch; do
-                [[ -f "${patch_file}" ]] || continue
-                local patch_name
-                patch_name=$(basename "${patch_file}")
-
-                # Check if patch can be applied
-                if git apply --check "${patch_file}" 2>/dev/null; then
-                    if git apply "${patch_file}"; then
-                        patch_applied=$((patch_applied + 1))
-                        display_alert "A/B partition OTA" "Patch applied: ${patch_name}" "debug"
-                    else
-                        patch_failed=$((patch_failed + 1))
-                        display_alert "A/B partition OTA" "Failed to apply patch: ${patch_name}" "err"
-                    fi
-                else
-                    # Fallback to patch(1)
-                    if patch -p1 < "${patch_file}" 2>/dev/null; then
-                        patch_applied=$((patch_applied + 1))
-                    else
-                        patch_failed=$((patch_failed + 1))
-                        display_alert "A/B partition OTA" "Patch application failed (patch): ${patch_name}" "err"
-                    fi
-                fi
-            done
-
-            display_alert "A/B partition OTA" "Patch application completed: Success=${patch_applied} Failed=${patch_failed}" "info"
-        fi
-
-        display_alert "A/B partition OTA" "Building fw_env tool from u-boot source" "info"
-        local RK_SDK_TOOLS="${SRC}/cache/sources/rockchip_sdk_tools"
-        if [[ ! -d "${RK_SDK_TOOLS}" ]]; then
-            display_alert "optee" "rockchip_sdk_tools source directory not found, downloading" "info"
-            fetch_from_repo "${RKBIN_GIT_URL:-"https://github.com/ackPeng/rockchip_sdk_tools.git"}" "rockchip_sdk_tools" "branch:${RKSDK_TOOLS_BRANCH:-"main"}"
-        fi
-        local uboot_src="${SRC}/cache/sources/${BOOTSOURCEDIR}"
-        local prebuilts_source="${RK_SDK_TOOLS}/external/prebuilts"
-        local Prebuilts_toolchain_dir="${uboot_src}/../prebuilts"
-        if [[ ! -d "${Prebuilts_toolchain_dir}" ]]; then
-            cp -rf "${prebuilts_source}" "${Prebuilts_toolchain_dir}" || {
-                display_alert "A/B partition OTA" "Failed to copy prebuilts" "err"
-                return 1
-            }
-        fi
-
-        local rkbin_source="${RK_SDK_TOOLS}/rkbin"
-        local Rkbin_toolchain_dir="${uboot_src}/../rkbin"
-        if [[ ! -d "${Rkbin_toolchain_dir}" ]]; then
-            cp -rf "${rkbin_source}" "${Rkbin_toolchain_dir}" || {
-                display_alert "A/B partition OTA" "Failed to copy rkbin" "err"
-                return 1
-            }
-        fi
-
-        cd "${uboot_src}" || {
-            display_alert "A/B partition OTA" "Failed to enter u-boot source directory" "err"
-            return 1
-        }
-        bash ./make.sh env || {
-            display_alert "A/B partition OTA" "Failed to build fw_env tool" "err"
-            return 1
-        }
-
+    if [[ "${AB_PART_OTA}" != "yes" ]]; then
+        return 0
     fi
+
+    display_alert "A/B partition OTA" "Building fw_env tool from u-boot source" "info"
+
+    local RK_SDK_TOOLS="${SRC}/cache/sources/rockchip_sdk_tools"
+    if [[ ! -d "${RK_SDK_TOOLS}" ]]; then
+        display_alert "A/B partition OTA" "rockchip_sdk_tools missing, fetching" "info"
+        fetch_from_repo "${RKBIN_GIT_URL:-"https://github.com/ackPeng/rockchip_sdk_tools.git"}" "rockchip_sdk_tools" "branch:${RKSDK_TOOLS_BRANCH:-"main"}" || {
+            display_alert "A/B partition OTA" "Failed to fetch rockchip_sdk_tools; AB_PART_OTA requires fw_env build" "err"
+            return 1
+        }
+    fi
+
+    local uboot_src="${SRC}/cache/sources/${BOOTSOURCEDIR}"
+    if [[ ! -d "${uboot_src}" ]]; then
+        display_alert "A/B partition OTA" "u-boot source not found: ${uboot_src}; AB_PART_OTA requires fw_env build" "err"
+        return 1
+    fi
+
+    if [[ ! -f "${uboot_src}/make.sh" ]]; then
+        display_alert "A/B partition OTA" "make.sh not found in u-boot source; AB_PART_OTA requires fw_env build" "err"
+        return 1
+    fi
+
+    local prebuilts_source="${RK_SDK_TOOLS}/other_build_tool_chain/prebuilts"
+    local prebuilts_dest="${uboot_src}/../prebuilts"
+    if [[ -d "${prebuilts_source}" && ! -d "${prebuilts_dest}" ]]; then
+        cp -rf "${prebuilts_source}" "${prebuilts_dest}" || {
+            display_alert "A/B partition OTA" "Failed to copy prebuilts; AB_PART_OTA requires fw_env build" "err"
+            return 1
+        }
+    fi
+
+    local rkbin_source="${RK_SDK_TOOLS}/rkbin"
+    local rkbin_dest="${uboot_src}/../rkbin"
+    if [[ -d "${rkbin_source}" && ! -d "${rkbin_dest}" ]]; then
+        cp -rf "${rkbin_source}" "${rkbin_dest}" || {
+            display_alert "A/B partition OTA" "Failed to copy rkbin; AB_PART_OTA requires fw_env build" "err"
+            return 1
+        }
+    fi
+
+    (
+        cd "${uboot_src}" || exit 1
+        bash ./make.sh env
+    ) || {
+        display_alert "A/B partition OTA" "Failed to run 'bash ./make.sh env'; AB_PART_OTA requires fw_env build" "err"
+        return 1
+    }
+
+    local fw_env_src="${uboot_src}/tools/env/fw_printenv"
+    if [[ ! -f "${fw_env_src}" ]]; then
+        display_alert "A/B partition OTA" "fw_printenv not generated at ${fw_env_src} after make.sh env" "err"
+        return 1
+    fi
+
+    return 0
 }
 
 function pre_umount_final_image__899_install_fw_env_tool() {
-    if [[ "${AB_PART_OTA}" == "yes" ]]; then
+    if [[ "${AB_PART_OTA}" != "yes" ]]; then
+        return 0
+    fi
 
-        display_alert "A/B partition OTA" "Installing fw_env tool into rootfs" "info"
-        local root_dir="${MOUNT}"
-        local uboot_src="${SRC}/cache/sources/${BOOTSOURCEDIR}"
-        local fw_env_src="${uboot_src}/tools/env/fw_printenv"
-        local fw_printenv="${root_dir}/usr/bin/fw_printenv"
-        local fw_setenv="${root_dir}/usr/bin/fw_setenv"
-        local fw_env_config="${root_dir}/etc/fw_env.config"
-        if [[ -f "${fw_env_src}" ]]; then
-            cp "${fw_env_src}" "${fw_printenv}" || {
-                display_alert "A/B partition OTA" "Failed to copy fw_printenv tool" "err"
+    display_alert "A/B partition OTA" "Installing fw_env tools into rootfs" "info"
+    local root_dir="${MOUNT}"
+    local uboot_src="${SRC}/cache/sources/${BOOTSOURCEDIR}"
+    local fw_env_src="${uboot_src}/tools/env/fw_printenv"
+    local fw_printenv="${root_dir}/usr/bin/fw_printenv"
+    local fw_setenv="${root_dir}/usr/bin/fw_setenv"
+    local fw_env_config="${root_dir}/etc/fw_env.config"
+    local fw_env_device="${AB_FW_ENV_DEVICE:-/dev/mmcblk1}"
+    local fw_env_offset="${AB_FW_ENV_OFFSET:-0x3f8000}"
+    local fw_env_size="${AB_FW_ENV_SIZE:-0x8000}"
+
+    if [[ ! -f "${fw_env_src}" ]]; then
+        display_alert "A/B partition OTA" "fw_printenv binary not found: ${fw_env_src}; AB_PART_OTA requires this binary" "err"
+        return 1
+    fi
+
+    mkdir -p "${root_dir}/usr/bin" "${root_dir}/etc"
+
+    cp "${fw_env_src}" "${fw_printenv}" || {
+        display_alert "A/B partition OTA" "Failed to install fw_printenv" "err"
+        return 1
+    }
+    cp "${fw_env_src}" "${fw_setenv}" || {
+        display_alert "A/B partition OTA" "Failed to install fw_setenv" "err"
+        return 1
+    }
+    chmod +x "${fw_printenv}" "${fw_setenv}"
+    echo "${fw_env_device} ${fw_env_offset} ${fw_env_size}" > "${fw_env_config}" || {
+        display_alert "A/B partition OTA" "Failed to create fw_env.config" "err"
+        return 1
+    }
+    display_alert "A/B partition OTA" "Installed fw_env.config: ${fw_env_device} ${fw_env_offset} ${fw_env_size}" "info"
+
+    return 0
+}
+
+function pre_umount_final_image__894_install_ota_runtime() {
+    if [[ "${OTA_ENABLE}" != "yes" ]]; then
+        return 0
+    fi
+
+    local root_dir="${MOUNT}"
+    local ota_ext_dir
+    ota_ext_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+    local runtime_src="${ota_ext_dir}/runtime"
+    local recovery_src="${ota_ext_dir}/recovery_ota"
+
+    if [[ ! -d "${runtime_src}" ]]; then
+        display_alert "OTA runtime" "runtime source dir missing: ${runtime_src}" "warn"
+        return 0
+    fi
+
+    display_alert "OTA runtime" "Installing OTA runtime into rootfs" "info"
+    mkdir -p "${root_dir}/usr/sbin" "${root_dir}/usr/share/armbian-ota"
+
+    cp "${runtime_src}/armbian-ota" "${root_dir}/usr/sbin/armbian-ota" || {
+        display_alert "OTA runtime" "Failed to install armbian-ota CLI" "err"
+        return 1
+    }
+    cp "${runtime_src}/common.sh" "${root_dir}/usr/share/armbian-ota/common.sh" || {
+        display_alert "OTA runtime" "Failed to install common.sh" "err"
+        return 1
+    }
+
+    if [[ "${AB_PART_OTA}" == "yes" ]]; then
+        cp "${runtime_src}/backend-ab.sh" "${root_dir}/usr/share/armbian-ota/backend-ab.sh" || {
+            display_alert "OTA runtime" "Failed to install backend-ab.sh" "err"
+            return 1
+        }
+    else
+        cp "${runtime_src}/backend-recovery.sh" "${root_dir}/usr/share/armbian-ota/backend-recovery.sh" || {
+            display_alert "OTA runtime" "Failed to install backend-recovery.sh" "err"
+            return 1
+        }
+        if [[ -d "${recovery_src}" ]]; then
+            mkdir -p "${root_dir}/usr/share/armbian-ota/recovery"
+            cp -a "${recovery_src}/." "${root_dir}/usr/share/armbian-ota/recovery/" || {
+                display_alert "OTA runtime" "Failed to install recovery runtime assets" "err"
                 return 1
             }
-            cp "${fw_env_src}" "${fw_setenv}" || {
-                display_alert "A/B partition OTA" "Failed to copy fw_setenv tool" "err"
-                return 1
-            }
-            echo -e "/dev/mtdblock0 0x3f8000 0x8000" > "${fw_env_config}" || {
-                display_alert "A/B partition OTA" "Failed to create fw_env.config file" "err"
-                return 1
-            }
-            display_alert "A/B partition OTA" "fw_env tool installation completed" "info"
-        else
-            display_alert "A/B partition OTA" "fw_env source file not found: ${fw_env_src}" "warn"
         fi
     fi
+
+    chmod +x "${root_dir}/usr/sbin/armbian-ota" "${root_dir}/usr/share/armbian-ota/common.sh"
+    [[ -f "${root_dir}/usr/share/armbian-ota/backend-ab.sh" ]] && chmod +x "${root_dir}/usr/share/armbian-ota/backend-ab.sh"
+    [[ -f "${root_dir}/usr/share/armbian-ota/backend-recovery.sh" ]] && chmod +x "${root_dir}/usr/share/armbian-ota/backend-recovery.sh"
+
+    return 0
 }
 
 function pre_prepare_partitions__ab_part_ota() {
@@ -755,6 +865,10 @@ function extension_prepare_config__install_overlayroot_userdata() {
 }
 
 function pre_umount_final_image__898_config_overlayroot() {
+    if [[ "${AB_PART_OTA}" != "yes" ]]; then
+        return 0
+    fi
+
     display_alert "overlayroot" "Configuring overlayroot for A/B partition OTA" "info"
     local root_dir="${MOUNT}"
 
@@ -776,124 +890,96 @@ function pre_umount_final_image__898_config_overlayroot() {
 }
 
 function pre_umount_final_image__896_install_resize_userdata_service() {
-    if [[ "${AB_PART_OTA}" == "yes" ]]; then
-        display_alert "A/B partition OTA" "Installing armbian-resize-userdata service" "info"
-        local root_dir="${MOUNT}"
-
-        # Copy service file
-        cp "${SRC}/extensions/armbian-ota/ab_ota/systemd/armbian-resize-userdata.service" "${root_dir}/etc/systemd/system/" || {
-            display_alert "A/B partition OTA" "Failed to copy armbian-resize-userdata.service" "err"
-            return 1
-        }
-
-        # Copy script
-        cp "${SRC}/extensions/armbian-ota/ab_ota/userspace/armbian-resize-userdata" "${root_dir}/usr/lib/armbian/" || {
-            display_alert "A/B partition OTA" "Failed to copy armbian-resize-userdata script" "err"
-            return 1
-        }
-        chmod +x "${root_dir}/usr/lib/armbian/armbian-resize-userdata"
-
-        # Enable service
-        chroot "${root_dir}" systemctl enable armbian-resize-userdata.service || {
-            display_alert "A/B partition OTA" "Failed to enable armbian-resize-userdata.service" "err"
-            return 1
-        }
-
-        display_alert "A/B partition OTA" "armbian-resize-userdata service installed and enabled" "info"
-    fi
-}
-
-# Function to install AB OTA manager and related tools
-function pre_umount_final_image__895_install_ab_ota_tools() {
     if [[ "${AB_PART_OTA}" != "yes" ]]; then
         return 0
     fi
 
-    display_alert "A/B partition OTA" "Installing AB OTA manager and tools" "info"
+    display_alert "A/B partition OTA" "Installing armbian-resize-userdata service" "info"
     local root_dir="${MOUNT}"
-    local ab_ota_src="${SRC}/extensions/armbian-ota/ab_ota"
+    local ota_ext_dir
+    ota_ext_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 
-    # Create directories
-    mkdir -p "${root_dir}/usr/sbin"
-    mkdir -p "${root_dir}/usr/lib/armbian"
-    mkdir -p "${root_dir}/usr/share/armbian-ota"
-    mkdir -p "${root_dir}/etc/systemd/system"
+    mkdir -p "${root_dir}/etc/systemd/system" "${root_dir}/usr/lib/armbian"
 
-    # Copy armbian-ota-manager
-    if [[ -f "${ab_ota_src}/userspace/armbian-ota-manager" ]]; then
-        cp "${ab_ota_src}/userspace/armbian-ota-manager" "${root_dir}/usr/sbin/" || {
-            display_alert "A/B partition OTA" "Failed to copy armbian-ota-manager" "err"
-            return 1
-        }
-        chmod +x "${root_dir}/usr/sbin/armbian-ota-manager"
-        display_alert "A/B partition OTA" "Installed armbian-ota-manager" "info"
-    else
-        display_alert "A/B partition OTA" "armbian-ota-manager not found at ${ab_ota_src}/userspace/armbian-ota-manager" "warn"
+    cp "${ota_ext_dir}/ab_ota/systemd/armbian-resize-userdata.service" "${root_dir}/etc/systemd/system/" || {
+        display_alert "A/B partition OTA" "Failed to copy armbian-resize-userdata.service" "err"
+        return 1
+    }
+    cp "${ota_ext_dir}/ab_ota/userspace/armbian-resize-userdata" "${root_dir}/usr/lib/armbian/" || {
+        display_alert "A/B partition OTA" "Failed to copy armbian-resize-userdata script" "err"
+        return 1
+    }
+    chmod +x "${root_dir}/usr/lib/armbian/armbian-resize-userdata"
+
+    chroot "${root_dir}" systemctl enable armbian-resize-userdata.service || {
+        display_alert "A/B partition OTA" "Failed to enable armbian-resize-userdata.service" "warn"
+    }
+
+    return 0
+}
+
+# Function to install AB OTA manager and related tools
+function pre_umount_final_image__895_install_ab_ota_tools() {
+    if [[ "${OTA_ENABLE}" != "yes" ]]; then
+        return 0
     fi
 
-    # Copy health-check script
-    if [[ -f "${ab_ota_src}/userspace/armbian-ota-health-check" ]]; then
-        cp "${ab_ota_src}/userspace/armbian-ota-health-check" "${root_dir}/usr/lib/armbian/" || {
-            display_alert "A/B partition OTA" "Failed to copy armbian-ota-health-check" "err"
+    local root_dir="${MOUNT}"
+    local ota_ext_dir
+    ota_ext_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+
+    mkdir -p "${root_dir}/usr/sbin" "${root_dir}/usr/lib/armbian" "${root_dir}/etc/systemd/system"
+
+    if [[ "${AB_PART_OTA}" == "yes" ]]; then
+        display_alert "A/B partition OTA" "Installing AB OTA userspace tools" "info"
+        local ab_ota_src="${ota_ext_dir}/ab_ota"
+
+        cp "${ab_ota_src}/userspace/armbian-ota-manager" "${root_dir}/usr/sbin/armbian-ota-manager" || {
+            display_alert "A/B partition OTA" "Failed to install armbian-ota-manager wrapper" "err"
             return 1
         }
-        chmod +x "${root_dir}/usr/lib/armbian/armbian-ota-health-check"
-        display_alert "A/B partition OTA" "Installed armbian-ota-health-check" "info"
-    fi
-
-    # Copy init-uboot script
-    if [[ -f "${ab_ota_src}/userspace/armbian-ota-init-uboot" ]]; then
-        cp "${ab_ota_src}/userspace/armbian-ota-init-uboot" "${root_dir}/usr/lib/armbian/" || {
-            display_alert "A/B partition OTA" "Failed to copy armbian-ota-init-uboot" "err"
+        cp "${ab_ota_src}/userspace/armbian-ota-health-check" "${root_dir}/usr/lib/armbian/armbian-ota-health-check" || {
+            display_alert "A/B partition OTA" "Failed to install armbian-ota-health-check" "err"
             return 1
         }
-        chmod +x "${root_dir}/usr/lib/armbian/armbian-ota-init-uboot"
-        display_alert "A/B partition OTA" "Installed armbian-ota-init-uboot" "info"
-    fi
-
-    # Copy common.sh library
-    if [[ -f "${ab_ota_src}/userspace/lib/common.sh" ]]; then
-        cp "${ab_ota_src}/userspace/lib/common.sh" "${root_dir}/usr/share/armbian-ota/" || {
-            display_alert "A/B partition OTA" "Failed to copy common.sh" "err"
+        cp "${ab_ota_src}/userspace/armbian-ota-init-uboot" "${root_dir}/usr/lib/armbian/armbian-ota-init-uboot" || {
+            display_alert "A/B partition OTA" "Failed to install armbian-ota-init-uboot" "err"
             return 1
         }
-        display_alert "A/B partition OTA" "Installed common.sh library" "info"
-    fi
+        chmod +x "${root_dir}/usr/sbin/armbian-ota-manager" "${root_dir}/usr/lib/armbian/armbian-ota-health-check" "${root_dir}/usr/lib/armbian/armbian-ota-init-uboot"
 
-    # Copy systemd services
-    local services=(
-        "armbian-ota-init-uboot.service"
-        "armbian-ota-firstboot.service"
-        "armbian-ota-mark-success.service"
-        "armbian-ota-rollback.service"
-    )
-
-    for svc in "${services[@]}"; do
-        if [[ -f "${ab_ota_src}/systemd/${svc}" ]]; then
-            cp "${ab_ota_src}/systemd/${svc}" "${root_dir}/etc/systemd/system/" || {
-                display_alert "A/B partition OTA" "Failed to copy ${svc}" "warn"
-                continue
+        local services=(
+            "armbian-ota-init-uboot.service"
+            "armbian-ota-firstboot.service"
+            "armbian-ota-mark-success.service"
+            "armbian-ota-rollback.service"
+        )
+        local svc
+        for svc in "${services[@]}"; do
+            cp "${ab_ota_src}/systemd/${svc}" "${root_dir}/etc/systemd/system/${svc}" || {
+                display_alert "A/B partition OTA" "Failed to install ${svc}" "warn"
             }
-            display_alert "A/B partition OTA" "Installed ${svc}" "info"
-        fi
-    done
+        done
 
-    # Enable init-uboot service (runs once on first boot)
-    chroot "${root_dir}" systemctl enable armbian-ota-init-uboot.service || {
-        display_alert "A/B partition OTA" "Failed to enable armbian-ota-init-uboot.service" "warn"
-    }
+        chroot "${root_dir}" systemctl enable armbian-ota-init-uboot.service || display_alert "A/B partition OTA" "Failed to enable armbian-ota-init-uboot.service" "warn"
+        chroot "${root_dir}" systemctl enable armbian-ota-firstboot.service || display_alert "A/B partition OTA" "Failed to enable armbian-ota-firstboot.service" "warn"
+        chroot "${root_dir}" systemctl enable armbian-ota-mark-success.service || display_alert "A/B partition OTA" "Failed to enable armbian-ota-mark-success.service" "warn"
+    else
+        display_alert "Recovery OTA" "Installing recovery OTA userspace tools" "info"
+        local recovery_src="${ota_ext_dir}/recovery_ota"
 
-    # Enable firstboot and mark-success services
-    chroot "${root_dir}" systemctl enable armbian-ota-firstboot.service || {
-        display_alert "A/B partition OTA" "Failed to enable armbian-ota-firstboot.service" "warn"
-    }
-    chroot "${root_dir}" systemctl enable armbian-ota-mark-success.service || {
-        display_alert "A/B partition OTA" "Failed to enable armbian-ota-mark-success.service" "warn"
-    }
-    # NOTE: rollback service is NOT enabled - it only runs via OnFailure trigger
-    display_alert "A/B partition OTA" "rollback.service installed (not enabled, triggered by OnFailure)" "info"
+        cp "${recovery_src}/armbian-ota-manager" "${root_dir}/usr/sbin/armbian-ota-manager" || {
+            display_alert "Recovery OTA" "Failed to install armbian-ota-manager wrapper" "err"
+            return 1
+        }
+        cp "${recovery_src}/start_prepare_ota.sh" "${root_dir}/usr/sbin/start_prepare_ota.sh" || {
+            display_alert "Recovery OTA" "Failed to install start_prepare_ota.sh wrapper" "err"
+            return 1
+        }
+        chmod +x "${root_dir}/usr/sbin/armbian-ota-manager" "${root_dir}/usr/sbin/start_prepare_ota.sh"
+    fi
 
-    display_alert "A/B partition OTA" "AB OTA tools installation completed" "info"
+    return 0
 }
 
 # 扩容userdata分区

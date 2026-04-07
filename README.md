@@ -40,7 +40,12 @@ seeed_armbian_extension/
 │   │   │   ├── 99-copy-tools               # Copy tools to initramfs
 │   │   │   └── 99-ota-apply                # OTA apply script
 │   │   ├── fit/fit-ota                     # FIT image OTA support
-│   │   └── start_prepare_ota.sh            # OTA preparation script
+│   │   └── start_prepare_ota.sh            # Compatibility wrapper
+│   ├── runtime/                            # Unified OTA runtime
+│   │   ├── armbian-ota                     # Unified CLI entrypoint
+│   │   ├── backend-ab.sh                   # AB OTA backend
+│   │   ├── backend-recovery.sh             # Recovery OTA backend
+│   │   └── common.sh                       # Shared runtime helpers
 │   └── ab_ota/                             # AB partition OTA mode
 │       ├── systemd/                        # systemd services
 │       │   ├── armbian-ota-firstboot.service
@@ -48,7 +53,7 @@ seeed_armbian_extension/
 │       │   ├── armbian-ota-mark-success.service
 │       │   └── armbian-ota-rollback.service
 │       ├── userspace/                      # Userspace tools
-│       │   ├── armbian-ota-manager         # OTA management tool
+│       │   ├── armbian-ota-manager         # Compatibility wrapper
 │       │   ├── armbian-ota-health-check    # Health check
 │       │   ├── armbian-ota-init-uboot      # U-Boot initialization
 │       │   └── lib/common.sh               # Common function library
@@ -112,12 +117,18 @@ export CRYPTROOT_PASSPHRASE="your-secure-passphrase" # Set encryption password
 
 ## OTA Update Usage Guide
 
+For firmware built with `OTA_ENABLE=yes`, OTA tools are preinstalled by mode:
+- `AB_PART_OTA=yes`: AB OTA runtime/tools are preinstalled
+- recovery build (without `AB_PART_OTA`): Recovery OTA runtime/tools are preinstalled
+
+Users only need to copy OTA payload package to the board and run `armbian-ota`.
+
 ### AB Partition Mode
 
 #### Check OTA Status
 
 ```bash
-armbian-ota-manager status
+armbian-ota status
 ```
 
 Example output:
@@ -147,7 +158,7 @@ Partitions:
 scp Armbian_*_AB_PART_OTA.tar.gz user@device:/tmp/
 
 # 2. Start OTA update on device
-armbian-ota-manager start /tmp/Armbian_*_AB_PART_OTA.tar.gz
+armbian-ota start --mode=ab /tmp/Armbian_*_AB_PART_OTA.tar.gz
 
 # 3. System will display update progress and prompt for reboot
 # ==========================================
@@ -172,7 +183,7 @@ reboot
 
 ```bash
 # If issues occur with new version, manual rollback is available
-armbian-ota-manager rollback
+armbian-ota rollback
 ```
 
 #### Mark OTA as Successful
@@ -180,7 +191,7 @@ armbian-ota-manager rollback
 Usually OTA is automatically marked as successful. If manual marking is needed:
 
 ```bash
-armbian-ota-manager mark-success
+armbian-ota mark-success
 ```
 
 ### Recovery Mode
@@ -190,7 +201,7 @@ armbian-ota-manager mark-success
 scp Armbian_*_RECOVERY_OTA.tar.gz user@device:/tmp/
 
 # 2. Prepare OTA update
-./start_prepare_ota.sh /tmp/Armbian_*_RECOVERY_OTA.tar.gz
+armbian-ota start --mode=recovery /tmp/Armbian_*_RECOVERY_OTA.tar.gz
 
 # 3. Reboot device, initramfs will automatically apply update
 reboot

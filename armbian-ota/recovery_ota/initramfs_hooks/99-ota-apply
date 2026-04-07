@@ -61,6 +61,8 @@ BOOT_DEV=""
 
 ROOT_MNT="/mnt/root"
 BOOT_MNT="/mnt/boot"
+STATE_DIR="${ROOT_MNT}/var/lib/armbian-ota"
+STATE_FILE="${STATE_DIR}/state.env"
 
 OTA_DIR="${ROOT_MNT}/ota_work"
 ROOTFS_TAR="${OTA_DIR}/rootfs.tar.gz"
@@ -318,7 +320,7 @@ fi
 sync
 
 log "  delete OTA payload directory ${OTA_DIR} ..."
-rm ${OTA_DIR} -rf || true
+rm -rf "${OTA_DIR}" || true
 # ===== 8) unmount partitions =====
 if [ "$DO_BOOT_OTA" -eq 1 ] && [ -n "${BOOT_MNT}" ]; then
     log "unmounting ${BOOT_MNT} ..."
@@ -329,6 +331,14 @@ log "unmounting ${ROOT_MNT} ..."
 umount "${ROOT_MNT}" 2>/dev/null  || log "WARN: umount ${ROOT_MNT} failed"
 
 sync
+
+# ===== 8.5) update runtime state =====
+mkdir -p "${STATE_DIR}"
+if [ -f "${STATE_FILE}" ]; then
+    sed -i 's/^OTA_MODE=.*/OTA_MODE=recovery/' "${STATE_FILE}" 2>/dev/null || true
+    sed -i 's/^STATUS=.*/STATUS=success/' "${STATE_FILE}" 2>/dev/null || true
+    sed -i "s/^COMPLETE_TIME=.*/COMPLETE_TIME=$(date -Iseconds)/" "${STATE_FILE}" 2>/dev/null || true
+fi
 
 # ===== 9) reboot =====
 log "OTA done, rebooting..."

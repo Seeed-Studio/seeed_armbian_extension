@@ -63,7 +63,7 @@
             kernel = "kernel";
             ramdisk = "ramdisk";
             multi = "resource";
-            description = "Rockchip RK3588 FIT Image";
+            description = "Rockchip RK35xx FIT Image";
 
             signature {
                 algo = "sha256,rsa2048";

@@ -2,13 +2,11 @@
 Description=Armbian AB OTA Rollback on Failure
 Documentation=https://docs.armbian.com
 DefaultDependencies=no
-# ONLY run when first boot service fails
-OnFailure=armbian-ota-firstboot.service
 After=armbian-ota-firstboot.service
 
 [Service]
 Type=oneshot
-ExecStart=/usr/sbin/armbian-ota-manager rollback
+ExecStart=/usr/sbin/armbian-ota rollback
 TimeoutStartSec=60
 StandardOutput=journal+console
 StandardError=journal+console

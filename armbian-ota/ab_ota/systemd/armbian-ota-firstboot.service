@@ -5,6 +5,7 @@ DefaultDependencies=no
 After=network-online.target
 Wants=network-online.target
 Before=armbian-ota-mark-success.service
+OnFailure=armbian-ota-rollback.service
 
 [Service]
 Type=oneshot

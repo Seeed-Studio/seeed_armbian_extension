@@ -305,7 +305,7 @@ function build_custom_uboot__vendor_fit_secure() {
     fi
 
     # Copy prebuilts to the parent directory of u-boot
-    local prebuilts_source="${SRC}/cache/sources/rockchip_sdk_tools/external/prebuilts"
+    local prebuilts_source="${SRC}/cache/sources/rockchip_sdk_tools/other_build_tool_chain/prebuilts"
     local prebuilts_dest="../prebuilts"
     if [[ -d "${prebuilts_source}" ]]; then
         display_alert "secure-uboot" "Copying prebuilts to ${prebuilts_dest}" "info"

@@ -5,6 +5,11 @@ This extension provides two different OTA (Over-The-Air) update mechanisms for A
 1. **Recovery OTA** - Single partition recovery mode (existing implementation)
 2. **AB Partition OTA** - Dual partition A/B update mode with automatic rollback
 
+Note: When `OTA_ENABLE=yes`, OTA runtime is installed into the firmware by mode:
+- `AB_PART_OTA=yes`: install AB OTA runtime/tools.
+- without `AB_PART_OTA`: install Recovery OTA runtime/tools.
+Payload still includes `ota_tools/` as a fallback/offline bundle.
+
 ## Directory Structure
 
 ```
@@ -17,14 +22,20 @@ extensions/armbian-ota/
 │   │   └── 99-ota-apply                    # Recovery OTA apply script
 │   ├── fit/
 │   │   └── fit-ota                         # FIT image OTA support
-│   └── start_prepare_ota.sh                # Recovery OTA preparation script
+│   └── start_prepare_ota.sh                # Compatibility wrapper
+│
+├── runtime/                                # Unified OTA runtime
+│   ├── armbian-ota                         # Unified CLI entrypoint
+│   ├── backend-ab.sh                       # AB OTA backend
+│   ├── backend-recovery.sh                 # Recovery OTA backend
+│   └── common.sh                           # Shared runtime helpers
 │
 ├── ab_ota/                                 # AB Partition OTA mode
 │   ├── initramfs_hooks/
 │   │   ├── 99-copy-ab-ota-tools            # Initramfs hook for AB OTA
 │   │   └── ab-ota-apply                    # AB OTA apply script
 │   ├── userspace/
-│   │   ├── armbian-ota-manager             # Main OTA management tool
+│   │   ├── armbian-ota-manager             # Compatibility wrapper
 │   │   ├── armbian-ota-health-check        # First boot health check
 │   │   └── lib/common.sh                   # Common functions
 │   ├── systemd/
@@ -51,22 +62,22 @@ extensions/armbian-ota/
 Set these environment variables to enable Recovery OTA:
 
 ```bash
-RK_SECURE_UBOOT_ENABLE=yes
-RK_AUTO_DECRYP=yes
+OTA_ENABLE=yes
+# Do not set AB_PART_OTA
 ```
 
 ### How It Works
 
 1. OTA package is extracted to `/ota_work/`
-2. On reboot, initramfs detects trigger in security partition
-3. OTA is applied directly to current rootfs
+2. Initramfs hooks are installed and `update-initramfs` is executed
+3. On reboot, initramfs applies OTA payload to current rootfs
 4. System reboots into updated firmware
 
 ### Usage
 
 ```bash
 # On target system
-./start_prepare_ota.sh <path-to-ota-package.tar.gz>
+armbian-ota start --mode=recovery <path-to-ota-package.tar.gz>
 reboot
 ```
 
@@ -77,6 +88,7 @@ reboot
 Set this environment variable to enable AB Partition OTA:
 
 ```bash
+OTA_ENABLE=yes
 AB_PART_OTA=yes
 ```
 
@@ -102,12 +114,11 @@ AB_PART_OTA=yes
 
 ### How It Works
 
-1. User initiates OTA with `armbian-ota-manager start <package>`
+1. User initiates OTA with `armbian-ota start --mode=ab <package>`
 2. OTA payload is copied to target (inactive) slot partitions
 3. `ota_in_progress=1` and `boot_slot` are set to target slot
 4. System reboots
-5. Initramfs detects OTA in progress, applies update to target slot
-6. System boots from target slot
+5. System boots from target slot
 7. Health checks run on first boot
 8. If checks pass: OTA marked successful, `ota_in_progress=0`
 9. If checks fail: Automatic rollback to previous slot
@@ -116,18 +127,18 @@ AB_PART_OTA=yes
 
 ```bash
 # Check status
-armbian-ota-manager status
+armbian-ota status
 
 # Start OTA update
-armbian-ota-manager start Armbian_xxx-OTA.tar.gz
+armbian-ota start --mode=ab Armbian_xxx-OTA.tar.gz
 
 # System will reboot and apply update automatically
 
 # Manual rollback (if needed)
-armbian-ota-manager rollback
+armbian-ota rollback
 
 # Mark as successful (if automatic marking failed)
-armbian-ota-manager mark-success
+armbian-ota mark-success
 ```
 
 ## Build Configuration
@@ -136,14 +147,15 @@ Add to your board configuration or build command:
 
 ```bash
 # For AB Partition OTA
+OTA_ENABLE=yes
 AB_PART_OTA=yes
 AB_BOOT_SIZE=256        # Boot partition size in MiB
 AB_ROOTFS_SIZE=4608     # Rootfs partition size in MiB
 USERDATA=256            # Userdata partition size in MiB
 
 # For Recovery OTA
-RK_SECURE_UBOOT_ENABLE=yes
-RK_AUTO_DECRYP=yes
+OTA_ENABLE=yes
+# leave AB_PART_OTA unset
 ```
 
 ## OTA Package Contents
@@ -154,6 +166,7 @@ The OTA package (`*-OTA.tar.gz`) contains:
 - `rootfs.sha256` - Root filesystem checksum (required)
 - `boot.tar.gz` - Boot partition image (optional)
 - `boot.sha256` - Boot partition checksum (optional)
+- `ota_manifest.env` - OTA mode and package metadata
 - `boot.itb` - FIT boot image (for secure boot)
 
 ## Troubleshooting
@@ -161,7 +174,7 @@ The OTA package (`*-OTA.tar.gz`) contains:
 ### Check OTA Status
 
 ```bash
-armbian-ota-manager status
+armbian-ota status
 ```
 
 ### View Logs
@@ -180,7 +193,7 @@ cat /run/initramfs/ab-ota.log
 ### Manual Rollback
 
 ```bash
-armbian-ota-manager rollback
+armbian-ota rollback
 ```
 
 ### Check U-Boot Environment
