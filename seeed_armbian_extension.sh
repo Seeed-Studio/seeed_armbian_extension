@@ -1,12 +1,24 @@
+if [[ "${RK_SECURE_UBOOT_ENABLE}" == "yes" && "${CRYPTROOT_ENABLE}" != "yes" ]]; then
+	display_alert "Secure U-Boot" "RK_SECURE_UBOOT_ENABLE requires CRYPTROOT_ENABLE=yes, forcing enable" "warn"
+	export CRYPTROOT_ENABLE=yes
+fi
+
+if [[ "${CRYPTROOT_ENABLE}" == "yes" ]]; then
+	enable_extension "seeed_armbian_extension/rk_secure-disk-encryption/rk-cryptroot-verbosity"
+fi
+
 if [[ "${CRYPTROOT_ENABLE}" == "yes" && "${RK_AUTO_DECRYP}" == "yes" ]]; then
 	display_alert "Cryptroot" "Enable RK to automatically unlock encrypted containers" "info"
 	export CRYPTROOT_SSH_UNLOCK=no
-	export RK_SECURE_UBOOT_ENABLE=yes
 	enable_extension "seeed_armbian_extension/rk_secure-disk-encryption/rk-auto-decryption-disk"
 fi
 
-if [[ "${RK_SECURE_UBOOT_ENABLE}" == "yes" ]]; then
-	display_alert "Secure U-Boot" "Enable Secure Boot Extensions" "info"
+if [[ "${RK_SECURE_UBOOT_ENABLE}" == "yes" || "${RK_OPTEE_BOOT_ENABLE}" == "yes" ]]; then
+	if [[ "${RK_SECURE_UBOOT_ENABLE}" == "yes" ]]; then
+		display_alert "Secure U-Boot" "Enable Secure Boot Extensions" "info"
+	else
+		display_alert "OP-TEE bootchain" "Enable rk-secure-boot extension in OP-TEE bootchain mode" "info"
+	fi
 	enable_extension "seeed_armbian_extension/rk_secure-disk-encryption/rk-secure-boot"
 fi
 

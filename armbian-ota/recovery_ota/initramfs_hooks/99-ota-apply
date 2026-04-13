@@ -50,6 +50,55 @@ stop_heartbeat() {
     fi
 }
 
+# ===== tar extract helper with fallback and stderr logging =====
+extract_tar_with_fallback() {
+    archive="$1"
+    target="$2"
+    label="$3"
+    err_file="${LOGDIR}/${label}.tar.stderr.log"
+    rc=0
+
+    rm -f "${err_file}" 2>/dev/null || true
+
+    # Preferred mode: preserve metadata when supported.
+    log "${label}: run tar --xattrs --acls --numeric-owner -xpf ${archive} -C ${target}"
+    if tar --xattrs --acls --numeric-owner -xpf "${archive}" -C "${target}" 2>"${err_file}"; then
+        log "${label}: metadata extract succeeded"
+        if [ -s "${err_file}" ]; then
+            log "${label}: tar metadata mode produced stderr, showing last lines"
+            tail -n 20 "${err_file}" 2>/dev/null | while IFS= read -r l; do log "${label}: ${l}"; done
+        fi
+        rm -f "${err_file}" 2>/dev/null || true
+        return 0
+    fi
+    rc=$?
+
+    log "WARN: ${label} metadata extract failed (rc=${rc}), retrying with plain tar -xzf"
+    if [ -s "${err_file}" ]; then
+        tail -n 40 "${err_file}" 2>/dev/null | while IFS= read -r l; do log "${label} metadata stderr: ${l}"; done
+    fi
+
+    rm -f "${err_file}" 2>/dev/null || true
+    log "${label}: run tar -xzf ${archive} -C ${target}"
+    if tar -xzf "${archive}" -C "${target}" 2>"${err_file}"; then
+        log "${label}: plain extract succeeded"
+        if [ -s "${err_file}" ]; then
+            log "${label}: plain tar mode produced stderr, showing last lines"
+            tail -n 20 "${err_file}" 2>/dev/null | while IFS= read -r l; do log "${label}: ${l}"; done
+        fi
+        rm -f "${err_file}" 2>/dev/null || true
+        return 0
+    fi
+    rc=$?
+
+    log "ERROR: ${label} extract failed in both metadata and plain modes (plain rc=${rc})"
+    if [ -s "${err_file}" ]; then
+        tail -n 80 "${err_file}" 2>/dev/null | while IFS= read -r l; do log "${label} stderr: ${l}"; done
+    fi
+    rm -f "${err_file}" 2>/dev/null || true
+    return 1
+}
+
 # enable shell trace (goes into log/kmsg)
 set -x
 
@@ -123,17 +172,51 @@ get_dev_and_uuid_by_label() {
         }'
 }
 
-# ===== auto-detect root/boot dev + uuid by LABEL (armbi_root / armbi_boot) =====
+# ===== helper: get LUKS UUID for encrypted root backing device =====
+get_luks_uuid_for_root() {
+    blkid -t TYPE=crypto_LUKS -s UUID -o value 2>/dev/null | head -n1
+}
+
+# ===== detect firmware mode and root/boot devices =====
 ROOT_UUID=""
 BOOT_UUID=""
 HAS_BOOT_PART=0
+AUTO_DECRYPT_MODE=0
+SECURITY_PART=""
 
-root_info="$(get_dev_and_uuid_by_label "armbi_root" || true)"
+SECURITY_PART="$(blkid -t PARTLABEL=security -o device 2>/dev/null | head -n1 || true)"
+if [ -n "${SECURITY_PART}" ]; then
+    log "security partition found at ${SECURITY_PART}, checking mapper /dev/mapper/armbian-root"
+    timeout=30
+    elapsed=0
+    while [ ! -e /dev/mapper/armbian-root ] && [ "${elapsed}" -lt "${timeout}" ]; do
+        sleep 1
+        elapsed=$((elapsed + 1))
+    done
+
+    if [ -e /dev/mapper/armbian-root ]; then
+        AUTO_DECRYPT_MODE=1
+        ROOT_DEV="/dev/mapper/armbian-root"
+        ROOT_UUID="$(get_luks_uuid_for_root || true)"
+        log "auto-decrypt mode detected: ROOT_DEV=${ROOT_DEV}, LUKS_UUID=${ROOT_UUID:-<empty>}"
+    else
+        log "security partition exists but mapper /dev/mapper/armbian-root is not ready, fallback to standard mode"
+    fi
+else
+    log "security partition not found, using standard recovery OTA mode"
+fi
+
 boot_info="$(get_dev_and_uuid_by_label "armbi_boot" || true)"
 
-if [ -n "$root_info" ]; then
-    ROOT_DEV="$(echo "$root_info" | awk '{print $1}')"
-    ROOT_UUID="$(echo "$root_info" | awk '{print $2}')"
+if [ "${AUTO_DECRYPT_MODE}" -eq 0 ]; then
+    root_info="$(get_dev_and_uuid_by_label "armbi_root" || true)"
+    if [ -n "$root_info" ]; then
+        ROOT_DEV="$(echo "$root_info" | awk '{print $1}')"
+        ROOT_UUID="$(echo "$root_info" | awk '{print $2}')"
+    fi
+    log "standard mode root detection: ROOT_DEV=${ROOT_DEV}, ROOT_UUID=${ROOT_UUID}"
+else
+    log "auto-decrypt mode root detection: skip armbi_root label probing"
 fi
 
 if [ -n "$boot_info" ]; then
@@ -142,10 +225,14 @@ if [ -n "$boot_info" ]; then
     HAS_BOOT_PART=1
 fi
 
-log "auto-detected ROOT_DEV=${ROOT_DEV}, ROOT_UUID=${ROOT_UUID}"
 log "auto-detected BOOT_DEV=${BOOT_DEV}, BOOT_UUID=${BOOT_UUID}, HAS_BOOT_PART=${HAS_BOOT_PART}"
 
 # ===== 1) mount rootfs to /mnt/root =====
+if [ -z "${ROOT_DEV}" ]; then
+    log "ROOT_DEV is empty, skip OTA"
+    exit 0
+fi
+
 mkdir -p "${ROOT_MNT}"
 log "mounting ${ROOT_DEV} -> ${ROOT_MNT} ..."
 if ! mount -t ext4 -o rw "${ROOT_DEV}" "${ROOT_MNT}"; then
@@ -191,7 +278,7 @@ stop_heartbeat
 # ===== 3) extract rootfs.tar.gz =====
 log "extracting ${ROOTFS_TAR} -> ${ROOT_MNT} ..."
 start_heartbeat "extracting rootfs.tar.gz to ${ROOT_MNT}"
-if ! tar --xattrs --acls --numeric-owner -xpf "${ROOTFS_TAR}" -C "${ROOT_MNT}"; then
+if ! extract_tar_with_fallback "${ROOTFS_TAR}" "${ROOT_MNT}" "rootfs"; then
     stop_heartbeat
     log "ERROR: extract rootfs.tar.gz failed, abort OTA"
     umount "${ROOT_MNT}" 2>/dev/null || true
@@ -244,7 +331,7 @@ if [ "$DO_BOOT_OTA" -eq 1 ]; then
     # ===== 6) extract boot.tar.gz =====
     log "extracting ${BOOT_TAR} -> ${BOOT_MNT} ..."
     start_heartbeat "extracting boot.tar.gz to ${BOOT_MNT}"
-    if ! tar --xattrs --acls --numeric-owner -xpf "${BOOT_TAR}" -C "${BOOT_MNT}"; then
+    if ! extract_tar_with_fallback "${BOOT_TAR}" "${BOOT_MNT}" "boot"; then
         stop_heartbeat
         log "ERROR: extract boot.tar.gz failed, system may be broken"
     fi
@@ -262,9 +349,14 @@ else
 fi
 
 FSTAB="${ROOT_MNT}/etc/fstab"
+CRYPTTAB="${ROOT_MNT}/etc/crypttab"
 
 # fallback UUID detection (just in case)
-[ -z "$ROOT_UUID" ] && ROOT_UUID="$(get_uuid_by_label "armbi_root")"
+if [ "${AUTO_DECRYPT_MODE}" -eq 1 ]; then
+    [ -z "$ROOT_UUID" ] && ROOT_UUID="$(get_luks_uuid_for_root)"
+else
+    [ -z "$ROOT_UUID" ] && ROOT_UUID="$(get_uuid_by_label "armbi_root")"
+fi
 [ -z "$BOOT_UUID" ] && BOOT_UUID="$(get_uuid_by_label "armbi_boot")"
 
 log "final ROOT_UUID=${ROOT_UUID}, BOOT_UUID=${BOOT_UUID}"
@@ -273,15 +365,24 @@ log "final ROOT_UUID=${ROOT_UUID}, BOOT_UUID=${BOOT_UUID}"
 if [ -f "${ARM_ENV}" ]; then
     log "patching ${ARM_ENV} ..."
 
-    if [ -n "${ROOT_UUID}" ]; then
-        log "  - set rootdev=UUID=${ROOT_UUID}"
+    if [ "${AUTO_DECRYPT_MODE}" -eq 1 ]; then
+        log "  - set rootdev=/dev/mapper/armbian-root"
         if grep -q '^rootdev=' "${ARM_ENV}"; then
-            sed -i "s|^rootdev=.*$|rootdev=UUID=${ROOT_UUID}|" "${ARM_ENV}"
+            sed -i "s|^rootdev=.*$|rootdev=/dev/mapper/armbian-root|" "${ARM_ENV}"
         else
-            printf '\nrootdev=UUID=%s\n' "${ROOT_UUID}" >> "${ARM_ENV}"
+            printf '\nrootdev=/dev/mapper/armbian-root\n' >> "${ARM_ENV}"
         fi
     else
-        log "  - WARN: ROOT_UUID empty, skip rootdev change"
+        if [ -n "${ROOT_UUID}" ]; then
+            log "  - set rootdev=UUID=${ROOT_UUID}"
+            if grep -q '^rootdev=' "${ARM_ENV}"; then
+                sed -i "s|^rootdev=.*$|rootdev=UUID=${ROOT_UUID}|" "${ARM_ENV}"
+            else
+                printf '\nrootdev=UUID=%s\n' "${ROOT_UUID}" >> "${ARM_ENV}"
+            fi
+        else
+            log "  - WARN: ROOT_UUID empty, skip rootdev change"
+        fi
     fi
 
     # console + verbosity tweaks
@@ -298,12 +399,18 @@ fi
 if [ -f "${FSTAB}" ]; then
     log "patching ${FSTAB} ..."
 
-    if [ -n "${ROOT_UUID}" ]; then
-        log "  - update / entry UUID to ${ROOT_UUID}"
-        # lines like: UUID=xxxx / ext4 ...
-        sed -i -E "s|^UUID=[^[:space:]]+[[:space:]]+/[[:space:]]+|UUID=${ROOT_UUID} / |" "${FSTAB}"
+    if [ "${AUTO_DECRYPT_MODE}" -eq 1 ]; then
+        log "  - update / entry to /dev/mapper/armbian-root"
+        sed -i -E 's|^UUID=[^[:space:]]+[[:space:]]+/[[:space:]]+|/dev/mapper/armbian-root / |' "${FSTAB}"
+        sed -i -E 's|^/dev/[^[:space:]]+[[:space:]]+/[[:space:]]+|/dev/mapper/armbian-root / |' "${FSTAB}"
     else
-        log "  - WARN: ROOT_UUID empty, skip / fstab entry update"
+        if [ -n "${ROOT_UUID}" ]; then
+            log "  - update / entry UUID to ${ROOT_UUID}"
+            # lines like: UUID=xxxx / ext4 ...
+            sed -i -E "s|^UUID=[^[:space:]]+[[:space:]]+/[[:space:]]+|UUID=${ROOT_UUID} / |" "${FSTAB}"
+        else
+            log "  - WARN: ROOT_UUID empty, skip / fstab entry update"
+        fi
     fi
 
     if [ -n "${BOOT_UUID}" ]; then
@@ -315,6 +422,21 @@ if [ -f "${FSTAB}" ]; then
     fi
 else
     log "WARN: ${FSTAB} not found, skip fstab UUID patch"
+fi
+
+# 7.3 patch new rootfs /etc/crypttab for auto-decrypt mode
+if [ "${AUTO_DECRYPT_MODE}" -eq 1 ]; then
+    if [ -f "${CRYPTTAB}" ]; then
+        if [ -n "${ROOT_UUID}" ]; then
+            log "patching ${CRYPTTAB} ..."
+            log "  - set armbian-root source UUID=${ROOT_UUID} (crypto_LUKS)"
+            sed -i -E "s|^(armbian-root[[:space:]]+)UUID=[0-9a-fA-F-]+|\1UUID=${ROOT_UUID}|" "${CRYPTTAB}"
+        else
+            log "WARN: LUKS UUID empty, skip crypttab patch"
+        fi
+    else
+        log "WARN: ${CRYPTTAB} not found, skip crypttab UUID patch"
+    fi
 fi
 
 sync

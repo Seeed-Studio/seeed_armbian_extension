@@ -45,9 +45,13 @@ function pre_umount_final_image__901_create_ota_payload_pkg() {
 
     # Check for secure boot and auto ota configuration
     local secure_boot_and_decrypt="no"
+    local encrypted_autodecrypt_nonsecure="no"
     if [[ "${RK_SECURE_UBOOT_ENABLE}" == "yes" && "${RK_AUTO_DECRYP}" == "yes" ]]; then
         secure_boot_and_decrypt="yes"
         display_alert "Secure boot and auto ota enabled" "Using FIT image workflow" "info"
+    elif [[ "${CRYPTROOT_ENABLE}" == "yes" && "${RK_AUTO_DECRYP}" == "yes" && "${RK_SECURE_UBOOT_ENABLE}" != "yes" ]]; then
+        encrypted_autodecrypt_nonsecure="yes"
+        display_alert "Encrypted auto-decrypt OTA" "Non-secure boot mode: use mapper rootfs and package plain boot partition" "info"
     fi
 
     # Create temporary directory for OTA package building
@@ -161,10 +165,35 @@ function pre_umount_final_image__901_create_ota_payload_pkg() {
             fi
         done <<< "$partition_info"
 
-        # Ensure at least rootfs partition exists
+        # Ensure at least rootfs partition exists (except encrypted auto-decrypt non-secure mode)
         if [[ -z "$rootfs_partition" ]]; then
-            display_alert "Error: Could not identify rootfs partition" "" "err"
-            return 1
+            if [[ "${encrypted_autodecrypt_nonsecure}" == "yes" ]]; then
+                display_alert "Encrypted auto-decrypt OTA" "Skip rootfs partition detection in non-secure mode, rootfs will use /dev/mapper/armbian-root" "info"
+            else
+                display_alert "Error: Could not identify rootfs partition" "" "err"
+                return 1
+            fi
+        fi
+    fi
+
+    # Fallback: try boot partition by LABEL/PARTLABEL when mountpoint probing misses it.
+    if [[ -z "${boot_partition}" ]]; then
+        local boot_candidate=""
+        for boot_label in armbi_boot boot; do
+            boot_candidate="$(blkid -t LABEL="${boot_label}" -o device 2>/dev/null | head -n1)"
+            if [[ -n "${boot_candidate}" && -b "${boot_candidate}" ]]; then
+                boot_partition="${boot_candidate}"
+                display_alert "Boot partition fallback" "Detected boot partition by LABEL=${boot_label}: ${boot_partition}" "info"
+                break
+            fi
+        done
+
+        if [[ -z "${boot_partition}" ]]; then
+            boot_candidate="$(blkid -t PARTLABEL=boot -o device 2>/dev/null | head -n1)"
+            if [[ -n "${boot_candidate}" && -b "${boot_candidate}" ]]; then
+                boot_partition="${boot_candidate}"
+                display_alert "Boot partition fallback" "Detected boot partition by PARTLABEL=boot: ${boot_partition}" "info"
+            fi
         fi
     fi
 
@@ -172,14 +201,21 @@ function pre_umount_final_image__901_create_ota_payload_pkg() {
     local boot_size=0
     local rootfs_size=0
 
-    if [[ "$secure_boot_and_decrypt" != "yes" ]]; then
+    if [[ "$secure_boot_and_decrypt" != "yes" && "${encrypted_autodecrypt_nonsecure}" != "yes" ]]; then
         rootfs_size=$(blockdev --getsize64 "$rootfs_partition" 2>/dev/null || echo "0")
         if [[ -n "$boot_partition" ]]; then
             boot_size=$(blockdev --getsize64 "$boot_partition" 2>/dev/null || echo "0")
         fi
         display_alert "Found partitions" "boot: ${boot_partition:-"none"} (${boot_size} bytes), rootfs: ${rootfs_partition} (${rootfs_size} bytes)" "info"
     else
-        display_alert "Secure boot mode active" "Using boot.itb and encrypted rootfs" "info"
+        if [[ "$secure_boot_and_decrypt" == "yes" ]]; then
+            display_alert "Secure boot mode active" "Using boot.itb and encrypted rootfs" "info"
+        else
+            if [[ -n "$boot_partition" ]]; then
+                boot_size=$(blockdev --getsize64 "$boot_partition" 2>/dev/null || echo "0")
+            fi
+            display_alert "Encrypted auto-decrypt mode active" "Using mapper rootfs and boot partition ${boot_partition:-none} (${boot_size} bytes)" "info"
+        fi
     fi
 
     # Create temporary mount points
