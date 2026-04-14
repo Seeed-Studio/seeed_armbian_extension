@@ -1,0 +1,91 @@
+#!/bin/bash
+
+set -e
+
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+if [ -f "${SCRIPT_DIR}/../../runtime/common.sh" ]; then
+    . "${SCRIPT_DIR}/../../runtime/common.sh"
+elif [ -f /usr/share/armbian-ota/common.sh ]; then
+    . /usr/share/armbian-ota/common.sh
+else
+    echo "ERROR: Cannot find OTA common library" >&2
+    exit 1
+fi
+
+check_kernel() {
+    [ -f /proc/version ] || return 1
+    log_info "Kernel version: $(uname -r)"
+}
+
+check_root_fs() {
+    local root_opts
+    root_opts="$(findmnt -n -o OPTIONS /)"
+    [[ "${root_opts}" == *rw* ]]
+}
+
+check_filesystems() {
+    mountpoint -q /proc && mountpoint -q /sys && mountpoint -q /dev
+}
+
+check_systemd() {
+    if command -v systemctl >/dev/null 2>&1; then
+        local state
+        state="$(systemctl is-system-running 2>/dev/null || true)"
+        [ "${state}" != "failed" ]
+    else
+        return 0
+    fi
+}
+
+check_commands() {
+    local cmd
+    for cmd in sh bash mount umount reboot; do
+        command -v "${cmd}" >/dev/null 2>&1 || return 1
+    done
+}
+
+run_all_checks() {
+    check_kernel
+    check_root_fs
+    check_filesystems
+    check_systemd
+    check_commands
+}
+
+main() {
+    init_logging
+    state_init
+
+    if [ "$(state_get OTA_MODE)" != "ab" ]; then
+        log_info "Current OTA mode is not ab, skipping health check"
+        exit 0
+    fi
+
+    if [ "$(state_get STATUS)" != "ready_to_boot" ] && [ "$(state_get STATUS)" != "boot_verifying" ]; then
+        log_info "A/B OTA state is not pending verification, skipping health check"
+        exit 0
+    fi
+
+    if ! command -v fw_printenv >/dev/null 2>&1; then
+        log_error "fw_printenv not found"
+        exit 1
+    fi
+
+    if [ "$(fw_printenv -n ota_in_progress 2>/dev/null || echo 0)" != "1" ]; then
+        log_info "ota_in_progress is not set, skipping health check"
+        exit 0
+    fi
+
+    state_mark_status "boot_verifying"
+    log_info "Running A/B OTA health check"
+
+    if run_all_checks; then
+        log_info "A/B OTA health check passed"
+        exit 0
+    fi
+
+    log_error "A/B OTA health check failed"
+    exit 1
+}
+
+main "$@"
