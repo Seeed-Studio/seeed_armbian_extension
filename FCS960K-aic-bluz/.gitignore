@@ -1,0 +1,59 @@
+# Build artifacts
+*.o
+*.a
+*.la
+*.lo
+*.so
+*.so.*
+.deps
+.libs
+
+# Autotools generated files
+aclocal.m4
+compile
+config.guess
+config.h
+config.h.in
+config.log
+config.status
+config.sub
+configure
+depcomp
+install-sh
+ltmain.sh
+missing
+test-driver
+/Makefile
+/Makefile.in
+autom4te.cache
+
+# Debian packaging
+*.deb
+*.changes
+*.buildinfo
+*.dsc
+*.tar.gz
+debian/*.debhelper.log
+debian/*.substvars
+debian/debhelper-build-stamp
+debian/files
+debian/.debhelper
+debian/tmp
+debian/*/
+*.debhelper
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# Devcontainer
+.devenv/
+.direnv/
+.devenv.lock
+
+# Misc
+VERSION
+pkg.conf

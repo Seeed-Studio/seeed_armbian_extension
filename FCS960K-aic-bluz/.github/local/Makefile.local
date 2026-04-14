@@ -1,0 +1,7 @@
+# Cross-compile for arm64
+CUSTOM_DEBUILD_ARG := -aarm64 -Pcross
+
+# PKG_CONFIG for cross-compilation
+export PKG_CONFIG_PATH :=
+export PKG_CONFIG_LIBDIR := /usr/lib/aarch64-linux-gnu/pkgconfig:/usr/share/pkgconfig
+export PKG_CONFIG_SYSROOT_DIR := /

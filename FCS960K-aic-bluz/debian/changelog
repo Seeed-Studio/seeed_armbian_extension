@@ -1,0 +1,10 @@
+fcs960k-aic-bluez (5.66-1) unstable; urgency=medium
+
+  * Initial release for AIC FCS960K chip
+  * Based on BlueZ 5.66
+  * Added AIC FCS960K specific patches
+  * Cross-compiled for arm64 architecture
+  * Configured with tools, experimental, deprecated, client, and library support
+  * Disabled systemd and udev integration
+
+ -- Radxa Computer Co., Ltd <dev@radxa.com>  Sun, 19 Jan 2026 00:00:00 +0000

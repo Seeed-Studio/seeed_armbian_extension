@@ -1,0 +1,17 @@
+[Unit]
+Description=USB Gadget ConfigFS Manager (usbdevice)
+After=local-fs.target systemd-modules-load.service
+Wants=usb-gadget.target
+ConditionPathExists=/usr/bin/usbdevice
+
+[Service]
+Type=oneshot
+RemainAfterExit=yes
+ExecStart=/usr/bin/usbdevice start
+ExecStop=/usr/bin/usbdevice stop
+ExecReload=/usr/bin/usbdevice restart
+TimeoutStartSec=30
+TimeoutStopSec=20
+
+[Install]
+WantedBy=multi-user.target

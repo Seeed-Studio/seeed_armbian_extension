@@ -1,0 +1,22 @@
+Source: hostapd-morse-tools
+Section: net
+Priority: optional
+Maintainer: Radxa Computer Co., Ltd <dev@radxa.com>
+Build-Depends: debhelper-compat (= 13),
+ quilt,
+ libnl-3-dev:arm64,
+ libnl-genl-3-dev:arm64,
+ libnl-route-3-dev:arm64,
+ libssl-dev:arm64,
+ pkg-config,
+Standards-Version: 4.6.2
+Homepage: https://w1.fi/hostapd/
+Rules-Requires-Root: no
+
+Package: hostapd-morse-tools
+Architecture: arm64
+Depends: ${shlibs:Depends}, ${misc:Depends}
+Description: Hostapd for WiFi AP mode
+ Hostapd is a user space daemon for access point and authentication
+ servers. This package is built specifically for AIC FCS960K platform
+ with cross-compilation.

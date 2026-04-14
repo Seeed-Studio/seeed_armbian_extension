@@ -1,0 +1,10 @@
+Package: usbdevice-gadget-rk3588
+Version: 1.0.0
+Section: utils
+Priority: optional
+Architecture: arm64
+Maintainer: pss <pss@localhost>
+Depends: systemd
+Description: USB gadget manager for RK3588 on Debian/Armbian
+ Installs /usr/bin/usbdevice and a systemd service to manage
+ USB gadget functions via configfs.
