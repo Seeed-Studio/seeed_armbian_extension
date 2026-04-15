@@ -358,6 +358,10 @@ function pre_prepare_partitions__secure_storage_partitions() {
 }
 
 function create_partition_table__secure_storage() {
+	if [[ "${AB_PART_OTA}" == "yes" ]]; then
+		display_alert "secure-storage" "Using A/B OTA partition table for security partition" "info"
+		return 0
+	fi
 
 	local next=${OFFSET} # Starting MiB
 	local p_index=1

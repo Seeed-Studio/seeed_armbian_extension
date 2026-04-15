@@ -785,14 +785,31 @@ function pre_prepare_partitions__ab_part_ota() {
 	if [[ "${AB_PART_OTA}" == "yes" ]]; then
 		USE_HOOK_FOR_PARTITION="yes"
 		AB_BOOT_SIZE=${AB_BOOT_SIZE:-256}  # 256MiB for each boot partition
-		AB_ROOTFS_SIZE=${AB_ROOTFS_SIZE:-4608}  # 4.5GiB for each rootfs partition
-        USERDATA=${USERDATA:-256}  # userdata partition by default
-        BOOTFS_TYPE="ext4"
-        ROOTFS_TYPE="ext4"
-        ROOT_FS_LABEL="armbi_roota"
+		if [[ -n "${AB_ROOTFS_SIZE}" ]]; then
+			AB_ROOTFS_SIZE_USER_DEFINED="yes"
+		else
+			AB_ROOTFS_SIZE=4608  # 4.5GiB minimum for each rootfs partition
+		fi
+		USERDATA=${USERDATA:-256}  # userdata partition by default
+		BOOTFS_TYPE="ext4"
+		ROOTFS_TYPE="ext4"
+		ROOT_FS_LABEL="armbi_roota"
         BOOT_FS_LABEL="armbi_boota"
 		display_alert "A/B partition OTA" "Creating A/B partitions: boot_a, boot_b, rootfs_a, rootfs_b" "info"
 	fi
+}
+
+function settle_ab_loop_partitions() {
+	if [[ "${AB_PART_OTA}" != "yes" || -z "${LOOP}" ]]; then
+		return 0
+	fi
+
+	display_alert "A/B partition OTA" "Refreshing loop partition mappings for ${LOOP}" "debug"
+	run_host_command_logged sync || true
+	run_host_command_logged partprobe "${LOOP}" || true
+	run_host_command_logged losetup -c "${LOOP}" || true
+	run_host_command_logged udevadm settle || true
+	sleep 2
 }
 
 function create_partition_table__ab_part_ota() {
@@ -823,6 +840,14 @@ function create_partition_table__ab_part_ota() {
 	# boot_b
 	script+="${p_index} : name=\"boot_b\", start=${next}MiB, size=${AB_BOOT_SIZE}MiB, type=${boot_type}\n"
 	next=$((next + AB_BOOT_SIZE)); local boot_b_index=${p_index}; p_index=$((p_index+1))
+	# security partition for RK auto decryption, when that extension is enabled
+	local security_index=""
+	if [[ "${CRYPTROOT_ENABLE}" == "yes" && "${RK_AUTO_DECRYP}" == "yes" ]]; then
+		SECURE_STORAGE_SECURITY_SIZE=${SECURE_STORAGE_SECURITY_SIZE:-4}
+		local sec_type="0FC63DAF-8483-4772-8E79-3D69D8477DE4"
+		script+="${p_index} : name=\"security\", start=${next}MiB, size=${SECURE_STORAGE_SECURITY_SIZE}MiB, type=${sec_type}\n"
+		next=$((next + SECURE_STORAGE_SECURITY_SIZE)); security_index=${p_index}; p_index=$((p_index+1))
+	fi
 	# rootfs_a
 	local root_type="${PARTITION_TYPE_UUID_ROOT:-0FC63DAF-8483-4772-8E79-3D69D8477DE4}"
     script+="${p_index} : name=\"rootfs_a\", start=${next}MiB, size=${AB_ROOTFS_SIZE}MiB, type=${root_type}\n"
@@ -837,11 +862,15 @@ function create_partition_table__ab_part_ota() {
 
 	display_alert "A/B partition OTA" "Custom A/B partition table:\n${script}" "debug"
 	echo -e "${script}" | run_host_command_logged sfdisk ${SDCARD}.raw || exit_with_error "A/B partition creation failed" "sfdisk"
+	settle_ab_loop_partitions
 
 	AB_BOOT_A_PART_INDEX=${boot_a_index}
 	AB_BOOT_B_PART_INDEX=${boot_b_index}
 	AB_ROOTFS_A_PART_INDEX=${rootfs_a_index}
 	AB_ROOTFS_B_PART_INDEX=${rootfs_b_index}
+	if [[ -n "${security_index}" ]]; then
+		SECURE_STORAGE_SECURITY_PART_INDEX=${security_index}
+	fi
 	
 	# Set bootpart and rootpart for Armbian partitioning logic
 	bootpart=${boot_a_index}
@@ -853,6 +882,8 @@ function format_partitions__ab_part_ota() {
 	if [[ "${AB_PART_OTA}" != "yes" ]]; then
 		return 0
 	fi
+
+	settle_ab_loop_partitions
 
 	# Format boot_b as ext4 with label armbi_bootb
 	if [[ -n "${AB_BOOT_B_PART_INDEX}" ]]; then
@@ -887,7 +918,26 @@ function format_partitions__ab_part_ota() {
 
 function prepare_image_size__ab_part_ota() {
 	if [[ "${AB_PART_OTA}" == "yes" ]]; then
-		FIXED_IMAGE_SIZE=$(((AB_ROOTFS_SIZE * 2) + $OFFSET + (AB_BOOT_SIZE * 2) + $UEFISIZE + $EXTRA_ROOTFS_MIB_SIZE + $USERDATA)) # MiB
+		if [[ "${AB_ROOTFS_SIZE_USER_DEFINED}" != "yes" ]]; then
+			local rootfs_multiplier=130
+			if [[ "${BUILD_DESKTOP}" == "yes" ]]; then
+				rootfs_multiplier=135
+			fi
+
+			local rootfs_margin=${AB_ROOTFS_MARGIN_MIB:-512}
+			local calculated_rootfs_size=$((((rootfs_size * rootfs_multiplier + 99) / 100) + rootfs_margin))
+			calculated_rootfs_size=$((((calculated_rootfs_size + 3) / 4) * 4))
+			if [[ ${calculated_rootfs_size} -gt ${AB_ROOTFS_SIZE} ]]; then
+				AB_ROOTFS_SIZE=${calculated_rootfs_size}
+				display_alert "A/B partition OTA" "Auto-sized each rootfs slot to ${AB_ROOTFS_SIZE} MiB" "info"
+			fi
+		fi
+
+		local security_size=0
+		if [[ "${CRYPTROOT_ENABLE}" == "yes" && "${RK_AUTO_DECRYP}" == "yes" ]]; then
+			security_size=${SECURE_STORAGE_SECURITY_SIZE:-4}
+		fi
+		FIXED_IMAGE_SIZE=$(((AB_ROOTFS_SIZE * 2) + $OFFSET + (AB_BOOT_SIZE * 2) + $UEFISIZE + $EXTRA_ROOTFS_MIB_SIZE + $USERDATA + security_size)) # MiB
 		display_alert "A/B partition OTA" "Setting FIXED_IMAGE_SIZE to ${FIXED_IMAGE_SIZE} MiB for equal rootfs_a and rootfs_b" "info"
 	fi
 }
