@@ -4,15 +4,6 @@ if [[ "${RK_SECURE_UBOOT_ENABLE}" == "yes" && "${CRYPTROOT_ENABLE}" != "yes" ]];
 fi
 
 if [[ "${CRYPTROOT_ENABLE}" == "yes" ]]; then
-	cryptroot_passphrase_len="${#CRYPTROOT_PASSPHRASE}"
-	if [[ "${cryptroot_passphrase_len}" -ne 64 ]]; then
-		display_alert "Cryptroot" "CRYPTROOT_PASSPHRASE must be exactly 64 characters (actual: ${cryptroot_passphrase_len})" "err"
-		if [[ "$(type -t exit_with_error || true)" == "function" ]]; then
-			exit_with_error "Invalid CRYPTROOT_PASSPHRASE length" "expected=64 actual=${cryptroot_passphrase_len}"
-		fi
-		exit 1
-	fi
-
 	enable_extension "seeed_armbian_extension/rk_secure-disk-encryption/rk-cryptroot-verbosity"
 fi
 
