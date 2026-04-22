@@ -13,6 +13,14 @@ log_step() {
     fi
 }
 
+first_line() {
+    while IFS= read -r line; do
+        printf '%s\n' "$line"
+        return 0
+    done
+    return 1
+}
+
 get_cmdline_crypt_uuid() {
     local token value
     for token in $(cat /proc/cmdline 2>/dev/null); do
@@ -45,7 +53,7 @@ for disk in /sys/block/*; do
         [ -f "$entry/partition" ] || continue
 
         devnode="/dev/$(basename "$entry")"
-        name="$(sed -n 's/^PARTNAME=//p' "$entry/uevent" | head -n1)"
+        name="$(sed -n 's/^PARTNAME=//p;q' "$entry/uevent")"
 
         if [ -n "$name" ]; then
             ln -sf "$devnode" "$BN_DIR/$name"
@@ -59,7 +67,8 @@ echo "[Decryption-disk] ln Done. Result:"
 ls -l $BN_DIR
 log_step "[Decryption-disk] by-name links created"
 
-/bin/ln -sf "$(blkid -t PARTLABEL=security -o device | head -n1)" /dev/block/by-name/security 2>/dev/null || true
+SECURITY_DEV="$(blkid -t PARTLABEL=security -o device 2>/dev/null | first_line || true)"
+[ -n "$SECURITY_DEV" ] && /bin/ln -sf "$SECURITY_DEV" /dev/block/by-name/security 2>/dev/null || true
 if [ ! -e /dev/block/by-name/security ]; then
     log_step "[Decryption-disk] Error: cannot resolve security partition (/dev/block/by-name/security)"
     blkid
@@ -72,7 +81,7 @@ log_step "[Decryption-disk] tee-supplicant started"
 
 
 # Check security partition header marker
-SECURITY_MARKER=$(head -c 4 /dev/block/by-name/security)
+SECURITY_MARKER="$(dd if=/dev/block/by-name/security bs=1 count=4 2>/dev/null)"
 
 log_step "[Decryption-disk] Security partition marker: $SECURITY_MARKER"
 
@@ -82,7 +91,7 @@ if [ "$SECURITY_MARKER" = "SSKR" ]; then
     log_step "[Decryption-disk] keybox_app read finished (SSKR path)"
 else
     log_step "[Decryption-disk] No SSKR marker, reading first 64 bytes as password..."
-    head -c 64 /dev/block/by-name/security > /tmp/syspw
+    dd if=/dev/block/by-name/security of=/tmp/syspw bs=1 count=64 2>/dev/null
     # Write password to keybox if needed
     log_step "[Decryption-disk] keybox_app write start"
     /usr/bin/keybox_app write
@@ -105,7 +114,7 @@ if [ -f /tmp/syspw ] && [ -s /tmp/syspw ]; then
     ROOT_DEVICE=""
     TARGET_LUKS_UUID="$(get_cmdline_crypt_uuid || true)"
     if [ -n "$TARGET_LUKS_UUID" ]; then
-        ROOT_DEVICE="$(blkid -t UUID="$TARGET_LUKS_UUID" -o device 2>/dev/null | head -n1)"
+        ROOT_DEVICE="$(blkid -t UUID="$TARGET_LUKS_UUID" -o device 2>/dev/null | first_line || true)"
         if [ -n "$ROOT_DEVICE" ]; then
             ROOT_TYPE="$(blkid -s TYPE -o value "$ROOT_DEVICE" 2>/dev/null || true)"
             if [ "$ROOT_TYPE" != "crypto_LUKS" ]; then
@@ -118,7 +127,7 @@ if [ -f /tmp/syspw ] && [ -s /tmp/syspw ]; then
 
     # Fallback: choose the first LUKS device
     if [ -z "$ROOT_DEVICE" ]; then
-        ROOT_DEVICE=$(blkid -t TYPE="crypto_LUKS" -o device | head -n1)
+        ROOT_DEVICE="$(blkid -t TYPE="crypto_LUKS" -o device 2>/dev/null | first_line || true)"
     fi
 
     if [ -z "$ROOT_DEVICE" ]; then
