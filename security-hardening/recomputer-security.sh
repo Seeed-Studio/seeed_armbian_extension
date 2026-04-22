@@ -76,3 +76,8 @@ EOF
 		display_alert "${board_label}" "fail2ban.service not found in image; skipping enable" "warn"
 	fi
 }
+
+function post_family_tweaks__seeed_recomputer_security_hardening() {
+	display_alert "Security hardening" "Applying reComputer security hardening defaults" "info"
+	seeed_recomputer_security_hardening_apply "${BOARD_NAME:-reComputer}"
+}

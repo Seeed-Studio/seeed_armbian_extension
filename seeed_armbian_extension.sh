@@ -26,3 +26,8 @@ if [[ "${OTA_ENABLE}" == "yes" ]]; then
 	display_alert "OTA_ENABLE" "Enable OTA extension ota-support" "info"
 	enable_extension "seeed_armbian_extension/armbian-ota/ota-support"
 fi
+
+if [[ "yes" == "yes" ]]; then
+	display_alert "Security hardening" "Enable security hardening extension recomputer-security" "info"
+	enable_extension "seeed_armbian_extension/security-hardening/recomputer-security"
+fi
