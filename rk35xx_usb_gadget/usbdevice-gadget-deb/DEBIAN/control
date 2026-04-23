@@ -1,5 +1,5 @@
 Package: usbdevice-gadget-rk3588
-Version: 1.0.0
+Version: 1.0.1
 Section: utils
 Priority: optional
 Architecture: arm64

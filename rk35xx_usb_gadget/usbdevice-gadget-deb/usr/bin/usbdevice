@@ -22,8 +22,10 @@
 # Uncomment below to see more logs
 # set -x
 
-# Load default env variables from profiles
-. /etc/profile
+# Load default env variables (avoid sourcing /etc/profile which triggers
+# profile.d scripts like armbian-check-first-login.sh in non-interactive
+# systemd context, causing firstlogin to loop and fill the disk)
+. /etc/environment
 
 LOG_FILE=/tmp/usbdevice.log
 USB_FUNCS_FILE=/tmp/.usbdevice
