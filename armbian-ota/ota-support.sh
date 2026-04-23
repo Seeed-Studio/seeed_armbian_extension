@@ -771,6 +771,13 @@ function pre_umount_final_image__894_install_ota_runtime() {
                 display_alert "OTA runtime" "Failed to install recovery runtime assets" "err"
                 return 1
             }
+
+            if [[ -f "${recovery_src}/back-list.txt" ]]; then
+                mkdir -p "${root_dir}/etc/armbian-ota"
+                cp "${recovery_src}/back-list.txt" "${root_dir}/etc/armbian-ota/back-list.txt" || {
+                    display_alert "OTA runtime" "Failed to install default recovery back-list.txt" "warn"
+                }
+            fi
         fi
     fi
 
