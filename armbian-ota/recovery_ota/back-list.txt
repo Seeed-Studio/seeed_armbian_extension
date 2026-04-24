@@ -28,6 +28,5 @@
 /etc/lightdm/lightdm.conf.d/22-armbian-autologin.conf
 /etc/gdm3/custom.conf
 /etc/sddm.conf.d/autologin.conf
-/etc/systemd/system/display-manager.service
 /var/lib/AccountsService/users
 /var/lib/AccountsService/icons
