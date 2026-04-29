@@ -29,8 +29,7 @@ jobs:
               libncurses-dev libffi-dev zlib1g-dev
               libgettextpo-dev libexpat-dev libudev-dev libical-dev
               libjson-c-dev libelf-dev python3-docutils
-            build_cmd: |
-              dpkg-buildpackage -us -uc -b
+            build_cmd: DEB_BUILD_OPTIONS="noddebs" dpkg-buildpackage -us -uc -b
 
           - name: hostapd-morse-tools
             source_dir: hostapd_morse_tools
@@ -40,7 +39,9 @@ jobs:
           - name: morsectrl-tools
             source_dir: morsectrl_tools
             build_deps: quilt libnl-3-dev libnl-genl-3-dev libnl-route-3-dev gcc-aarch64-linux-gnu
-            build_cmd: DEB_BUILD_OPTIONS="noddebs" dpkg-buildpackage -us -uc -b
+            build_cmd: |
+              sed -i 's|dh_builddeb --destdir=$(CURDIR)/output -- -Zxz|dh_builddeb -- -Zxz|' debian/rules
+              DEB_BUILD_OPTIONS="noddebs" dpkg-buildpackage -us -uc -b
 
           - name: wpa-supplicant-morse-tools
             source_dir: wpa_supplicant_morese_tools
@@ -50,17 +51,18 @@ jobs:
           - name: realtek-r8125-dkms
             source_dir: realtek-r8125-dkms
             build_deps: dh-sequence-dkms
-            build_cmd: dpkg-buildpackage -us -uc -b
+            build_cmd: DEB_BUILD_OPTIONS="noddebs" dpkg-buildpackage -us -uc -b
 
           - name: libmali-g610
             source_dir: rk3588_gmali
             build_deps: >-
               meson pkg-config libstdc++6 libgbm-dev libdrm-dev
-              libx11-dev libx11-xcb-dev libx11-xcb1 libxcb-dri2-0
-              libxdamage1 libxext6 libxfixes-dev libxrandr-dev
+              libx11-dev libx11-xcb-dev libx11-xcb1 libxcb-dri2-dev
+              libxcb-dri2-0 libxdamage-dev libxdamage1 libxext6
+              libxfixes-dev libxrandr-dev
               libwayland-dev libwayland-client0 cmake libegl-dev
               libgles-dev libvulkan-dev
-            build_cmd: dpkg-buildpackage -us -uc -b
+            build_cmd: DEB_BUILD_OPTIONS="noddebs" dpkg-buildpackage -us -uc -b
 
           - name: usbdevice-gadget
             source_dir: rk35xx_usb_gadget
