@@ -20,19 +20,26 @@ dec_algo(af rk_aiq_algo_af_itf.c ${AF_SRC})
 if(RKAIQ_HAVE_PDAF)
     if (${CMAKE_SYSTEM_NAME} STREQUAL "Android")
     if("${ARCH}" STREQUAL "arm")
-        configure_file(${CMAKE_CURRENT_SOURCE_DIR}/android/arm/librkaiq_pdaf.a ${LIBRARY_OUTPUT_PATH}/librkaiq_pdaf.a COPYONLY)
+        set(_PDAF_SRC ${CMAKE_CURRENT_SOURCE_DIR}/android/arm/librkaiq_pdaf.a)
     endif()
     if("${ARCH}" STREQUAL "aarch64")
-        configure_file(${CMAKE_CURRENT_SOURCE_DIR}/android/arm64/librkaiq_pdaf.a ${LIBRARY_OUTPUT_PATH}/librkaiq_pdaf.a COPYONLY)
+        set(_PDAF_SRC ${CMAKE_CURRENT_SOURCE_DIR}/android/arm64/librkaiq_pdaf.a)
     endif()
     else ()
     if("${ARCH}" STREQUAL "arm")
-        configure_file(${CMAKE_CURRENT_SOURCE_DIR}/linux/arm/librkaiq_pdaf.a ${LIBRARY_OUTPUT_PATH}/librkaiq_pdaf.a COPYONLY)
+        set(_PDAF_SRC ${CMAKE_CURRENT_SOURCE_DIR}/linux/arm/librkaiq_pdaf.a)
     endif()
     if("${ARCH}" STREQUAL "aarch64")
-        configure_file(${CMAKE_CURRENT_SOURCE_DIR}/linux/aarch64/librkaiq_pdaf.a ${LIBRARY_OUTPUT_PATH}/librkaiq_pdaf.a COPYONLY)
+        set(_PDAF_SRC ${CMAKE_CURRENT_SOURCE_DIR}/linux/aarch64/librkaiq_pdaf.a)
     endif()
     endif()
+
+    # Copy pdaf library at build time (configure-time file(COPY) is unreliable)
+    add_custom_target(copy_pdaf ALL
+        COMMAND ${CMAKE_COMMAND} -E make_directory ${LIBRARY_OUTPUT_PATH}
+        COMMAND ${CMAKE_COMMAND} -E copy ${_PDAF_SRC} ${LIBRARY_OUTPUT_PATH}/librkaiq_pdaf.a
+        COMMENT "Copying librkaiq_pdaf.a to ${LIBRARY_OUTPUT_PATH}"
+    )
 
     add_library(rkaiq_pdaf STATIC IMPORTED GLOBAL)
     set_target_properties(rkaiq_pdaf PROPERTIES IMPORTED_LOCATION 	"${PREFIX}rkaiq_pdaf.${SUFFIX}")
