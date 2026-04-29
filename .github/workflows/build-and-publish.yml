@@ -67,6 +67,16 @@ jobs:
             build_deps: ''
             build_cmd: bash build-usbdevice-deb.sh
 
+          - name: camera-engine-rkaiq-rk3576
+            source_dir: camera_engine_rkaiq
+            build_deps: cmake pkg-config libdrm-dev
+            build_cmd: bash build-deb.sh rk3576
+
+          - name: camera-engine-rkaiq-rk3588
+            source_dir: camera_engine_rkaiq
+            build_deps: cmake pkg-config libdrm-dev
+            build_cmd: bash build-deb.sh rk3588
+
     steps:
       - name: Checkout
         uses: actions/checkout@v4
