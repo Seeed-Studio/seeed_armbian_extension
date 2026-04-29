@@ -117,9 +117,7 @@ if (CMAKE_CXX_COMPILER_ID MATCHES "GNU")
             -Wno-error=stringop-truncation
             -Wno-sign-compare
             -Wno-error=sign-compare
-            -Wno-implicit-function-declaration
             -Wno-error=implicit-function-declaration
-            -Wno-int-to-pointer-cast
             -Wno-error=int-to-pointer-cast
             )
     endif()
