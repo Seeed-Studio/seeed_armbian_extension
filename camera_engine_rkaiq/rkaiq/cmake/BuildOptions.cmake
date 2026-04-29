@@ -51,9 +51,12 @@ endif()
 
 message(STATUS "Building ISP v${RKAIQ_ISP_VERSION} rkaiq for soc ${RKAIQ_TARGET_SOC}")
 
-if (ISP_HW_VERSION STRLESS "-DISP_HW_V20")
-    message(FATAL_ERROR "ISP_HW_VERSION MUST be set")
+# Auto-derive ISP_HW_VERSION from RKAIQ_ISP_VERSION if not passed externally
+if (NOT ISP_HW_VERSION)
+    string(TOUPPER "${RKAIQ_ISP_VERSION}" ISP_HW_VER_UPPER)
+    set(ISP_HW_VERSION "-DISP_HW_V${ISP_HW_VER_UPPER}")
 endif()
+message(STATUS "ISP_HW_VERSION: ${ISP_HW_VERSION}")
 
 set(RKAIQ_HAVE_AWB  TRUE CACHE INTERNAL "Build rkaiq's AWB"      FORCE)
 set(RKAIQ_HAVE_GIC  TRUE CACHE INTERNAL "Build rkaiq's GIC"       FORCE)
