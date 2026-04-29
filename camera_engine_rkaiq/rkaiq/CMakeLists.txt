@@ -1397,6 +1397,17 @@ set(RK_AIQ_STATIC_LIB_ARS)
 set(STATIC_LIB_PREFIX $<TARGET_FILE:)
 set(STATIC_LIB_SUFFIX >)
 
+# Derive ARCH from CMAKE_SYSTEM_PROCESSOR if not set externally
+if (NOT ARCH)
+    if (CMAKE_SYSTEM_PROCESSOR MATCHES "aarch64|arm64")
+        set(ARCH "aarch64")
+    elseif (CMAKE_SYSTEM_PROCESSOR MATCHES "arm")
+        set(ARCH "arm")
+    else()
+        set(ARCH "${CMAKE_SYSTEM_PROCESSOR}")
+    endif()
+endif()
+
 if(GENMESH_ONLINE AND (RKAIQ_HAVE_LDCH_V10 OR RKAIQ_HAVE_LDCH_V21 OR RKAIQ_HAVE_FEC_V10))
     set(GENMESH_LIBS genMeshLib)
     if (${CMAKE_SYSTEM_NAME} EQUAL "")
@@ -1467,6 +1478,10 @@ set_target_properties(rkaiq_tmp PROPERTIES FOLDER "rk_aiq")
 set_target_properties(rkaiq_tmp PROPERTIES CLEAN_DIRECT_OUTPUT 1)
 #target_compile_options(rkaiq_tmp PRIVATE -DAIQ_MALLOC_DBG)
 add_dependencies(rkaiq_tmp j2s_parser)
+
+if (RKAIQ_HAVE_PDAF)
+    add_dependencies(rkaiq_tmp copy_pdaf)
+endif()
 
 if (RKAIQ_BUILD_BINARY_IQ)
     add_dependencies(rkaiq_tmp j2s4b)
