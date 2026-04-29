@@ -15,6 +15,7 @@
  */
 
 #include "MessageParser.hpp"
+#include <cstdio>
 
 #define BUFFER_MAX_SIZE (1024 * 512)
 

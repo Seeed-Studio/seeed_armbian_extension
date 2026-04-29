@@ -109,6 +109,12 @@ if (CMAKE_CXX_COMPILER_ID MATCHES "GNU")
             -Wno-address-of-packed-member
             )
     endif()
+    if (GCC_VERSION VERSION_GREATER 12 OR GCC_VERSION VERSION_EQUAL 12)
+        add_compile_options(
+            -Wno-stringop-overflow
+            -Wno-error=stringop-overflow
+            )
+    endif()
 elseif (CMAKE_CXX_COMPILER_ID MATCHES "Clang")
     add_definitions(-D__ARM_NEON)
     add_compile_options(

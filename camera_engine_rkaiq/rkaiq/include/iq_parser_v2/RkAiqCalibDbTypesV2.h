@@ -38,6 +38,7 @@
 #ifdef ISP_HW_V33
 #include "iq_parser_v2/RkAiqCalibDbV2TypesIsp33.h"
 #endif
+#include "common/rk_aiq_comm.h"
 #include "iq_parser_v2/RkAiqUapitypes.h"
 #include "RkAiqCalibDbJustForRtt.h"
 
