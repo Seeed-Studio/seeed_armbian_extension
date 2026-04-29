@@ -47,9 +47,14 @@ add_custom_target(
     j2s_parser
     COMMAND ${CMAKE_C_COMPILER}
     ${ROOT_PROJ_DIR}/include/iq_parser_v2/RkAiqCalibDbTypesV2.h -E -C -o .temp.h ${ISP_HW_VERSION}
+    -I${ROOT_PROJ_DIR}/
+    -I${ROOT_PROJ_DIR}/include
     -I${ROOT_PROJ_DIR}/include/common
+    -I${ROOT_PROJ_DIR}/include/uAPI2
+    -I${ROOT_PROJ_DIR}/include/algos
     -I${ROOT_PROJ_DIR}/include/iq_parser_v2
     -I${ROOT_PROJ_DIR}/include/iq_parser
+    -I${ROOT_PROJ_DIR}/include/xcore
     COMMAND ${PROJECT_SOURCE_DIR}/script/header_strip.sh
     .temp.h output.h
 
