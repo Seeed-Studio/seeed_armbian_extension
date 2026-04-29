@@ -86,9 +86,9 @@ jobs:
           set -euo pipefail
           ${{ matrix.build_cmd }}
           mkdir -p /tmp/debs
-          find .. -maxdepth 1 -name '*.deb' -exec cp {} /tmp/debs/ \;
+          find .. -maxdepth 1 -name '*.deb' ! -name 'Makefile.deb' -exec cp {} /tmp/debs/ \;
           # 也搜索子目录（make deb 可能把 deb 放在子目录）
-          find . -name '*.deb' -exec cp {} /tmp/debs/ \;
+          find . -name '*.deb' ! -name 'Makefile.deb' -exec cp {} /tmp/debs/ \;
           echo "Built packages:"
           ls -lh /tmp/debs/*.deb
 
