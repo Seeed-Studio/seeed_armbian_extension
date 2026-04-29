@@ -57,7 +57,7 @@ jobs:
             source_dir: rk3588_gmali
             build_deps: >-
               meson pkg-config libstdc++6 libgbm-dev libdrm-dev
-              libx11-dev libx11-xcb-dev libx11-xcb1 libxcb-dri2-dev
+              libx11-dev libx11-xcb-dev libx11-xcb1 libxcb-dri2-0-dev
               libxcb-dri2-0 libxdamage-dev libxdamage1 libxext6
               libxfixes-dev libxrandr-dev
               libwayland-dev libwayland-client0 cmake libegl-dev
