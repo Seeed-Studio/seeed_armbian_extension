@@ -29,9 +29,7 @@ jobs:
               libncurses-dev libffi-dev zlib1g-dev
               libgettextpo-dev libexpat-dev libudev-dev libical-dev
               libjson-c-dev libelf-dev python3-docutils
-            build_cmd: |
-              sed -i 's|dh_builddeb --destdir=$(CURDIR)/output -- -Zxz|dh_builddeb -- -Zxz|' debian/rules
-              DEB_BUILD_OPTIONS="noddebs" dpkg-buildpackage -us -uc -b
+            build_cmd: DEB_BUILD_OPTIONS="noddebs" dpkg-buildpackage -us -uc -b
 
           - name: hostapd-morse-tools
             source_dir: hostapd_morse_tools
@@ -41,9 +39,7 @@ jobs:
           - name: morsectrl-tools
             source_dir: morsectrl_tools
             build_deps: quilt libnl-3-dev libnl-genl-3-dev libnl-route-3-dev gcc-aarch64-linux-gnu
-            build_cmd: |
-              sed -i 's|dh_builddeb --destdir=$(CURDIR)/output -- -Zxz|dh_builddeb -- -Zxz|' debian/rules
-              DEB_BUILD_OPTIONS="noddebs" dpkg-buildpackage -us -uc -b
+            build_cmd: DEB_BUILD_OPTIONS="noddebs" dpkg-buildpackage -us -uc -b
 
           - name: wpa-supplicant-morse-tools
             source_dir: wpa_supplicant_morese_tools
