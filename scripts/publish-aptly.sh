@@ -83,8 +83,6 @@ echo "=== Step 6: Publish repository ==="
 aptly -config="${APTLY_CONFIG}" \
     -batch \
     -gpg-key="${GPG_KEY}" \
-    -passphrase="" \
-    -skip-signing=false \
     publish repo \
     -distribution="${DISTRIBUTION}" \
     -component="main" \
