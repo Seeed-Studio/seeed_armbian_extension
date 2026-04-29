@@ -89,7 +89,6 @@ aptly -config="${APTLY_CONFIG}" \
     -architectures="arm64" \
     -label="Seeed Studio" \
     -origin="Seeed Studio" \
-    -description="Seeed Studio reComputer packages" \
     "${REPO_NAME}"
 
 echo ""
