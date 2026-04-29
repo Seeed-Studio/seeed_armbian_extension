@@ -1,0 +1,165 @@
+name: Build and Publish APT Repository
+
+on:
+  # 手动触发
+  workflow_dispatch:
+    inputs:
+      source_ref:
+        description: 'Source branch/tag for deb_sourece packages'
+        required: false
+        default: 'deb_sourece'
+
+  # 当 deb_sourece 分支有新提交时自动触发
+  push:
+    branches: [deb_sourece]
+
+jobs:
+  build-debs:
+    runs-on: ubuntu-24.04-arm
+    strategy:
+      fail-fast: false
+      matrix:
+        package:
+          - name: fcs960k-aic-bluez
+            source_dir: FCS960K-aic-bluz
+            build_cmd: make deb
+          - name: hostapd-morse-tools
+            source_dir: hostapd_morse_tools
+            build_cmd: make deb
+          - name: morsectrl-tools
+            source_dir: morsectrl_tools
+            build_cmd: make deb
+          - name: wpa-supplicant-morse-tools
+            source_dir: wpa_supplicant_morese_tools
+            build_cmd: make deb
+          - name: usbdevice-gadget
+            source_dir: rk35xx_usb_gadget
+            build_cmd: make deb
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.inputs.source_ref || 'deb_sourece' }}
+
+      - name: Install build dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y \
+            build-essential devscripts debhelper \
+            autoconf automake libtool pkg-config \
+            dpkg-dev fakeroot
+
+      - name: Build ${{ matrix.package.name }}
+        working-directory: ${{ matrix.package.source_dir }}
+        run: |
+          set -euo pipefail
+          ${{ matrix.package.build_cmd }}
+          mkdir -p /tmp/debs
+          find . -name '*.deb' -exec cp {} /tmp/debs/ \;
+
+      - name: Upload debs
+        uses: actions/upload-artifact@v4
+        with:
+          name: debs-${{ matrix.package.name }}
+          path: /tmp/debs/*.deb
+
+  # 从 GitHub Releases 下载预编译的 deb 包（复杂构建的包）
+  download-prebuilt:
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - repo: Seeed-Studio/seeed_armbian_extension
+            tag: v1.0
+            pattern: 'camera_engine_rkaiq_rk3588_arm64_with_service.deb'
+            name: camera-engine-rkaiq-rk3588
+          - repo: Seeed-Studio/seeed_armbian_extension
+            tag: v1.0
+            pattern: 'rk3576-camera-engine-rkaiq.deb'
+            name: camera-engine-rkaiq-rk3576
+          - repo: Seeed-Studio/seeed_armbian_extension
+            tag: v1.0
+            pattern: 'libmali-valhall-g610*.deb'
+            name: libmali-g610
+          - repo: Seeed-Studio/seeed_armbian_extension
+            tag: v1.0
+            pattern: 'realtek-r8125-kmod*.deb'
+            name: realtek-r8125-kmod
+
+    steps:
+      - name: Download ${{ matrix.name }} from releases
+        run: |
+          mkdir -p /tmp/debs
+          gh release download ${{ matrix.tag }} \
+            --repo ${{ matrix.repo }} \
+            --pattern '${{ matrix.pattern }}' \
+            --dir /tmp/debs
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Upload debs
+        uses: actions/upload-artifact@v4
+        with:
+          name: debs-${{ matrix.name }}
+          path: /tmp/debs/*.deb
+
+  publish-apt:
+    needs: [build-debs, download-prebuilt]
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+      pages: write
+      id-token: write
+
+    steps:
+      - name: Checkout (for publish scripts)
+        uses: actions/checkout@v4
+
+      - name: Download all deb artifacts
+        uses: actions/download-artifact@v4
+        with:
+          path: /tmp/all-debs
+          pattern: debs-*
+          merge-multiple: true
+
+      - name: Install aptly and dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y aptly gnupg2
+
+      - name: Import GPG key
+        run: |
+          echo "${{ secrets.APT_GPG_PRIVATE_KEY }}" | base64 -d | gpg --batch --import
+          echo "allow-preset-passphrase" >> ~/.gnupg/gpg-agent.conf
+          gpgconf --kill gpg-agent
+        env:
+          APT_GPG_PRIVATE_KEY: ${{ secrets.APT_GPG_PRIVATE_KEY }}
+
+      - name: Setup aptly and publish
+        run: |
+          chmod +x scripts/*.sh
+          scripts/publish-aptly.sh /tmp/all-debs
+        env:
+          APT_GPG_KEY_ID: ${{ secrets.APT_GPG_KEY_ID }}
+
+      - name: Upload Pages artifact
+        uses: actions/upload-pages-artifact@v3
+        with:
+          path: public
+
+  deploy-pages:
+    needs: publish-apt
+    runs-on: ubuntu-latest
+    permissions:
+      pages: write
+      id-token: write
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+
+    steps:
+      - name: Deploy to GitHub Pages
+        id: deployment
+        uses: actions/deploy-pages@v4
