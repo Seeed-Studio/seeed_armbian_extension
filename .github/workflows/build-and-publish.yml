@@ -27,36 +27,36 @@ jobs:
               autoconf automake libtool pkg-config
               libglib2.0-dev libdbus-1-dev libreadline-dev
               libncurses-dev libffi-dev zlib1g-dev
-              libgettextpo-dev libexpat11-dev libudev-dev libical-dev
+              libgettextpo-dev libexpat-dev libudev-dev libical-dev
             build_cmd: |
               dpkg-buildpackage -us -uc -b
 
           - name: hostapd-morse-tools
             source_dir: hostapd_morse_tools
-            build_deps: libnl-3-dev libnl-genl-3-dev libssl-dev libdbus-1-dev
+            build_deps: libnl-3-dev libnl-genl-3-dev libnl-route-3-dev libssl-dev libdbus-1-dev
             build_cmd: make deb
 
           - name: morsectrl-tools
             source_dir: morsectrl_tools
-            build_deps: libnl-3-dev libnl-genl-3-dev
+            build_deps: quilt libnl-3-dev libnl-genl-3-dev libnl-route-3-dev
             build_cmd: dpkg-buildpackage -us -uc -b
 
           - name: wpa-supplicant-morse-tools
             source_dir: wpa_supplicant_morese_tools
-            build_deps: libnl-3-dev libnl-genl-3-dev libssl-dev libdbus-1-dev
+            build_deps: libnl-3-dev libnl-genl-3-dev libnl-route-3-dev libssl-dev libdbus-1-dev
             build_cmd: make deb
 
           - name: realtek-r8125-dkms
             source_dir: realtek-r8125-dkms
-            build_deps: dkms
+            build_deps: dh-sequence-dkms
             build_cmd: dpkg-buildpackage -us -uc -b
 
           - name: libmali-g610
             source_dir: rk3588_gmali
             build_deps: >-
               meson pkg-config libstdc++6 libgbm-dev libdrm-dev
-              libx11-xcb1 libxcb-dri2-0 libxdamage1 libxext6
-              libwayland-client0
+              libx11-dev libx11-xcb1 libxcb-dri2-0 libxdamage1 libxext6
+              libwayland-dev libwayland-client0
             build_cmd: dpkg-buildpackage -us -uc -b
 
           - name: usbdevice-gadget
