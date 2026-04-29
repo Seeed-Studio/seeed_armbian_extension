@@ -24,4 +24,4 @@ override_dh_auto_install:
 
 override_dh_builddeb:
 	mkdir -p $(CURDIR)/output
-	dh_builddeb --destdir=$(CURDIR)/output -- -Zxz
+	dh_builddeb -- -Zxz
