@@ -1,0 +1,5 @@
+camera-engine-rkaiq-@SOC@ (@VERSION@-1) unstable; urgency=low
+
+  * Build from source at tag linux-6.1-stan-rkr4
+
+ -- Seeed Studio <zuobaozhu@gmail.com>  Wed, 29 Apr 2026 00:00:00 +0000

@@ -1,0 +1,12 @@
+Source: camera-engine-rkaiq-@SOC@
+Section: libs
+Priority: optional
+Maintainer: Seeed Studio <zuobaozhu@gmail.com>
+Build-Depends: debhelper (>= 10), cmake, pkg-config, libdrm-dev
+
+Package: camera-engine-rkaiq-@SOC@
+Architecture: arm64
+Depends: ${shlibs:Depends}, ${misc:Depends}, systemd
+Description: Rockchip RKAIQ camera engine for @SOC@
+ Rockchip ISP and AIQ runtime libraries, binaries, and camera
+ tuning profiles for the @SOC@ SoC.
