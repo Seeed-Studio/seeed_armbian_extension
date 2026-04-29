@@ -53,8 +53,8 @@ sudo apt-get install <package-name>
 
 | Secret | 说明 |
 |--------|------|
-| `APT_GPG_PRIVATE_KEY` | GPG 私钥（base64 编码） |
-| `APT_GPG_KEY_ID` | GPG 密钥 ID |
+| `ARMBIAN_APT_GPG_PRIVATE_KEY` | GPG 私钥（base64 编码） |
+| `ARMBIAN_APT_GPG_KEY_ID` | GPG 密钥 ID |
 
 ### 生成 GPG 密钥
 

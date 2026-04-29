@@ -5,13 +5,13 @@
 # 用法: ./scripts/publish-aptly.sh <deb-directory>
 #
 # 环境变量:
-#   APT_GPG_KEY_ID — GPG 签名密钥 ID
+#   ARMBIAN_APT_GPG_KEY_ID — GPG 签名密钥 ID
 #
 
 set -euo pipefail
 
 DEB_DIR="${1:?Usage: $0 <deb-directory>}"
-GPG_KEY="${APT_GPG_KEY_ID:?APT_GPG_KEY_ID not set}"
+GPG_KEY="${ARMBIAN_APT_GPG_KEY_ID:?ARMBIAN_APT_GPG_KEY_ID not set}"
 REPO_NAME="seeed-recomputer"
 DISTRIBUTION="stable"
 PUBLIC_DIR="$(pwd)/public"
