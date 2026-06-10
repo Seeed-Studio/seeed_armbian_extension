@@ -1,0 +1,3 @@
+usr/bin/morse-hostapd
+usr/bin/morse-hostapd_cli
+etc/morse-hostapd.conf

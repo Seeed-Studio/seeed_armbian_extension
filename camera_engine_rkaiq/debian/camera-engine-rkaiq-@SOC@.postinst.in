@@ -1,0 +1,12 @@
+#!/bin/sh
+set -e
+
+if [ "$1" = "configure" ]; then
+    if command -v systemctl >/dev/null 2>&1; then
+        systemctl daemon-reload || true
+        systemctl enable rkaiq_3A.service || true
+        systemctl restart rkaiq_3A.service || true
+    fi
+fi
+
+exit 0

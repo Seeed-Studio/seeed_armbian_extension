@@ -1,0 +1,73 @@
+Source: fcs960k-aic-bluez
+Maintainer: "Radxa Computer Co., Ltd" <dev@radxa.com>
+Section: misc
+Priority: optional
+Standards-Version: 4.6.0
+Build-Depends: debhelper-compat (=13),
+               autoconf,
+               automake,
+               libtool,
+               pkg-config,
+               libglib2.0-dev,
+               libdbus-1-dev,
+               libreadline-dev,
+               libncurses-dev,
+               libffi-dev,
+               zlib1g-dev,
+               libgettextpo-dev,
+               libexpat1-dev,
+               libudev-dev,
+               libical-dev,
+               libjson-c-dev,
+               libelf-dev,
+               flex,
+               bison,
+               python3-docutils,
+               crossbuild-essential-arm64 [!arm64],
+               libglib2.0-dev:arm64 [!arm64],
+               libdbus-1-dev:arm64 [!arm64],
+               libreadline-dev:arm64 [!arm64],
+               libncurses-dev:arm64 [!arm64],
+               libffi-dev:arm64 [!arm64],
+               zlib1g-dev:arm64 [!arm64],
+               libgettextpo-dev:arm64 [!arm64],
+               libexpat1-dev:arm64 [!arm64],
+               libical-dev:arm64 [!arm64],
+               libjson-c-dev:arm64 [!arm64],
+               libelf-dev:arm64 [!arm64],
+
+Package: fcs960k-aic-bluez
+Architecture: any
+Section: misc
+Priority: optional
+Depends: ${shlibs:Depends},
+         ${misc:Depends},
+Suggests: pulseaudio-module-bluetooth,
+Conflicts: bluez,
+Replaces: bluez,
+Breaks: bluez (<< 5.66),
+Description: BlueZ Bluetooth tools for AIC FCS960K
+ BlueZ is the official Linux Bluetooth protocol stack. It is an
+ open source project distributed under GNU General Public License (GPL).
+ .
+ This package contains the Bluetooth daemons and tools for the AIC FCS960K chip.
+ It includes:
+  - bluetoothd: Bluetooth daemon
+  - bluetoothctl: Interactive Bluetooth control tool
+  - hcitool, hciconfig: HCI configuration tools
+  - btmgmt: Management interface tool
+  - rfcomm, sdptool: Protocol tools
+  - And other Bluetooth utilities
+
+Package: fcs960k-aic-bluez-lib
+Architecture: any
+Section: libs
+Priority: optional
+Depends: ${shlibs:Depends},
+         ${misc:Depends},
+Conflicts: bluez-lib,
+Replaces: bluez-lib,
+Breaks: bluez-lib (<< 5.66),
+Description: BlueZ Bluetooth library for AIC FCS960K
+ This package contains the libbluetooth library for the AIC FCS960K chip,
+ which provides the Bluetooth programming API.

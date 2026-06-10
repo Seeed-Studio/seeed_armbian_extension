@@ -1,0 +1,12 @@
+[Unit]
+Description=Rockchip 3A Image Quality Server
+After=dev-media0.device
+
+[Service]
+Type=simple
+ExecStart=/usr/bin/rkaiq_3A_server
+Restart=on-failure
+RestartSec=2
+
+[Install]
+WantedBy=multi-user.target

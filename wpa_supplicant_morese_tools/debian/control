@@ -1,0 +1,22 @@
+Source: wpa-supplicant-morse-tools
+Section: net
+Priority: optional
+Maintainer: Radxa Computer Co., Ltd <dev@radxa.com>
+Build-Depends: debhelper-compat (= 13),
+ quilt,
+ libnl-3-dev:arm64,
+ libnl-genl-3-dev:arm64,
+ libnl-route-3-dev:arm64,
+ libssl-dev:arm64,
+ pkg-config,
+Standards-Version: 4.6.2
+Homepage: https://w1.fi/wpa_supplicant/
+Rules-Requires-Root: no
+
+Package: wpa-supplicant-morse-tools
+Architecture: arm64
+Depends: ${shlibs:Depends}, ${misc:Depends}
+Description: WPA Supplicant for WiFi authentication
+ WPA Supplicant is a WiFi authentication client supporting WPA, WPA2,
+ and WPA3 authentication protocols. This package is built specifically
+ for AIC FCS960K platform with cross-compilation.

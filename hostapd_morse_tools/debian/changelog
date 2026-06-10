@@ -1,0 +1,8 @@
+hostapd-morse-tools (1.0-1) unstable; urgency=medium
+
+  * Initial release for AIC fgh100m chip
+  * Based on hostapd v2.9 (rel_1_9_4_2023_Nov_02)
+  * Cross-compiled for arm64 architecture
+  * Configured with libnl-3 and openssl support
+
+ -- Radxa Computer Co., Ltd <dev@radxa.com>  Sun, 19 Jan 2026 00:00:00 +0000

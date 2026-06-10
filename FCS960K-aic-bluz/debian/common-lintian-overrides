@@ -1,0 +1,15 @@
+# This is a native package
+binary-native-package-is-legacy-maintainer-format
+missing-debian-source-format
+very-long-line-length-in-source-file
+
+# Override for cross-compiled binaries
+arch-dependent-file-in-usr-share
+ statically-linked-binary
+
+# Experimental features
+package-supports-alternative-init-but-no-init.d-script
+
+# BlueZ specific
+binary-without-manpage
+missing-manpage
