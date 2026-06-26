@@ -103,6 +103,34 @@ escape_html() {
     printf '%s' "$1" | sed -e 's/&/\&amp;/g' -e 's/</\&lt;/g' -e 's/>/\&gt;/g' -e 's/"/\&quot;/g'
 }
 
+# ── Resolve pool path for download links ─────────────────────────────────────
+# aptly places each deb under pool/main/<prefix>/<pkgname>/<filename>. Build a
+# filename→path map from the aptly publish output (public/, produced by
+# publish-aptly.sh) so links match the actual layout — including lib* packages
+# whose pool prefix is "lib<2nd-char>" rather than the first char. Falls back
+# to the Debian convention when public/ isn't available (e.g. local preview).
+declare -A pool_map=()
+if [[ -d public ]]; then
+    while IFS= read -r f; do
+        pool_map["$(basename "$f")"]="${f#public/}"
+    done < <(find public/pool -type f -name '*.deb' 2>/dev/null)
+fi
+
+pool_path_for() {
+    local filename="$1" pkgname="$2"
+    if [[ -n "${pool_map[$filename]:-}" ]]; then
+        printf '%s' "${pool_map[$filename]}"
+        return
+    fi
+    local prefix
+    if [[ "$pkgname" == lib* ]]; then
+        prefix="lib${pkgname:3:1}"
+    else
+        prefix="${pkgname:0:1}"
+    fi
+    printf 'pool/main/%s/%s/%s' "$prefix" "$pkgname" "$filename"
+}
+
 # ── Category order & display ─────────────────────────────────────────────────
 CATEGORY_ORDER=(
     "Kernel"
@@ -188,6 +216,8 @@ header.usage { background: #f6f8fa; padding: 16px 20px; border-radius: 8px; bord
 footer { margin-top: 40px; padding-top: 16px; border-top: 1px solid #d0d7de;
          color: #656d76; font-size: 13px; }
 footer a { color: #0969da; text-decoration: none; }
+td.size a { color: #0969da; text-decoration: none; }
+td.size a:hover { text-decoration: underline; }
 EOF
     printf '</style>\n</head>\n<body>\n'
     printf '<h1>Seeed reComputer APT Repository</h1>\n'
@@ -229,11 +259,13 @@ EOF
 
         while IFS=$'\t' read -r filename pkgname version arch description file_size_h inst_size_h; do
             [[ -z "$filename" ]] && continue
+            pool_path=$(pool_path_for "$filename" "$pkgname")
+            href="${REPO_URL:+${REPO_URL}/}${pool_path}"
             printf '<tr>'
             printf '<td class="pkg"><code>%s</code></td>' "$(escape_html "$pkgname")"
             printf '<td>%s</td>' "$(escape_html "$version")"
             printf '<td class="arch">%s</td>' "$(escape_html "$arch")"
-            printf '<td class="size">%s</td>' "$(escape_html "$file_size_h")"
+            printf '<td class="size"><a href="%s">%s</a></td>' "$(escape_html "$href")" "$(escape_html "$file_size_h")"
             printf '<td class="size">%s</td>' "$(escape_html "${inst_size_h:-—}")"
             printf '<td class="desc">%s</td>' "$(escape_html "$description")"
             printf '</tr>\n'
