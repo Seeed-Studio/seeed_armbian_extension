@@ -11,12 +11,12 @@ on:
         description: 'Release tag containing SDK deb packages (leave empty to skip)'
         required: false
         default: 'rockchip-sdk-debs'
-      kernel_rk3576:
+      build_rk3576:
         description: 'Build kernel recomputer-rk3576-devkit'
         required: false
         type: boolean
         default: true
-      kernel_rk3588:
+      build_rk3588:
         description: 'Build kernel recomputer-rk3588-devkit'
         required: false
         type: boolean
@@ -25,12 +25,66 @@ on:
   push:
     branches: [deb_source]
 
+# ──────────────────────────────────────────────────
+# Single workflow: userspace debs (ARM) and kernel +
+# U-Boot debs (x86 cross-compile) build in parallel,
+# then publish merges everything into one APT repo.
+# No cross-workflow release cache, no chained trigger.
+# ──────────────────────────────────────────────────
+
 jobs:
   # ──────────────────────────────────────────────────
-  # Build all packages on Debian Bookworm (oldest supported).
+  # Build a JSON matrix of boards from the input flags.
+  # On push (no inputs), both boards default to true.
+  # ──────────────────────────────────────────────────
+  prepare:
+    runs-on: ubuntu-latest
+    outputs:
+      matrix: ${{ steps.gen.outputs.matrix }}
+      armbian_ref: ${{ steps.gen.outputs.armbian_ref }}
+    steps:
+      - name: Generate matrix
+        id: gen
+        env:
+          INPUT_RK3576: ${{ inputs.build_rk3576 || 'true' }}
+          INPUT_RK3588: ${{ inputs.build_rk3588 || 'true' }}
+        run: |
+          set -eu
+          boards=()
+          [[ "${INPUT_RK3576}" == 'true' ]] && boards+=('recomputer-rk3576-devkit')
+          [[ "${INPUT_RK3588}" == 'true' ]] && boards+=('recomputer-rk3588-devkit')
+          if [ ${#boards[@]} -eq 0 ]; then
+            echo "::error::No boards selected (enable build_rk3576 or build_rk3588)."
+            exit 1
+          fi
+          for b in "${boards[@]}"; do
+            if [[ ! "$b" =~ ^[a-zA-Z0-9][a-zA-Z0-9._-]*$ ]]; then
+              echo "::error::Invalid board name: '$b'"
+              exit 1
+            fi
+          done
+          matrix=$(printf '%s\n' "${boards[@]}" | jq -Rc '{board: .}' | jq -sc '.')
+          {
+            echo "matrix<<EOF"
+            echo "${matrix}"
+            echo "EOF"
+          } >> "$GITHUB_OUTPUT"
+          REF_NAME="${GITHUB_REF_NAME}"
+          LSREMOTE=$(git ls-remote "https://github.com/Seeed-Studio/armbian-build.git" "${REF_NAME}" 2>/dev/null || true)
+          if [[ -n "${LSREMOTE}" ]]; then
+            RESOLVED="${REF_NAME}"
+          else
+            RESOLVED="main"
+            echo "::warning::Ref '${REF_NAME}' not found in Seeed-Studio/armbian-build, using 'main'."
+          fi
+          echo "armbian_ref=${RESOLVED}" >> "$GITHUB_OUTPUT"
+          echo "Selected boards: ${boards[*]}"
+
+  # ──────────────────────────────────────────────────
+  # Build all userspace packages on Debian Bookworm (oldest supported).
   # Binaries are forward-compatible with newer distros (trixie, noble, etc.)
   # ──────────────────────────────────────────────────
-  build-debs:
+  build-userspace:
     runs-on: ubuntu-24.04-arm
     container:
       image: debian:bookworm
@@ -114,11 +168,94 @@ jobs:
           path: /tmp/debs/*.deb
 
   # ──────────────────────────────────────────────────
-  # Publish APT repository (aptly + GitHub Pages)
-  # Single set of debs published to both stable and bookworm dists.
+  # Per-board matrix build: kernel + U-Boot (x86 cross-compile)
+  # via scripts/build.sh (wraps armbian-build's compile.sh, sets
+  # ENABLE_SEEED_RK_EXTENSION, RK_COMPILE_USBPLUG, cache
+  # invalidation, etc.)
+  # Output: armbian-build/output/debs/*.deb
   # ──────────────────────────────────────────────────
-  publish-apt:
-    needs: [build-debs]
+  build-kernel:
+    needs: prepare
+    runs-on: ubuntu-24.04
+    strategy:
+      fail-fast: false
+      matrix:
+        value: ${{ fromJson(needs.prepare.outputs.matrix) }}
+    steps:
+      - name: Checkout (for scripts/build.sh and extension)
+        uses: actions/checkout@v4
+
+      - name: Resolve board
+        id: board
+        env:
+          MATRIX_BOARD: ${{ matrix.value.board }}
+        run: |
+          echo "name=${MATRIX_BOARD}" >> "$GITHUB_OUTPUT"
+          echo "Resolved board: ${MATRIX_BOARD}"
+
+      - name: Checkout armbian-build
+        uses: actions/checkout@v4
+        with:
+          repository: Seeed-Studio/armbian-build
+          ref: ${{ needs.prepare.outputs.armbian_ref }}
+          path: armbian-build
+          fetch-depth: 1
+
+      - name: Link extension and stage build.sh
+        run: |
+          EXT_DIR="$PWD"
+          mkdir -p armbian-build/userpatches/extensions
+          ln -sfn "$EXT_DIR" armbian-build/userpatches/extensions/seeed_armbian_extension
+          cp scripts/build.sh armbian-build/build.sh
+          chmod +x armbian-build/build.sh
+          echo "Staged build.sh -> armbian-build/build.sh"
+          echo "Linked extension -> armbian-build/userpatches/extensions/seeed_armbian_extension"
+
+      - name: Install build dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y \
+            build-essential gcc-aarch64-linux-gnu \
+            bc bison flex libssl-dev libelf-dev \
+            python3 device-tree-compiler swig \
+            cpio rsync curl wget git \
+            dwarves
+
+      - name: Compile kernel (scripts/build.sh --kernel)
+        working-directory: armbian-build
+        env:
+          BOARD: ${{ steps.board.outputs.name }}
+        run: |
+          ./build.sh --kernel -b "${BOARD}"
+
+      - name: Compile U-Boot (scripts/build.sh --uboot)
+        working-directory: armbian-build
+        env:
+          BOARD: ${{ steps.board.outputs.name }}
+        run: |
+          ./build.sh --uboot -b "${BOARD}"
+
+      - name: List built debs
+        env:
+          BOARD: ${{ steps.board.outputs.name }}
+        run: |
+          echo "=== Built packages for ${BOARD} ==="
+          find armbian-build/output/debs -name '*.deb' -exec ls -lh {} \;
+
+      - name: Upload debs
+        uses: actions/upload-artifact@v4
+        with:
+          name: debs-${{ steps.board.outputs.name }}
+          path: armbian-build/output/debs/**/*.deb
+
+  # ──────────────────────────────────────────────────
+  # Publish APT repository (aptly + GitHub Pages).
+  # Merges userspace + kernel/U-Boot debs (from the two
+  # build jobs above) with prebuilt and SDK debs, then
+  # regenerates the entire apt repo + an index HTML page.
+  # ──────────────────────────────────────────────────
+  publish:
+    needs: [build-userspace, build-kernel]
     runs-on: ubuntu-latest
     permissions:
       contents: write
@@ -129,7 +266,7 @@ jobs:
       - name: Checkout (for scripts)
         uses: actions/checkout@v4
 
-      - name: Download build artifacts
+      - name: Download all debs
         uses: actions/download-artifact@v4
         with:
           path: /tmp/debs
@@ -214,25 +351,6 @@ jobs:
           done
           echo "Fixed ${fixed} packages"
 
-      - name: Download cached kernel debs
-        env:
-          GH_TOKEN: ${{ github.token }}
-          REPO: ${{ github.repository }}
-        run: |
-          mkdir -p /tmp/kernel-cache
-          gh release download kernel-debs-cache \
-            --repo "${REPO}" \
-            --dir /tmp/kernel-cache \
-            --clobber 2>/dev/null \
-            || { echo "No kernel cache found, skipping kernel debs"; exit 0; }
-          if [ -f /tmp/kernel-cache/kernel-debs.tar.xz ]; then
-            tar -xf /tmp/kernel-cache/kernel-debs.tar.xz -C /tmp/kernel-cache
-            echo "=== Cached kernel debs ==="
-            find /tmp/kernel-cache -name '*.deb' -exec basename {} \;
-            cp -v /tmp/kernel-cache/*.deb /tmp/debs/
-            echo "Added $(find /tmp/kernel-cache -name '*.deb' | wc -l) cached kernel debs"
-          fi
-
       - name: List all debs (final)
         run: |
           echo "=== Final .deb list ==="
@@ -266,41 +384,15 @@ jobs:
         with:
           path: public
 
-      - name: Cache userspace debs for kernel workflow
-        env:
-          GH_TOKEN: ${{ github.token }}
-          REPO: ${{ github.repository }}
-        run: |
-          mkdir -p /tmp/cache-out
-          # Exclude kernel debs from userspace cache
-          find /tmp/debs -name '*.deb' ! -name 'linux-image-*' ! -name 'linux-headers-*' ! -name 'linux-dtb-*' ! -name 'linux-source-*' ! -name 'linux-u-boot-*' \
-            -exec cp {} /tmp/cache-out/ \;
-          # Include the SDK manifest so kernel workflow can still classify
-          # SDK debs as "Rockchip SDK" on its index page.
-          [ -f /tmp/sdk-debs.manifest ] && cp /tmp/sdk-debs.manifest /tmp/cache-out/
-          cd /tmp/cache-out && shopt -s nullglob; deb_files=(*.deb); if [ ${#deb_files[@]} -gt 0 ]; then
-            tar -cf userspace-debs.tar.xz -I 'xz -9' *.deb sdk-debs.manifest 2>/dev/null || \
-              tar -cf userspace-debs.tar.xz -I 'xz -9' *.deb
-          fi
-          cd /tmp/cache-out
-          gh release create userspace-debs-cache userspace-debs.tar.xz \
-            --repo "${REPO}" \
-            --title "Userspace debs cache" \
-            --notes "Latest userspace debs (auto-updated by CI)" \
-          || gh release upload userspace-debs-cache userspace-debs.tar.xz \
-            --repo "${REPO}" \
-            --clobber
-
   # ──────────────────────────────────────────────────
   # Deploy to GitHub Pages
   # ──────────────────────────────────────────────────
   deploy-pages:
-    needs: publish-apt
+    needs: publish
     runs-on: ubuntu-latest
     permissions:
       pages: write
       id-token: write
-      actions: write  # needed by the "Trigger kernel build" step (gh workflow run)
     environment:
       name: github-pages
       url: ${{ steps.deployment.outputs.page_url }}
@@ -309,22 +401,3 @@ jobs:
       - name: Deploy to GitHub Pages
         id: deployment
         uses: actions/deploy-pages@v4
-
-      - name: Trigger kernel build
-        # Chain via `gh workflow run` instead of a reusable workflow_call job
-        # — the latter causes startup_failure on this repo for a reason that
-        # doesn't reproduce elsewhere. The kernel workflow's dispatch inputs
-        # are build_rk3576/build_rk3588 booleans; map our checkboxes to them.
-        if: ${{ inputs.kernel_rk3576 == 'true' || inputs.kernel_rk3588 == 'true' }}
-        env:
-          GH_TOKEN: ${{ github.token }}
-          REPO: ${{ github.repository }}
-          KERNEL_RK3576: ${{ inputs.kernel_rk3576 }}
-          KERNEL_RK3588: ${{ inputs.kernel_rk3588 }}
-        run: |
-          set -eu
-          args=(--repo "${REPO}" --ref main)
-          args+=(-f "build_rk3576=${KERNEL_RK3576:-false}")
-          args+=(-f "build_rk3588=${KERNEL_RK3588:-false}")
-          gh workflow run kernel-build-publish.yml "${args[@]}"
-          echo "Kernel workflow triggered (rk3576=${KERNEL_RK3576:-false}, rk3588=${KERNEL_RK3588:-false})."
