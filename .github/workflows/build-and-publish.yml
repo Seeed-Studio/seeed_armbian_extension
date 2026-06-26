@@ -22,9 +22,6 @@ on:
         type: boolean
         default: true
 
-  push:
-    branches: [deb_source]
-
 # ──────────────────────────────────────────────────
 # Single workflow: userspace debs (ARM) and kernel +
 # U-Boot debs (x86 cross-compile) build in parallel,
