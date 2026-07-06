@@ -42,6 +42,11 @@ if [[ "yes" == "yes" ]]; then
 	enable_extension "seeed_armbian_extension/desktop-hotplug-fallback/rockchip-x11-hotplug-fallback"
 fi
 
+if [[ "yes" == "yes" ]]; then
+	display_alert "GNOME Wayland default" "Enable RK3588 GNOME Wayland session defaults" "info"
+	enable_extension "seeed_armbian_extension/desktop-wayland-default/gnome-wayland-default"
+fi
+
 # RK3576/RK3588 U-Boot SPL loader hooks: boot_merger + optional usbplug recompile
 # for Maskrom recovery on new SPI flash boards. Hook functions are inert for SoCs
 # they don't handle (they fall back to upstream mkimage behavior).

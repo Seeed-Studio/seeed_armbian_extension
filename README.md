@@ -5,6 +5,7 @@ This repository contains Armbian extensions focused on:
 - OTA updates (Recovery OTA / A/B Partition OTA)
 - Disk encryption (LUKS) with automatic unlock (OP-TEE)
 - reComputer RK3588 display hotplug fallback
+- reComputer RK3588 GNOME Wayland desktop default
 
 ## Repository Role
 
@@ -13,6 +14,7 @@ This repository contains Armbian extensions focused on:
 - `armbian-ota/`: OTA packaging and runtime tools
 - `rk_secure-disk-encryption/`: encryption and auto-decryption implementation
 - `desktop-hotplug-fallback/`: Xorg modeset fallback for RK3588 DP/HDMI hotplug
+- `desktop-wayland-default/`: GNOME Wayland user-session defaults for RK3588 desktop images
 
 ## Feature Matrix
 
@@ -23,6 +25,7 @@ This repository contains Armbian extensions focused on:
 | LUKS root | `CRYPTROOT_ENABLE=yes` | Enables encrypted root filesystem |
 | Auto-decrypt | `CRYPTROOT_ENABLE=yes RK_AUTO_DECRYP=yes` | Automatically unlocks encrypted root at boot |
 | RK3588 display hotplug fallback | reComputer RK3588 desktop images | Disables Xorg glamor in the modesetting fallback path so DP/HDMI hotplug can modeset after a headless boot |
+| RK3588 GNOME Wayland default | reComputer RK3588 GNOME desktop images | Defaults the user session to `gnome-wayland` to avoid X11 scale-change drag artifacts |
 
 ## Current Entry Behavior
 
@@ -38,6 +41,10 @@ Current relevant logic in `seeed_armbian_extension.sh`:
    `recomputer-rk3588-devkit` desktop builds. This does not change the user's
    GNOME session type; it only keeps the Xorg fallback path able to modeset after
    DP/HDMI is hotplugged.
+6. It enables `desktop-wayland-default/gnome-wayland-default`, scoped to
+   `recomputer-rk3588-devkit` GNOME desktop builds. This writes the default user
+   session as `gnome-wayland`, patches the first-login AccountsService metadata,
+   and ensures GDM does not carry a `WaylandEnable=false` override.
 
 ## Quick Build Examples
 
@@ -105,6 +112,8 @@ seeed_armbian_extension/
 ├── seeed_armbian_extension.sh                # Entry: extension orchestration only
 ├── desktop-hotplug-fallback/
 │   └── rockchip-x11-hotplug-fallback.sh      # RK3588 Xorg modeset fallback for DP/HDMI hotplug
+├── desktop-wayland-default/
+│   └── gnome-wayland-default.sh              # RK3588 GNOME Wayland session defaults
 ├── armbian-ota/
 │   ├── ota-support.sh                        # OTA build and packaging logic
 │   ├── runtime/                              # Unified armbian-ota CLI and backends
