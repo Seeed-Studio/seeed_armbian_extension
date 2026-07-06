@@ -4,6 +4,7 @@ This repository contains Armbian extensions focused on:
 
 - OTA updates (Recovery OTA / A/B Partition OTA)
 - Disk encryption (LUKS) with automatic unlock (OP-TEE)
+- reComputer RK3588 display hotplug fallback
 
 ## Repository Role
 
@@ -11,6 +12,7 @@ This repository contains Armbian extensions focused on:
 
 - `armbian-ota/`: OTA packaging and runtime tools
 - `rk_secure-disk-encryption/`: encryption and auto-decryption implementation
+- `desktop-hotplug-fallback/`: Xorg modeset fallback for RK3588 DP/HDMI hotplug
 
 ## Feature Matrix
 
@@ -20,6 +22,7 @@ This repository contains Armbian extensions focused on:
 | A/B OTA | `OTA_ENABLE=yes AB_PART_OTA=yes` | Dual-slot OTA with rollback support |
 | LUKS root | `CRYPTROOT_ENABLE=yes` | Enables encrypted root filesystem |
 | Auto-decrypt | `CRYPTROOT_ENABLE=yes RK_AUTO_DECRYP=yes` | Automatically unlocks encrypted root at boot |
+| RK3588 display hotplug fallback | reComputer RK3588 desktop images | Disables Xorg glamor in the modesetting fallback path so DP/HDMI hotplug can modeset after a headless boot |
 
 ## Current Entry Behavior
 
@@ -31,6 +34,10 @@ Current relevant logic in `seeed_armbian_extension.sh`:
    - `CRYPTROOT_SSH_UNLOCK=no`
    - Enables `rk_secure-disk-encryption/rk-auto-decryption-disk`
 4. When `OTA_ENABLE=yes`, it enables `armbian-ota/ota-support`.
+5. It enables `desktop-hotplug-fallback/rockchip-x11-hotplug-fallback`, scoped to
+   `recomputer-rk3588-devkit` desktop builds. This does not change the user's
+   GNOME session type; it only keeps the Xorg fallback path able to modeset after
+   DP/HDMI is hotplugged.
 
 ## Quick Build Examples
 
@@ -96,6 +103,8 @@ Current implementation highlights:
 ```text
 seeed_armbian_extension/
 ├── seeed_armbian_extension.sh                # Entry: extension orchestration only
+├── desktop-hotplug-fallback/
+│   └── rockchip-x11-hotplug-fallback.sh      # RK3588 Xorg modeset fallback for DP/HDMI hotplug
 ├── armbian-ota/
 │   ├── ota-support.sh                        # OTA build and packaging logic
 │   ├── runtime/                              # Unified armbian-ota CLI and backends
