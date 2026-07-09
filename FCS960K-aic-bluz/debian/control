@@ -41,11 +41,12 @@ Architecture: any
 Section: misc
 Priority: optional
 Depends: ${shlibs:Depends},
-         ${misc:Depends},
-Suggests: pulseaudio-module-bluetooth,
-Conflicts: bluez,
-Replaces: bluez,
-Breaks: bluez (<< 5.66),
+         ${misc:Depends}
+Suggests: pulseaudio-module-bluetooth
+Conflicts: bluez
+Replaces: bluez
+Provides: bluez (= ${binary:Version})
+Breaks: bluez (<< 5.66)
 Description: BlueZ Bluetooth tools for AIC FCS960K
  BlueZ is the official Linux Bluetooth protocol stack. It is an
  open source project distributed under GNU General Public License (GPL).
@@ -64,10 +65,11 @@ Architecture: any
 Section: libs
 Priority: optional
 Depends: ${shlibs:Depends},
-         ${misc:Depends},
-Conflicts: bluez-lib,
-Replaces: bluez-lib,
-Breaks: bluez-lib (<< 5.66),
+         ${misc:Depends}
+Conflicts: bluez-lib
+Replaces: bluez-lib
+Provides: bluez-lib (= ${binary:Version})
+Breaks: bluez-lib (<< 5.66)
 Description: BlueZ Bluetooth library for AIC FCS960K
  This package contains the libbluetooth library for the AIC FCS960K chip,
  which provides the Bluetooth programming API.
