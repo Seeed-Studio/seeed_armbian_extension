@@ -380,13 +380,17 @@ jobs:
             echo "Added trailing blank line to $f"
           done
 
-      - name: Patch armbian docker.sh to forward CRYPTROOT_PASSPHRASE
+      - name: Patch armbian docker.sh to forward build env into container
         run: |
           cd armbian-build
           sed -i '/"--env" "ARMBIAN_RUNNING_IN_CONTAINER=yes"/a\\t\t"--env" "CRYPTROOT_PASSPHRASE=${CRYPTROOT_PASSPHRASE:-}"' \
               lib/functions/host/docker.sh
-          echo "=== CRYPTROOT_PASSPHRASE forwarding in docker.sh ==="
-          grep -n 'CRYPTROOT_PASSPHRASE' lib/functions/host/docker.sh
+          sed -i '/"--env" "ARMBIAN_RUNNING_IN_CONTAINER=yes"/a\\t\t"--env" "AIC8800_VERSION=${AIC8800_VERSION:-}"' \
+              lib/functions/host/docker.sh
+          sed -i '/"--env" "ARMBIAN_RUNNING_IN_CONTAINER=yes"/a\\t\t"--env" "AIC8800_BASE_URL=${AIC8800_BASE_URL:-}"' \
+              lib/functions/host/docker.sh
+          echo "=== forwarded build env in docker.sh ==="
+          grep -nE 'CRYPTROOT_PASSPHRASE|AIC8800_VERSION|AIC8800_BASE_URL' lib/functions/host/docker.sh
 
       - name: Pre-fetch Panthor GPU firmware (rk3588 only)
         if: ${{ contains(matrix.board, 'rk3588') }}
@@ -579,6 +583,14 @@ jobs:
           fi
 
           export CRYPTROOT_PASSPHRASE="${{ secrets.CRYPTROOT_PASSPHRASE || 'armbian-ci-test' }}"
+
+          # Pin the aic8800 WiFi driver release and pull debs directly from
+          # GitHub. This skips the flaky third-party API mirror (ghm.078465.xyz)
+          # entirely; GH-hosted runners reach github.com directly, and the
+          # aic8800-debs-<board> cache makes later builds offline.
+          # Bump AIC8800_VERSION when upgrading the driver (keep BASE_URL in sync via ${AIC8800_VERSION}).
+          export AIC8800_VERSION="5.0+git20260123.5f7be68d-7"
+          export AIC8800_BASE_URL="https://github.com/radxa-pkg/aic8800/releases/download/${AIC8800_VERSION}"
 
           if [[ -d cache/sources/fit-keys ]]; then
               export UBOOT_FIT_KEYS_BACKUP_DIR="/armbian/cache/sources/fit-keys"
