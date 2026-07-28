@@ -1,3 +1,9 @@
+fcs960k-aic-bluez (5.66-2) unstable; urgency=medium
+
+  * Add Provides: bluez and Provides: bluez-lib to allow replacing upstream packages without removing dependents
+
+ -- Radxa Computer Co., Ltd <dev@radxa.com>  Thu, 9 Jul 2026 00:00:00 +0000
+
 fcs960k-aic-bluez (5.66-1) unstable; urgency=medium
 
   * Initial release for AIC FCS960K chip
