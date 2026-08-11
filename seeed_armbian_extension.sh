@@ -182,6 +182,7 @@ fi
 # and the setup loops on every subsequent boot. Mirrors
 # Seeed-Studio/armbian-build PR #13.
 function post_family_tweaks__seeed_firstlogin_restart_ssh() {
+	return 0
 	local patch_file="${SEEED_EXTENSION_ROOT}/patches/firstlogin/0001-firstlogin-restart-ssh-on-failure.patch"
 	local target="${SDCARD}/usr/lib/armbian/armbian-firstlogin"
 
