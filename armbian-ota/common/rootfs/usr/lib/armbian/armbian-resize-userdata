@@ -194,8 +194,61 @@ resize_luks_mapping() {
 }
 
 find_userdata_partition() {
-    local dev
+    local dev root_part root_disk dev_disk resolved anchor_disk
 
+    # Compute the boot-disk anchor once -- everything else cross-checks
+    # against it. This is the partition backing / (or the overlay lower
+    # layer when / is overlayfs).
+    root_part="$(_resize_userdata__find_root_lower_dev)"
+    if [ -n "${root_part}" ]; then
+        anchor_disk="$(_resize_userdata__parent_disk "${root_part}" 2>/dev/null || true)"
+    fi
+
+    # 1) Whatever overlayroot already mounted at /media/root-rw. The initramfs
+    #    hook now uses /dev/armbian-userdata, so this typically resolves to
+    #    the boot-disk userdata. Verify it actually lives on the boot disk
+    #    before trusting it -- if the overlay mount source is a by-label
+    #    symlink and udev has flipped it to an external drive, the findmnt
+    #    result will not match anchor_disk and we fall through.
+    if [ -e /media/root-rw ] && [ -n "${anchor_disk}" ]; then
+        dev="$(findmnt -n -o SOURCE /media/root-rw 2>/dev/null | sed 's~\[.*\]~~' || true)"
+        if [ -n "${dev}" ]; then
+            resolved="$(readlink -f "${dev}" 2>/dev/null || true)"
+            [ -n "${resolved}" ] && dev="${resolved}"
+            if [ -b "${dev}" ]; then
+                dev_disk="$(_resize_userdata__parent_disk "${dev}" 2>/dev/null || true)"
+                if [ "${dev_disk}" = "${anchor_disk}" ]; then
+                    echo "${dev}"
+                    return 0
+                fi
+            fi
+        fi
+    fi
+
+    # 2) The stable symlink created by init-bottom/00-seeed-bind-userdata.
+    #    Same anchoring as #1, useful if the mount hasn't happened yet.
+    if [ -L /dev/armbian-userdata ]; then
+        dev="$(readlink -f /dev/armbian-userdata 2>/dev/null || true)"
+        if [ -n "${dev}" ] && [ -b "${dev}" ]; then
+            echo "${dev}"
+            return 0
+        fi
+    fi
+
+    # 3) Scan PARTLABEL=userdata and pick the one on the same disk as the
+    #    root partition. This is the deterministic fall-through.
+    if [ -n "${anchor_disk}" ]; then
+        for cand in $(blkid -t PARTLABEL="${USERDATA_PARTLABEL}" -o device 2>/dev/null); do
+            dev_disk="$(_resize_userdata__parent_disk "${cand}" 2>/dev/null)" || continue
+            if [ "${dev_disk}" = "${anchor_disk}" ]; then
+                echo "${cand}"
+                return 0
+            fi
+        done
+    fi
+
+    # 4) Single-disk legacy fallback. Only deterministic when one disk is
+    #    present; preserves prior behaviour on truly degenerate systems.
     dev="$(blkid -t PARTLABEL="${USERDATA_PARTLABEL}" -o device 2>/dev/null | head -n1 || true)"
     if [ -n "${dev}" ]; then
         echo "${dev}"
@@ -203,6 +256,48 @@ find_userdata_partition() {
     fi
 
     blkid -t LABEL="${USERDATA_FSLABEL}" -o device 2>/dev/null | head -n1 || true
+}
+
+# Echo the parent disk of a partition using sysfs (no lsblk dep, so this
+# also works in restricted environments).
+_resize_userdata__parent_disk() {
+    local partdev="$1" base parent_sys parent_name
+    case "${partdev}" in
+        /dev/*) ;;
+        *) partdev="/dev/${partdev}" ;;
+    esac
+    [ -e "${partdev}" ] || return 1
+    base="$(basename "${partdev}")"
+    [ -L "/sys/class/block/${base}" ] || return 1
+    parent_sys="$(dirname "$(readlink -f "/sys/class/block/${base}")")"
+    parent_name="$(basename "${parent_sys}")"
+    [ -n "${parent_name}" ] || return 1
+    [ -e "/sys/class/block/${parent_name}/dev" ] || return 1
+    printf '/dev/%s\n' "${parent_name}"
+}
+
+# Walk through overlayfs to find the underlying rootfs partition device
+# (the LOWER layer). Used to anchor userdata lookup to the boot disk.
+_resize_userdata__find_root_lower_dev() {
+    local lower_dir first_lower opts
+    # Non-overlay root: SOURCE is the real partition.
+    if [ "$(awk '$2=="/" {print $3}' /proc/mounts 2>/dev/null | head -n1)" != "overlay" ]; then
+        findmnt -n -o SOURCE / 2>/dev/null | sed 's~\[.*\]~~'
+        return 0
+    fi
+
+    # /proc/mounts has the mount options as a single comma-separated field at
+    # $4. Pull lowerdir= out of it; take the first lowerdir if multiple are
+    # colon-separated.
+    opts="$(awk '$2=="/" && $3=="overlay" {print $4}' /proc/mounts | head -n1)"
+    lower_dir="${opts#*,lowerdir=}"
+    [ "${lower_dir}" = "${opts}" ] && lower_dir=""   # no lowerdir found
+    [ -z "${lower_dir}" ] && lower_dir="${opts#lowerdir=}"
+    lower_dir="${lower_dir%%,*}"
+    [ -n "${lower_dir}" ] || return 1
+    first_lower="${lower_dir%%:*}"
+    [ -n "${first_lower}" ] || return 1
+    findmnt -n -T "${first_lower}" -o SOURCE 2>/dev/null | sed 's~\[.*\]~~'
 }
 
 resize_luks_userdata() {
@@ -228,8 +323,10 @@ main() {
 
     userdata_part="$(find_userdata_partition)"
     if [ -z "${userdata_part}" ]; then
-        warn "userdata partition not found"
-        systemctl disable "${SERVICE_NAME}" >/dev/null 2>&1 || true
+        warn "userdata partition not found; will retry on next boot"
+        # Intentionally do NOT disable: a transient blkid failure or a
+        # not-yet-settled /dev/armbian-userdata symlink should not strand
+        # the system with userdata unresized forever.
         return 0
     fi
 
@@ -260,7 +357,11 @@ main() {
             ;;
     esac
 
-    systemctl disable "${SERVICE_NAME}" >/dev/null 2>&1 || true
+    # Intentionally do NOT disable the service. Booting from a different
+    # disk later (e.g. switching between NVMe and SD) brings up a new
+    # userdata that still needs expansion. The "already at target size"
+    # path returns 2 and lets resize2fs exit 0 quickly, so the per-boot
+    # cost is negligible.
 }
 
 main "$@"
