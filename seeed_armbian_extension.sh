@@ -62,6 +62,7 @@ function seeed_apply_uboot_patch_bundle() {
 		"0002-u-boot-scan-OS-boot-devices-after-SPI-boot.patch"
 		"0003-u-boot-normalize-recomputer-rk35xx-defconfigs.patch"
 		"0004-u-boot-rk3576-fdt-fixup-fallback-bootdev.patch"
+		"0005-u-boot-rockusb-allow-empty-emmc.patch"
 	)
 	local -a defconfigs=(
 		"recomputer-rk3576-devkit_defconfig"
