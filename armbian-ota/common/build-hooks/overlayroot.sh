@@ -19,10 +19,16 @@ function ota_overlayroot_device_options() {
     # Without this, runtime /boot writes (apt kernel upgrades, armbianEnv.txt
     # edits, OTA tooling) are captured by the overlay upper and stay invisible
     # to U-Boot on next boot, even with a separate boot partition in place.
+    #
+    # Both modes reference /dev/armbian-userdata. The initramfs hook
+    # 00-seeed-bind-userdata creates that symlink at boot, pointing at the
+    # userdata partition on the same physical disk as the rootfs. This avoids
+    # the multi-disk race where udev's /dev/disk/by-label/armbi_usrdata flips
+    # between disks when an external drive with the same image is plugged in.
     if ota_encrypted_rootfs_enabled; then
         printf '%s\n' 'dev=/dev/mapper/armbian-userdata,timeout=30,recurse=0'
     else
-        printf '%s\n' 'dev=LABEL=armbi_usrdata,recurse=0'
+        printf '%s\n' 'dev=/dev/armbian-userdata,timeout=30,recurse=0'
     fi
 }
 

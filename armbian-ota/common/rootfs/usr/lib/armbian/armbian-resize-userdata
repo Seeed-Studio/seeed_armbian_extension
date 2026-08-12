@@ -194,8 +194,68 @@ resize_luks_mapping() {
 }
 
 find_userdata_partition() {
-    local dev
+    local dev dev_raw root_part anchor_disk dev_disk
 
+    # Compute the boot-disk anchor once -- everything else cross-checks
+    # against it. This is the partition backing / (or the overlay lower
+    # layer when / is overlayfs), resolved through LUKS mappers to the raw
+    # partition so the parent-disk walk works for encrypted images too.
+    root_part="$(_resize_userdata__find_root_lower_dev)"
+    if [ -n "${root_part}" ]; then
+        anchor_disk="$(_resize_userdata__parent_disk "${root_part}" 2>/dev/null || true)"
+    fi
+
+    # 1) Whatever overlayroot already mounted at /media/root-rw. On encrypted
+    #    images the mount source is the LUKS mapper (/dev/mapper/armbian-
+    #    userdata -> /dev/dm-N); resolve it back to the raw partition because
+    #    the resize steps below need the partition node, not the mapper.
+    #    Cross-check against the boot-disk anchor when it is known -- if the
+    #    mount source is a by-label symlink that udev has flipped to an
+    #    external drive, the check fails and we fall through.
+    if [ -e /media/root-rw ]; then
+        dev="$(findmnt -n -o SOURCE /media/root-rw 2>/dev/null | sed 's~\[.*\]~~' || true)"
+        if [ -n "${dev}" ]; then
+            dev_raw="$(_resize_userdata__raw_partition_of "${dev}" 2>/dev/null || true)"
+            if [ -n "${dev_raw}" ] && [ -b "${dev_raw}" ]; then
+                dev_disk="$(_resize_userdata__parent_disk "${dev_raw}" 2>/dev/null || true)"
+                if [ -z "${anchor_disk}" ] || [ "${dev_disk}" = "${anchor_disk}" ]; then
+                    echo "${dev_raw}"
+                    return 0
+                fi
+            fi
+        fi
+    fi
+
+    # 2) The stable symlink created by init-bottom/00-seeed-bind-userdata.
+    #    For encrypted images it points at the mapper; convert to the raw
+    #    partition for the same reason as #1.
+    if [ -L /dev/armbian-userdata ]; then
+        dev="$(readlink -f /dev/armbian-userdata 2>/dev/null || true)"
+        if [ -n "${dev}" ]; then
+            dev_raw="$(_resize_userdata__raw_partition_of "${dev}" 2>/dev/null || true)"
+            if [ -n "${dev_raw}" ] && [ -b "${dev_raw}" ]; then
+                echo "${dev_raw}"
+                return 0
+            fi
+        fi
+    fi
+
+    # 3) Scan PARTLABEL=userdata and pick the one on the same disk as the
+    #    root partition. This is the deterministic fall-through; blkid only
+    #    reports raw partitions, so it naturally returns the LUKS partition
+    #    on encrypted images.
+    if [ -n "${anchor_disk}" ]; then
+        for cand in $(blkid -t PARTLABEL="${USERDATA_PARTLABEL}" -o device 2>/dev/null); do
+            dev_disk="$(_resize_userdata__parent_disk "${cand}" 2>/dev/null)" || continue
+            if [ "${dev_disk}" = "${anchor_disk}" ]; then
+                echo "${cand}"
+                return 0
+            fi
+        done
+    fi
+
+    # 4) Single-disk legacy fallback. Only deterministic when one disk is
+    #    present; preserves prior behaviour on truly degenerate systems.
     dev="$(blkid -t PARTLABEL="${USERDATA_PARTLABEL}" -o device 2>/dev/null | head -n1 || true)"
     if [ -n "${dev}" ]; then
         echo "${dev}"
@@ -203,6 +263,93 @@ find_userdata_partition() {
     fi
 
     blkid -t LABEL="${USERDATA_FSLABEL}" -o device 2>/dev/null | head -n1 || true
+}
+
+# Resolve any block device (raw partition, LUKS mapper, /dev/dm-N) to the
+# underlying raw partition. Raw partitions pass through unchanged; device-
+# mapper devices are walked via sysfs slaves/ to their backing partition.
+# Returns 1 for whole disks or anything without a partition backing it.
+_resize_userdata__raw_partition_of() {
+    local dev="$1" base resolved first_slave
+    case "${dev}" in
+        /dev/*) ;;
+        *) dev="/dev/${dev}" ;;
+    esac
+    resolved="$(readlink -f "${dev}" 2>/dev/null || true)"
+    [ -n "${resolved}" ] && dev="${resolved}"
+    [ -e "${dev}" ] || return 1
+
+    base="$(basename "${dev}")"
+
+    # Already a real partition (sysfs partition attribute exists).
+    if [ -f "/sys/class/block/${base}/partition" ]; then
+        printf '%s\n' "${dev}"
+        return 0
+    fi
+
+    # Device-mapper: first slave is the backing partition (one level is
+    # enough for plain LUKS; nested stacks are not a supported layout).
+    if [ -d "/sys/class/block/${base}/slaves" ]; then
+        first_slave="$(ls "/sys/class/block/${base}/slaves" 2>/dev/null | head -n1)"
+        if [ -n "${first_slave}" ] && [ -e "/sys/class/block/${first_slave}/partition" ]; then
+            printf '/dev/%s\n' "${first_slave}"
+            return 0
+        fi
+    fi
+
+    return 1
+}
+
+# Echo the parent disk of a partition using sysfs (no lsblk dep, so this
+# also works in restricted environments).
+_resize_userdata__parent_disk() {
+    local partdev="$1" resolved base parent_sys parent_name
+    case "${partdev}" in
+        /dev/*) ;;
+        *) partdev="/dev/${partdev}" ;;
+    esac
+    # Resolve symlinks (e.g. /dev/disk/by-label/... -> /dev/mmcblk1p1) so
+    # the sysfs lookup below uses the real node name.
+    resolved="$(readlink -f "${partdev}" 2>/dev/null || true)"
+    [ -n "${resolved}" ] && partdev="${resolved}"
+    [ -e "${partdev}" ] || return 1
+    base="$(basename "${partdev}")"
+    [ -L "/sys/class/block/${base}" ] || return 1
+    parent_sys="$(dirname "$(readlink -f "/sys/class/block/${base}")")"
+    parent_name="$(basename "${parent_sys}")"
+    [ -n "${parent_name}" ] || return 1
+    [ -e "/sys/class/block/${parent_name}/dev" ] || return 1
+    printf '/dev/%s\n' "${parent_name}"
+}
+
+# Walk through overlayfs to find the underlying rootfs partition device
+# (the LOWER layer). Used to anchor userdata lookup to the boot disk. On
+# encrypted images the mount source is a LUKS mapper; pass it through
+# _raw_partition_of so the caller gets a real partition node.
+_resize_userdata__find_root_lower_dev() {
+    local lower_dir first_lower opts src
+    # Non-overlay root: SOURCE is the real partition (or mapper).
+    if [ "$(awk '$2=="/" {print $3}' /proc/mounts 2>/dev/null | head -n1)" != "overlay" ]; then
+        src="$(findmnt -n -o SOURCE / 2>/dev/null | sed 's~\[.*\]~~')"
+        _resize_userdata__raw_partition_of "${src}" 2>/dev/null ||
+            printf '%s\n' "${src}"
+        return 0
+    fi
+
+    # /proc/mounts has the mount options as a single comma-separated field at
+    # $4. Pull lowerdir= out of it; take the first lowerdir if multiple are
+    # colon-separated.
+    opts="$(awk '$2=="/" && $3=="overlay" {print $4}' /proc/mounts | head -n1)"
+    lower_dir="${opts#*,lowerdir=}"
+    [ "${lower_dir}" = "${opts}" ] && lower_dir=""   # no lowerdir found
+    [ -z "${lower_dir}" ] && lower_dir="${opts#lowerdir=}"
+    lower_dir="${lower_dir%%,*}"
+    [ -n "${lower_dir}" ] || return 1
+    first_lower="${lower_dir%%:*}"
+    [ -n "${first_lower}" ] || return 1
+    src="$(findmnt -n -T "${first_lower}" -o SOURCE 2>/dev/null | sed 's~\[.*\]~~')"
+    _resize_userdata__raw_partition_of "${src}" 2>/dev/null ||
+        printf '%s\n' "${src}"
 }
 
 resize_luks_userdata() {
@@ -228,8 +375,10 @@ main() {
 
     userdata_part="$(find_userdata_partition)"
     if [ -z "${userdata_part}" ]; then
-        warn "userdata partition not found"
-        systemctl disable "${SERVICE_NAME}" >/dev/null 2>&1 || true
+        warn "userdata partition not found; will retry on next boot"
+        # Intentionally do NOT disable: a transient blkid failure or a
+        # not-yet-settled /dev/armbian-userdata symlink should not strand
+        # the system with userdata unresized forever.
         return 0
     fi
 
@@ -260,7 +409,11 @@ main() {
             ;;
     esac
 
-    systemctl disable "${SERVICE_NAME}" >/dev/null 2>&1 || true
+    # Intentionally do NOT disable the service. Booting from a different
+    # disk later (e.g. switching between NVMe and SD) brings up a new
+    # userdata that still needs expansion. The "already at target size"
+    # path returns 2 and lets resize2fs exit 0 quickly, so the per-boot
+    # cost is negligible.
 }
 
 main "$@"

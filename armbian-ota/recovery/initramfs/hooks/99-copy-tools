@@ -85,6 +85,11 @@ done <<'EOF'
 EOF
 
 copy_ota_lib state.sh
+copy_ota_lib find-userdata.sh
 copy_recovery_initramfs_lib log.sh
 copy_recovery_initramfs_lib device.sh
 copy_recovery_initramfs_lib payload.sh
+
+# readlink is used by find-userdata.sh to walk sysfs parent links.
+copy_exec /usr/bin/readlink /usr/bin 2>/dev/null || \
+copy_exec /bin/readlink /bin 2>/dev/null || true
