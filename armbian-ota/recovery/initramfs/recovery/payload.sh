@@ -284,9 +284,6 @@ ota_patch_config() {
             log "  - no console= in armbianEnv, leave unchanged"
         fi
 
-        log "  - set verbosity=6"
-        set_env_key "${ARM_ENV}" verbosity 6
-
         # Keep armbianEnv.txt.dist in sync so the boot.scr fallback still
         # points at the current rootfs after OTA. Otherwise a later txt
         # corruption would fall back to a stale UUID and fail to rescue.

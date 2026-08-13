@@ -91,7 +91,7 @@ unmount_recovery_transaction_store() {
     fi
 }
 
-ota_log_init
+mkdir -p "$LOGDIR"
 log "init-premount ota hook start"
 log "LOGFILE=${LOGFILE}"
 touch "${LOGDIR}/ota_ran.init-premount"
@@ -123,6 +123,13 @@ ota_validate_recovery_state || {
     unmount_recovery_transaction_store
     exit 0
 }
+
+# Raise printk only now that an OTA is confirmed to be pending. On a normal
+# boot the early-exit paths above leave console_loglevel untouched so the
+# real rootfs stays quiet; the OTA-apply path gets full console visibility
+# for the extract/patch work below.
+ota_log_init
+log "OTA confirmed, applying..."
 
 # 3) apply rootfs (clean + extract + first-login markers)
 ota_apply_rootfs || {
