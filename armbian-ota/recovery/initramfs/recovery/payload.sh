@@ -286,6 +286,23 @@ ota_patch_config() {
 
         log "  - set verbosity=6"
         set_env_key "${ARM_ENV}" verbosity 6
+
+        # Keep armbianEnv.txt.dist in sync so the boot.scr fallback still
+        # points at the current rootfs after OTA. Otherwise a later txt
+        # corruption would fall back to a stale UUID and fail to rescue.
+        DIST_ENV="${ARM_ENV}.dist"
+        if [ -f "${DIST_ENV}" ]; then
+            log "syncing ${DIST_ENV} with new rootdev"
+            if [ "${AUTO_DECRYPT_MODE}" -eq 1 ]; then
+                set_env_key "${DIST_ENV}" rootdev /dev/mapper/armbian-root
+            elif [ -n "${ROOT_UUID}" ]; then
+                set_env_key "${DIST_ENV}" rootdev "UUID=${ROOT_UUID}"
+            fi
+            set_env_key "${DIST_ENV}" verbosity 6
+        else
+            log "  - ${DIST_ENV} missing, copying from ${ARM_ENV}"
+            cp -a "${ARM_ENV}" "${DIST_ENV}"
+        fi
     else
         log "WARN: ${ARM_ENV} not found, cannot patch rootdev/verbosity"
     fi

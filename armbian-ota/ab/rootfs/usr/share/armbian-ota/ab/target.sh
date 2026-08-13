@@ -74,6 +74,38 @@ ab_apply_target_rootfs() {
     ab_write_target_state "${root_mnt}" "${package_path}" "${current_slot}" "${target_slot}"
 }
 
+_ab_update_armbian_env_file() {
+    local env_file="$1"
+    local root_type="$2"
+    local root_uuid="$3"
+
+    [ -f "${env_file}" ] || return 0
+
+    if [ "${root_type}" = "crypto_LUKS" ]; then
+        if grep -q '^rootdev=' "${env_file}"; then
+            sed -i 's|^rootdev=.*$|rootdev=/dev/mapper/armbian-root|' "${env_file}" || return 1
+        else
+            printf '\nrootdev=/dev/mapper/armbian-root\n' >> "${env_file}" || return 1
+        fi
+
+        [ -n "${root_uuid}" ] || return 0
+        if grep -q '^cryptdevice=' "${env_file}"; then
+            sed -i "s|^cryptdevice=.*$|cryptdevice=UUID=${root_uuid}:armbian-root|" "${env_file}" || return 1
+        else
+            printf 'cryptdevice=UUID=%s:armbian-root\n' "${root_uuid}" >> "${env_file}" || return 1
+        fi
+        return 0
+    fi
+
+    [ -n "${root_uuid}" ] || return 0
+    if grep -q '^rootdev=' "${env_file}"; then
+        sed -i "s|^rootdev=UUID=.*$|rootdev=UUID=${root_uuid}|" "${env_file}" || return 1
+        sed -i "s|^rootdev=PARTUUID=.*$|rootdev=UUID=${root_uuid}|" "${env_file}" || return 1
+    else
+        printf '\nrootdev=UUID=%s\n' "${root_uuid}" >> "${env_file}" || return 1
+    fi
+}
+
 ab_update_armbian_env() {
     local arm_env="$1"
     local root_type="$2"
@@ -81,28 +113,16 @@ ab_update_armbian_env() {
 
     [ -f "${arm_env}" ] || return 0
 
-    if [ "${root_type}" = "crypto_LUKS" ]; then
-        if grep -q '^rootdev=' "${arm_env}"; then
-            sed -i 's|^rootdev=.*$|rootdev=/dev/mapper/armbian-root|' "${arm_env}" || return 1
-        else
-            printf '\nrootdev=/dev/mapper/armbian-root\n' >> "${arm_env}" || return 1
-        fi
+    _ab_update_armbian_env_file "${arm_env}" "${root_type}" "${root_uuid}" || return 1
 
-        [ -n "${root_uuid}" ] || return 0
-        if grep -q '^cryptdevice=' "${arm_env}"; then
-            sed -i "s|^cryptdevice=.*$|cryptdevice=UUID=${root_uuid}:armbian-root|" "${arm_env}" || return 1
-        else
-            printf 'cryptdevice=UUID=%s:armbian-root\n' "${root_uuid}" >> "${arm_env}" || return 1
-        fi
-        return 0
-    fi
-
-    [ -n "${root_uuid}" ] || return 0
-    if grep -q '^rootdev=' "${arm_env}"; then
-        sed -i "s|^rootdev=UUID=.*$|rootdev=UUID=${root_uuid}|" "${arm_env}" || return 1
-        sed -i "s|^rootdev=PARTUUID=.*$|rootdev=UUID=${root_uuid}|" "${arm_env}" || return 1
+    # Keep armbianEnv.txt.dist in sync so the boot.scr fallback still
+    # points at the current rootfs after OTA. Otherwise a later txt
+    # corruption would fall back to a stale UUID and fail to rescue.
+    local dist_env="${arm_env}.dist"
+    if [ -f "${dist_env}" ]; then
+        _ab_update_armbian_env_file "${dist_env}" "${root_type}" "${root_uuid}" || return 1
     else
-        printf '\nrootdev=UUID=%s\n' "${root_uuid}" >> "${arm_env}" || return 1
+        cp -a "${arm_env}" "${dist_env}"
     fi
 }
 
