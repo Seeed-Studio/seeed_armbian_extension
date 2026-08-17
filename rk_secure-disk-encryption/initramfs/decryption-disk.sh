@@ -57,11 +57,55 @@ get_cmdline_ab_slot() {
     return 1
 }
 
+# Disk U-Boot actually loaded the FIT from, passed on the kernel command line
+# by the raw-fit A/B bootcmd (armbian.bootdev/armbian.bootdevnum). Identical
+# cloned A/B images on several disks expose duplicate PARTLABELs and LUKS
+# UUIDs, so a plain blkid first-match may address the wrong disk; partition
+# lookups below are anchored to this disk when the tokens are present.
+get_cmdline_boot_disk() {
+    local token devtype devnum
+
+    for token in $(cat /proc/cmdline 2>/dev/null); do
+        case "$token" in
+            armbian.bootdev=*) devtype="${token#armbian.bootdev=}" ;;
+            armbian.bootdevnum=*) devnum="${token#armbian.bootdevnum=}" ;;
+        esac
+    done
+
+    case "${devtype:-}" in
+        mmc)
+            [ -b "/dev/mmcblk${devnum:-}" ] || return 1
+            echo "/dev/mmcblk${devnum}"
+            ;;
+        nvme)
+            [ -b "/dev/nvme${devnum:-}n1" ] || return 1
+            echo "/dev/nvme${devnum}n1"
+            ;;
+        *)
+            return 1
+            ;;
+    esac
+}
+
+# First blkid device match for KEY=value, restricted to partitions of $disk
+# (mmcblkNpX / nvmeXn1pY naming) when a disk is given, otherwise the plain
+# first line (legacy single-disk behavior).
+first_match_on_disk() {
+    local filter="$1" disk="$2"
+
+    if [ -n "$disk" ]; then
+        blkid -t "$filter" -o device 2>/dev/null |
+            grep -E "^${disk}p[0-9]+$" | first_line || true
+    else
+        blkid -t "$filter" -o device 2>/dev/null | first_line || true
+    fi
+}
+
 get_luks_device_by_partlabel() {
     local partlabel="$1"
     local dev
 
-    dev="$(blkid -t PARTLABEL="$partlabel" -o device 2>/dev/null | first_line || true)"
+    dev="$(first_match_on_disk "PARTLABEL=$partlabel" "${BOOT_DISK:-}" || true)"
     if [ -n "$dev" ] && [ "$(blkid -s TYPE -o value "$dev" 2>/dev/null || true)" = "crypto_LUKS" ]; then
         echo "$dev"
     fi
@@ -102,7 +146,14 @@ stop_tee_supplicant() {
 
 log_step "[Decryption-disk] ENTER 0-decryption-disk"
 
-SECURITY_DEV="$(blkid -t PARTLABEL=security -o device 2>/dev/null | first_line || true)"
+BOOT_DISK="$(get_cmdline_boot_disk || true)"
+if [ -n "$BOOT_DISK" ]; then
+    log_step "[Decryption-disk] Boot disk from cmdline: ${BOOT_DISK}"
+else
+    log_step "[Decryption-disk] No boot disk token on cmdline, using device scan order"
+fi
+
+SECURITY_DEV="$(first_match_on_disk PARTLABEL=security "${BOOT_DISK:-}" || true)"
 if [ -z "$SECURITY_DEV" ]; then
     log_step "[Decryption-disk] Error: cannot resolve security partition by PARTLABEL=security"
     blkid 2>/dev/null || true
@@ -167,7 +218,7 @@ fi
 ROOT_DEVICE=""
 TARGET_LUKS_UUID="$(get_cmdline_crypt_uuid || true)"
 if [ -n "$TARGET_LUKS_UUID" ]; then
-    ROOT_DEVICE="$(blkid -t UUID="$TARGET_LUKS_UUID" -o device 2>/dev/null | first_line || true)"
+    ROOT_DEVICE="$(first_match_on_disk "UUID=$TARGET_LUKS_UUID" "${BOOT_DISK:-}" || true)"
     if [ -n "$ROOT_DEVICE" ] && [ "$(blkid -s TYPE -o value "$ROOT_DEVICE" 2>/dev/null || true)" != "crypto_LUKS" ]; then
         ROOT_DEVICE=""
     fi

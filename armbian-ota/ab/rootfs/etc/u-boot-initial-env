@@ -21,4 +21,8 @@ scan_dev_for_boot_part=run ab_select_boot_part; boot_android ${devtype} ${devnum
 ab_select_fit_slot=if test "${boot_slot}" = "b"; then setenv boot_fit_part boot_b; else setenv boot_fit_part boot_a; fi
 
 # Dispatch to the path detected by armbian-ota-init-uboot.
-bootcmd=run ab_preboot; if test "${ab_boot_mode}" = "raw-fit"; then run ab_select_fit_slot; setenv bootargs "${bootargs} armbian.slot=${boot_slot}"; boot_fit; else run distro_bootcmd; boot_fit; bootrkp; fi
+# armbian.bootdev/bootdevnum pass the storage U-Boot actually loaded the FIT
+# from (set by atags/rkimg_bootdev before bootcmd runs) so the initramfs and
+# userspace can anchor security/rootfs partition lookup to that disk when
+# several disks carry identical cloned A/B images.
+bootcmd=run ab_preboot; if test "${ab_boot_mode}" = "raw-fit"; then run ab_select_fit_slot; setenv bootargs "${bootargs} armbian.slot=${boot_slot} armbian.bootdev=${devtype} armbian.bootdevnum=${devnum}"; boot_fit; else run distro_bootcmd; boot_fit; bootrkp; fi

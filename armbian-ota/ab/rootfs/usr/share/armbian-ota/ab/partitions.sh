@@ -90,10 +90,56 @@ ab_resolve_physical_part_dev() {
     echo "${dev}"
 }
 
-ab_get_part_by_label() {
-    local label="$1" dev partlabel
+# Disk U-Boot actually loaded the boot image from, passed on the kernel
+# command line by the raw-fit A/B bootcmd (armbian.bootdev/bootdevnum).
+# Identical cloned A/B images on several disks expose duplicate filesystem
+# LABELs and PARTLABELs, so a first blkid match may address the wrong disk;
+# partition discovery below prefers partitions of this disk when the tokens
+# are present. Missing tokens (single disk, legacy bootcmd) keep first-match.
+ab_boot_disk() {
+    local token devtype devnum
 
-    dev="$(blkid -t LABEL="${label}" -o device 2>/dev/null | head -n1)"
+    for token in $(cat /proc/cmdline 2>/dev/null); do
+        case "${token}" in
+            armbian.bootdev=*) devtype="${token#armbian.bootdev=}" ;;
+            armbian.bootdevnum=*) devnum="${token#armbian.bootdevnum=}" ;;
+        esac
+    done
+
+    case "${devtype:-}" in
+        mmc)
+            [ -b "/dev/mmcblk${devnum:-}" ] || return 1
+            echo "/dev/mmcblk${devnum}"
+            ;;
+        nvme)
+            [ -b "/dev/nvme${devnum:-}n1" ] || return 1
+            echo "/dev/nvme${devnum}n1"
+            ;;
+        *)
+            return 1
+            ;;
+    esac
+}
+
+# First blkid device match for KEY=value, restricted to partitions of $disk
+# (mmcblkNpX / nvmeXn1pY naming) when a disk is given.
+ab_blkid_first_on_disk() {
+    local filter="$1" disk="$2"
+
+    if [ -n "${disk}" ]; then
+        blkid -t "${filter}" -o device 2>/dev/null |
+            grep -E "^${disk}p[0-9]+$" | head -n1
+    else
+        blkid -t "${filter}" -o device 2>/dev/null | head -n1
+    fi
+}
+
+ab_get_part_by_label() {
+    local label="$1" dev partlabel disk
+
+    disk="$(ab_boot_disk || true)"
+
+    dev="$(ab_blkid_first_on_disk "LABEL=${label}" "${disk}")"
     if [ -n "${dev}" ]; then
         ab_resolve_physical_part_dev "${dev}"
         return 0
@@ -101,7 +147,7 @@ ab_get_part_by_label() {
 
     partlabel="$(ab_get_slot_partlabel_by_fslabel "${label}")"
     if [ -n "${partlabel}" ]; then
-        dev="$(blkid -t PARTLABEL="${partlabel}" -o device 2>/dev/null | head -n1)"
+        dev="$(ab_blkid_first_on_disk "PARTLABEL=${partlabel}" "${disk}")"
         if [ -n "${dev}" ]; then
             ab_resolve_physical_part_dev "${dev}"
             return 0
