@@ -120,9 +120,14 @@ ab_env_slot_boot_ready() {
         "${bootcmd}" == *ab_boot_mode* ]] || return 1
 
     if [[ "${boot_mode}" == "raw-fit" ]]; then
+        # armbian.bootdev token: bootcmd must pass the boot disk to the kernel
+        # so initramfs/userspace anchor to the disk U-Boot actually booted
+        # from. Its absence marks a legacy bootcmd that OTA re-inits via
+        # armbian-ota-init-uboot --force.
         [[ "${fit_selector}" == *boot_fit_part* &&
             "${bootcmd}" == *"run ab_select_fit_slot"* &&
-            "${bootcmd}" == *boot_fit* ]]
+            "${bootcmd}" == *boot_fit* &&
+            "${bootcmd}" == *armbian.bootdev* ]]
         return
     fi
 
