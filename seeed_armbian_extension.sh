@@ -21,7 +21,6 @@ function seeed_apply_armbian_build_patch_bundle() {
 		"0001-rk3588-enable-panthor-gpu-stack.patch"
 		"0002-rk35xx-install-fcs960k-bluez-with-common-packages.patch"
 		"0003-rk3576-enable-panfrost-gpu-stack.patch"
-		"0004-rk35xx-fix-usb-gadget-tty-deadlock.patch"
 	)
 
 	# Apply extensions before later build phases consume board, kernel, and
@@ -174,32 +173,6 @@ if [[ "yes" == "yes" ]]; then
 	display_alert "RK U-Boot postprocess" "Enable rk-uboot-postprocess hooks" "info"
 	enable_extension "seeed_armbian_extension/rk-uboot-postprocess/rk-uboot-postprocess"
 fi
-
-# Restart ssh.service instead of reload, and never abort firstlogin on its
-# failure. On a freshly booted image ssh.service may not yet be "active" when
-# firstlogin reaches the sshd-config step, so `systemctl reload ssh.service`
-# fails ("Unit ssh.service is not active, cannot reload."). The stock
-# `|| exit 1` then aborts before the /root/.not_logged_in_yet marker is removed,
-# and the setup loops on every subsequent boot. Mirrors
-# Seeed-Studio/armbian-build PR #13.
-function post_family_tweaks__seeed_firstlogin_restart_ssh() {
-	return 0
-	local patch_file="${SEEED_EXTENSION_ROOT}/patches/firstlogin/0001-firstlogin-restart-ssh-on-failure.patch"
-	local target="${SDCARD}/usr/lib/armbian/armbian-firstlogin"
-
-	[[ -f "$patch_file" ]] ||
-		exit_with_error "Firstlogin SSH restart patch not found" "$patch_file"
-
-	# Idempotent: skip if already applied (e.g. re-run against a staged rootfs).
-	if patch --dry-run --no-backup-if-mismatch -R -s "$target" < "$patch_file" 2>/dev/null; then
-		display_alert "Firstlogin SSH restart" "Already applied" "debug"
-		return 0
-	fi
-
-	display_alert "Firstlogin SSH restart" "Patching armbian-firstlogin" "info"
-	patch --no-backup-if-mismatch -s "$target" < "$patch_file" ||
-		exit_with_error "Failed to patch armbian-firstlogin" "$patch_file"
-}
 
 # Add the PCIe ASPM workaround to the generated image's kernel command line.
 # Keep any board- or user-provided extraargs intact and make this hook idempotent.
