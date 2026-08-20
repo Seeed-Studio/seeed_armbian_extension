@@ -1,0 +1,22 @@
+# common files:
+cscope.*
+tags
+GPATH
+GRTAGS
+GTAGS
+
+# compile files:
+*.ko
+*.mod
+*.mod.c
+*.o
+.*.o.d
+.*.cmd
+*.order
+*.symvers
+*.dwo
+
+# other files:
+wq_version_gen.h
+
+compile_commands.json

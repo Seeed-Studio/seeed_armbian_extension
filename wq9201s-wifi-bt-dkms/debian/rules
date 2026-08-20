@@ -1,0 +1,43 @@
+#!/usr/bin/make -f
+
+VERSION := $(shell dpkg-parsechangelog -S Version | sed 's/-.*//')
+PKG := wq9201s-wifi-bt-dkms
+DKMS_DIR := usr/src/$(PKG)-$(VERSION)
+
+%:
+	dh $@ --parallel --with dkms
+
+override_dh_install:
+	# DKMS source tree — keep the src/ layout intact:
+	# src/wifi/rwnx_drv references ../../common for shared headers.
+	dh_install dkms.conf $(DKMS_DIR)
+	dh_install src/* $(DKMS_DIR)/src
+	# Firmware set + ini (fw_sys=5, required for BT firmware download)
+	dh_install firmwares/*.bin /lib/firmware/
+	dh_install configs/wq_wlan_settings.ini /lib/firmware/
+	# BT attach script + systemd service
+	dh_install bt/wq9201s-bt-attach usr/bin/
+	dh_install bt/wq9201s-bt.service usr/lib/systemd/system/
+
+override_dh_dkms:
+	dh_dkms -V $(VERSION)
+
+# Keep debhelper from injecting systemd maintainer snippets: its autoscript
+# insertion conflicts with the heredoc in debian/postinst and corrupts the
+# script (stray ");"); enable the service manually in postinst instead.
+override_dh_installsystemd:
+
+override_dh_fixperms:
+	dh_fixperms
+	# mkvers.sh must stay executable (generates driver version header at build)
+	chmod 0755 debian/$(PKG)/$(DKMS_DIR)/src/wifi/rwnx_drv/mkvers.sh
+	chmod 0755 debian/$(PKG)/usr/bin/wq9201s-bt-attach
+
+override_dh_builddeb:
+	dh_builddeb -- -Zxz
+
+# Nothing to configure/build on the host; DKMS compiles at install time.
+override_dh_auto_configure:
+override_dh_auto_build:
+override_dh_auto_test:
+override_dh_auto_install:

@@ -1,0 +1,10 @@
+wq9201s-wifi-bt-dkms (2.2.1.961-1) stable; urgency=medium
+
+  * Initial DKMS package for WQ9201S WiFi+BT combo module
+  * Driver source: emu_wifi_sdio+bt_uart v2.2.1.961 (with 6.1 vendor
+    kernel compatibility fixes and SDIO runtime pm hold)
+  * Firmware set + wq_wlan_settings.ini (fw_sys=5) bound in the same package
+  * wq9201s-bt.service: H4 btattach with wlan0 wait + MAC check + retry
+  * postinst disables legacy AIC8800 drivers (chip replaced by WQ9201S)
+
+ -- Seeed Studio <techsupport@seeed.cc>  Wed, 20 Aug 2026 17:30:00 +0800

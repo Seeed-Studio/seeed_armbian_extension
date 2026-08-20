@@ -1,0 +1,32 @@
+#!/bin/bash
+# (renamed from aic-bluetooth; standalone service, no bsp dependency)
+# WQ9201S BT auto-attach (H4 ONLY)
+# NOTE: never run `hciattach 3wire` (H5) on this board in the same boot,
+#       it locks out H4 until the next reboot.
+
+# 1) wait for BT/WiFi firmware download via SDIO (wlan0 appears after the
+#    BT fw has been downloaded by wq_wlan), max 30s
+for i in $(seq 1 30); do
+    [ -e /sys/class/net/wlan0 ] && break
+    sleep 1
+done
+sleep 3
+
+# 2) H4 attach + verify (hci0 MAC must not be all-zero), retry 3x
+for i in 1 2 3; do
+    pkill -f "btattach.*ttyS4" 2>/dev/null
+    sleep 1
+    btattach -B /dev/ttyS4 -N -P h4 -S 1500000 >/dev/null 2>&1 &
+    sleep 4
+    MAC=$(hciconfig hci0 2>/dev/null | grep -oE '([0-9A-F]{2}:){5}[0-9A-F]{2}' | head -1)
+    if [ -n "$MAC" ] && [ "$MAC" != "00:00:00:00:00:00" ]; then
+        hciconfig hci0 up
+        echo "WQ9201S BT OK (H4): MAC=$MAC"
+        exit 0
+    fi
+    echo "WQ9201S BT attach attempt $i failed (MAC='$MAC'), retrying" >&2
+done
+
+echo "WQ9201S BT FAILED after 3 attempts" >&2
+echo "hint: if 'hciattach 3wire' (H5) was run this boot, H4 is locked -> reboot" >&2
+exit 1

@@ -1,0 +1,21 @@
+Source: wq9201s-wifi-bt-dkms
+Section: contrib/kernel
+Priority: optional
+Maintainer: Seeed Studio <techsupport@seeed.cc>
+Build-Depends: debhelper (>=11~), dkms (<< 3.0.3-3~) | dh-sequence-dkms
+Standards-Version: 4.6.2.1
+
+Package: wq9201s-wifi-bt-dkms
+Architecture: any
+Multi-Arch: foreign
+Depends: dkms (>= 1.95), ${misc:Depends}
+Description: WQ9201S WiFi+BT combo driver (DKMS) with firmware
+ SDIO WiFi driver source for the WQ9201S combo module, compiled by DKMS
+ at install time against the running kernel (no prebuilt .ko).
+ .
+ Ships the full firmware set (wifi/dtop/bt/oem/phy), wq_wlan_settings.ini
+ (fw_sys=5, required for BT firmware download), the wq9201s-bt systemd
+ service for H4 BT attach, and modprobe blacklists for the legacy
+ AIC8800 driver.
+ .
+ Kernel headers are required to compile the module.
