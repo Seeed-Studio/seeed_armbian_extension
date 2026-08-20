@@ -136,9 +136,10 @@ jobs:
             build_deps: ''
             build_cmd: bash build-usbdevice-deb.sh
 
-          # camera-engine-rkaiq-rk3576 and camera-engine-rkaiq-rk3588 are
-          # distributed as prebuilt binaries (closed-source 3A algorithm .a
-          # files). See prebuilt/ on the deb_source branch.
+          # camera-engine-rkaiq is built from source in the build-camera
+          # job below (Arm GCC 8.3 cross toolchain, required by the
+          # closed-source 3A algorithm .a files). Its debs take priority
+          # over the prebuilt/ copies during publish.
 
     steps:
       - name: Checkout
@@ -162,6 +163,57 @@ jobs:
           mkdir -p /tmp/debs
           find .. -maxdepth 1 -name '*.deb' ! -name 'Makefile.deb' -exec cp {} /tmp/debs/ \;
           find . -name '*.deb' ! -name 'Makefile.deb' -exec cp {} /tmp/debs/ \;
+          echo "Built packages:"
+          ls -lh /tmp/debs/*.deb
+
+      - name: Upload debs
+        uses: actions/upload-artifact@v4
+        with:
+          name: debs-${{ matrix.name }}
+          path: /tmp/debs/*.deb
+
+  # ──────────────────────────────────────────────────
+  # camera-engine-rkaiq: cross-compiled with the Arm GCC 8.3-2019.03
+  # toolchain (x86_64 host). The closed-source 3A algorithm .a files
+  # require a same-generation compiler: GCC 12 builds link and run but
+  # the AE algorithm converges to heavy overexposure. See
+  # camera_engine_rkaiq/build-cross.sh on the deb_source branch.
+  # Same package name + higher version than prebuilt/ → wins the
+  # publish merge and lands in the APT repo → image installs it via
+  # seeed_recomputer_install_from_apt (no image-side changes needed).
+  # ──────────────────────────────────────────────────
+  build-camera:
+    runs-on: ubuntu-latest
+    container:
+      image: debian:bookworm
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - name: camera-engine-rkaiq-rk3588
+            soc: rk3588
+          # rk3576: build-cross.sh supports it, enable after board
+          # verification (closed-source .a set for ISP39 needs a test
+          # run first).
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.inputs.source_ref || 'deb_source' }}
+
+      - name: Build ${{ matrix.name }}
+        working-directory: camera_engine_rkaiq
+        env:
+          # GCS mirror is fastest from GitHub runners; build-cross.sh
+          # falls back to other mirrors if this fails.
+          GCC83_URL: https://storage.googleapis.com/mirror.tensorflow.org/developer.arm.com/-/media/Files/downloads/gnu-a/8.3-2019-03/binrel/gcc-arm-8.3-2019.03-x86_64-aarch64-linux-gnu.tar.xz
+        run: |
+          bash build-cross.sh ${{ matrix.soc }}
+
+      - name: Collect debs
+        run: |
+          mkdir -p /tmp/debs
+          cp camera_engine_rkaiq/*.deb /tmp/debs/
           echo "Built packages:"
           ls -lh /tmp/debs/*.deb
 
@@ -268,7 +320,7 @@ jobs:
   # regenerates the entire apt repo + an index HTML page.
   # ──────────────────────────────────────────────────
   publish:
-    needs: [build-userspace, build-kernel]
+    needs: [build-userspace, build-kernel, build-camera]
     runs-on: ubuntu-latest
     permissions:
       contents: write
