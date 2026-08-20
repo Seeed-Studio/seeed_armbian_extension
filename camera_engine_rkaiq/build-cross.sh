@@ -134,7 +134,8 @@ cmake -B "${BUILD_DIR}" \
     -DRKAIQ_ENABLE_LIBDRM=ON \
     -DRKAIQ_ENABLE_AF=ON \
     -DRKAIQ_HAVE_MULTIISP=ON \
-    -DLIBDRM_LIBRARY="${SYSROOT_DIR}/usr/lib/aarch64-linux-gnu/libdrm.so"
+    -DLIBDRM_LIBRARY="${SYSROOT_DIR}/usr/lib/aarch64-linux-gnu/libdrm.so" \
+    -DCMAKE_C_FLAGS="-D_LARGEFILE64_SOURCE"
 cmake --build "${BUILD_DIR}" -j "$(nproc)"
 
 # ── 5. 打包 deb ──────────────────────────────────────────
