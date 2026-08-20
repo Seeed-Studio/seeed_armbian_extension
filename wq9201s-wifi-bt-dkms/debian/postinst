@@ -1,0 +1,69 @@
+#!/bin/sh
+set -e
+
+NAME=wq9201s-wifi-bt-dkms
+PACKAGE_NAME=$NAME
+CVERSION=$(dpkg-query -W -f='${Version}' $PACKAGE_NAME | awk -F "-" '{print $1}' | cut -d: -f2)
+ARCH=$(dpkg --print-architecture)
+
+dkms_configure () {
+	for POSTINST in /usr/lib/dkms/common.postinst "/usr/share/$PACKAGE_NAME/postinst"; do
+		if [ -f "$POSTINST" ]; then
+			"$POSTINST" "$NAME" "$CVERSION" "/usr/share/$PACKAGE_NAME" "$ARCH" "$2"
+			return $?
+		fi
+		echo "WARNING: $POSTINST does not exist." >&2
+	done
+	echo "ERROR: DKMS version is too old and $PACKAGE_NAME was not" >&2
+	echo "built with legacy DKMS support." >&2
+	return 1
+}
+
+case "$1" in
+	configure)
+		dkms_configure
+
+		# Disable legacy AIC8800 drivers (chip replaced by WQ9201S).
+		# blacklist blocks alias autoload; install /bin/false also stops
+		# modules-load.d from explicitly loading them.
+		if [ ! -f /etc/modprobe.d/aic8800-wireless.conf ]; then
+			cat > /etc/modprobe.d/aic8800-wireless.conf <<'CONFEOF'
+# AIC8800 legacy driver disabled - chip replaced by WQ9201S
+blacklist aic8800_bsp
+blacklist aic8800_fdrv
+blacklist aic8800_btlpm
+blacklist aic8800_bsp_sdio
+install aic8800_bsp /bin/false
+install aic8800_fdrv /bin/false
+install aic8800_btlpm /bin/false
+install aic8800_btlpm_sdio /bin/false
+install aic8800_bsp_sdio /bin/false
+CONFEOF
+			# btsdio grabs the BT UART (see testScripts/wifi-module README)
+			echo "blacklist btsdio" > /etc/modprobe.d/blacklist-aic8800.conf
+		fi
+
+		# Remove AIC modules if currently loaded
+		rmmod aic8800_btlpm 2>/dev/null || true
+		rmmod aic8800_bsp 2>/dev/null || true
+		rmmod btsdio 2>/dev/null || true
+
+		# Disable legacy bsp BT service if present; enable our own
+		# (manual enable — no #DEBHELPER#: debhelper's autoscript
+		# injection chokes on the heredoc above and corrupts the script)
+		systemctl daemon-reload >/dev/null 2>&1 || true
+		systemctl disable aic-bluetooth.service >/dev/null 2>&1 || true
+		systemctl enable wq9201s-bt.service >/dev/null 2>&1 || true
+
+		echo "wq9201s-wifi-bt-dkms installed."
+		echo "  - reboot to activate, or: modprobe wq_wlan && systemctl start wq9201s-bt"
+	;;
+	abort-upgrade|abort-remove|abort-deconfigure)
+	;;
+	*)
+		echo "postinst called with unknown argument \`$1'" >&2
+		exit 1
+	;;
+esac
+
+exit 0

@@ -1,0 +1,22 @@
+#!/bin/sh
+
+NAME=wq9201s-wifi-bt-dkms
+VERSION=2.2.1.961
+
+set -e
+
+case "$1" in
+    remove|upgrade|deconfigure)
+      if [ "$(dkms status -m $NAME 2>/dev/null)" ]; then
+         dkms remove -m $NAME -v $VERSION --all
+      fi
+    ;;
+    failed-upgrade)
+    ;;
+    *)
+        echo "prerm called with unknown argument \`$1'" >&2
+        exit 1
+    ;;
+esac
+
+exit 0

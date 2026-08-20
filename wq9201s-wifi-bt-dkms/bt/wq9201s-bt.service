@@ -1,0 +1,15 @@
+[Unit]
+Description=WQ9201S Bluetooth attach (H4, prebuilt driver)
+# take over from legacy AIC8800 aic-bluetooth.service if present
+Conflicts=aic-bluetooth.service
+After=bluetooth.service bluetooth.target
+Requires=bluetooth.service bluetooth.target
+
+[Service]
+Type=idle
+ExecStartPre=/usr/sbin/rfkill unblock all
+ExecStart=/usr/bin/wq9201s-bt-attach
+RemainAfterExit=yes
+
+[Install]
+WantedBy=multi-user.target
