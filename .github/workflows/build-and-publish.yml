@@ -131,6 +131,11 @@ jobs:
             build_deps: dh-sequence-dkms
             build_cmd: DEB_BUILD_OPTIONS="noddebs" dpkg-buildpackage -us -uc -b
 
+          - name: wq9201s-wifi-bt-dkms
+            source_dir: wq9201s-wifi-bt-dkms
+            build_deps: dh-sequence-dkms
+            build_cmd: DEB_BUILD_OPTIONS="noddebs" dpkg-buildpackage -us -uc -b
+
           - name: usbdevice-gadget
             source_dir: rk35xx_usb_gadget
             build_deps: ''
