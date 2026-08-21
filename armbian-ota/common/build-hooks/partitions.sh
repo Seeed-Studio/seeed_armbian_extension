@@ -27,7 +27,8 @@ function ota_get_default_partition_sizes() {
     [[ "${extra_rootfs_mib}" =~ ^[0-9]+$ ]] ||
         exit_with_error "Invalid EXTRA_ROOTFS_MIB_SIZE" "${extra_rootfs_mib}"
 
-    OTA_BOOT_SIZE=${OTA_BOOT_SIZE:-256}
+
+    OTA_BOOT_SIZE=${OTA_BOOT_SIZE:-512}
     OTA_SECURITY_SIZE=${OTA_SECURITY_SIZE:-4}
     OTA_ROOTFS_SIZE=${OTA_ROOTFS_SIZE:-$((((rootfs_size + extra_rootfs_mib) * 130 + 99) / 100))}
     OTA_USERDATA_SIZE=${OTA_USERDATA_SIZE:-1024}
