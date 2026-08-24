@@ -37,6 +37,7 @@ DEB_RELEASE="${DEB_RELEASE:-1}"
 GCC_TARBALL="gcc-arm-8.3-2019.03-x86_64-aarch64-linux-gnu.tar.xz"
 GCC_SHA256="8ce3e7688a47d8cd2d8e8323f147104ae1c8139520eca50ccf8a7fa933002731"
 GCC_URLS=(
+    "https://github.com/armbian/mirror/releases/download/_toolchain/${GCC_TARBALL}"
     "https://mirrors.cstcloud.cn/armbian-releases/_toolchain/${GCC_TARBALL}"
     "https://storage.googleapis.com/mirror.tensorflow.org/developer.arm.com/-/media/Files/downloads/gnu-a/8.3-2019-03/binrel/${GCC_TARBALL}"
 )
