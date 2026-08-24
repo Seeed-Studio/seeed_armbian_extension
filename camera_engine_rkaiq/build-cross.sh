@@ -13,6 +13,7 @@
 #   CROSS_HOME    工具链与 sysroot 的存放目录（默认 <脚本目录>/.cross）
 #   GCC83_URL     工具链 tar.xz 的下载地址（默认按顺序尝试多个镜像）
 #   DEB_RELEASE   deb 修订号（默认 1）
+#   EXTRA_CMAKE   附加 cmake 参数（如试验优化级别）
 #
 # 前提: x86_64 Linux（交叉工具链宿主）。若以 root 运行会自动安装构建依赖。
 
@@ -126,6 +127,11 @@ EOF
 VERSION=$(grep 'RK_AIQ_VERSION_REAL_V' rkaiq/RkAiqVersion.h | head -1 | sed 's/.*"\(.*\)".*/\1/' | tr -d 'v')
 echo "=== 交叉编译 camera-engine-rkaiq-${SOC} v${VERSION} ==="
 
+# rk3576 的 C 实现路径使用 mmap64()，需 _LARGEFILE64_SOURCE 才有声明
+# （仅限 rk3576；rk3588 加此宏会在板上触发 3A 服务 SIGSEGV，勿动）
+EXTRA_C_FLAGS=""
+[[ "${SOC}" == "rk3576" ]] && EXTRA_C_FLAGS="-DCMAKE_C_FLAGS=-D_LARGEFILE64_SOURCE"
+
 cmake -B "${BUILD_DIR}" \
     -DCMAKE_TOOLCHAIN_FILE="${TOOLCHAIN_CMAKE}" \
     -DCMAKE_BUILD_TYPE=Release \
@@ -135,7 +141,7 @@ cmake -B "${BUILD_DIR}" \
     -DRKAIQ_ENABLE_AF=ON \
     -DRKAIQ_HAVE_MULTIISP=ON \
     -DLIBDRM_LIBRARY="${SYSROOT_DIR}/usr/lib/aarch64-linux-gnu/libdrm.so" \
-    -DCMAKE_C_FLAGS="-D_LARGEFILE64_SOURCE"
+    ${EXTRA_C_FLAGS} ${EXTRA_CMAKE:-}
 cmake --build "${BUILD_DIR}" -j "$(nproc)"
 
 # ── 5. 打包 deb ──────────────────────────────────────────
