@@ -1,55 +1,5 @@
 SEEED_EXTENSION_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 
-function seeed_apply_armbian_build_patch_bundle() {
-	local patch_file idx all_applied=yes
-	local -a patch_files=(
-		"0003-rk3576-enable-panfrost-gpu-stack.patch"
-	)
-	local -a patch_paths=()
-
-	# Apply before later build phases consume board, kernel, and
-	# common-source files.
-	for patch_file in "${patch_files[@]}"; do
-		patch_file="${SEEED_EXTENSION_ROOT}/patches/armbian-build/${patch_file}"
-		[[ -f "${patch_file}" ]] ||
-			exit_with_error "Seeed Armbian build patch is missing" "${patch_file}"
-		patch_paths+=("${patch_file}")
-	done
-
-	for patch_file in "${patch_paths[@]}"; do
-		(cd "${SRC}" && git apply --reverse --check "${patch_file}") 2>/dev/null || {
-			all_applied=no
-			break
-		}
-	done
-	if [[ "${all_applied}" == "yes" ]]; then
-		display_alert "Seeed Armbian build patch" "Bundle already applied" "debug"
-		return 0
-	fi
-
-	# Patches are coupled: one applied on top of another can break its
-	# reverse check, so a stale tree must be unwound in reverse numeric
-	# order before re-applying in ascending order.
-	for ((idx = ${#patch_paths[@]} - 1; idx >= 0; idx--)); do
-		patch_file="${patch_paths[idx]}"
-		if (cd "${SRC}" && git apply --reverse --check "${patch_file}") 2>/dev/null; then
-			(cd "${SRC}" && git apply --reverse "${patch_file}") ||
-				exit_with_error "Failed to revert Seeed Armbian build patch" "${patch_file}"
-			display_alert "Seeed Armbian build patch" "Reverted: ${patch_file##*/}" "info"
-		fi
-	done
-
-	for patch_file in "${patch_paths[@]}"; do
-		if (cd "${SRC}" && git apply --check "${patch_file}" && git apply "${patch_file}"); then
-			display_alert "Seeed Armbian build patch" "Applied: ${patch_file##*/}" "info"
-		else
-			exit_with_error "Seeed Armbian build patch conflicts with build sources" "${patch_file}"
-		fi
-	done
-}
-
-seeed_apply_armbian_build_patch_bundle
-
 if [[ "${RK_SECURE_UBOOT_ENABLE}" == "yes" && "${RK_OPTEE_BOOT_ENABLE}" == "yes" ]]; then
 	exit_with_error "RK_SECURE_UBOOT_ENABLE and RK_OPTEE_BOOT_ENABLE are mutually exclusive" "use secure-boot or secure-rootfs, not both"
 fi
