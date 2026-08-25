@@ -21,6 +21,7 @@ case "$1" in
 esac
 
 . /usr/share/armbian-ota/state.sh
+. /usr/share/armbian-ota/find-userdata.sh
 . /usr/share/armbian-ota/recovery/log.sh
 . /usr/share/armbian-ota/recovery/device.sh
 . /usr/share/armbian-ota/recovery/payload.sh
@@ -48,6 +49,19 @@ find_userdata_device() {
     if [ -b /dev/mapper/armbian-userdata ]; then
         printf '%s\n' /dev/mapper/armbian-userdata
         return 0
+    fi
+
+    # Multiple disks can carry identical dd-flashed images, each with a
+    # PARTLABEL=userdata partition; blkid | head -n1 below then picks
+    # arbitrarily and the prepared state on the boot disk is silently
+    # missed. Anchor to the rootfs disk first, same helper as
+    # 00-seeed-bind-userdata; keep the label lookups as fallback only.
+    if [ -n "${ROOT_DEV}" ]; then
+        dev="$(find_user_data__partition_for_root "${ROOT_DEV}" 2>/dev/null || true)"
+        if [ -n "${dev}" ] && [ "$(blkid -s TYPE -o value "${dev}" 2>/dev/null || true)" = "ext4" ]; then
+            printf '%s\n' "${dev}"
+            return 0
+        fi
     fi
 
     dev="$(blkid -t PARTLABEL=userdata -o device 2>/dev/null | head -n1 || true)"
