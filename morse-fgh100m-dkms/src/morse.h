@@ -55,7 +55,7 @@
 /* Re-Define the IGNORE channel flag, if not defined by the cfg80211 patch.
  * The flag won't be used by MM81xx.
  */
-#if defined(__x86_64__)
+#if defined(__x86_64__) || defined(__aarch64__)
 #define IEEE80211_CHAN_IGNORE	IEEE80211_CHAN_DISABLED
 #endif
 
