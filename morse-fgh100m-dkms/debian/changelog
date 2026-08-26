@@ -1,3 +1,15 @@
+morse-fgh100m-dkms (1.16.4-2) stable; urgency=medium
+
+  * Extend the IEEE80211_CHAN_IGNORE compat shim to aarch64: the stock
+    shim (mapping to IEEE80211_CHAN_DISABLED on unpatched kernels) only
+    guarded __x86_64__, leaving arm64 builds against vendor 6.1 headers
+    with an undeclared identifier
+  * Add BUILT_MODULE_LOCATION to dkms.conf: the modules are built under
+    src/ and src/dot11ah/, but DKMS only checked the build root and
+    failed with "Build of morse.ko failed" after a successful make
+
+ -- Seeed Studio <techsupport@seeed.cc>  Wed, 26 Aug 2026 16:00:00 +0800
+
 morse-fgh100m-dkms (1.16.4-1) stable; urgency=medium
 
   * Initial DKMS package for Morse Micro FG-H100M HaLow WiFi driver
