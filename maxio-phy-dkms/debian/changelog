@@ -1,0 +1,14 @@
+maxio-phy-dkms (1.0.0-1) stable; urgency=medium
+
+  * Initial DKMS package for the Maxio MAE0621A Gigabit Ethernet PHY
+  * Driver source moved out of the vendor-kernel patch
+    (003-maxio-phy-driver.patch) into an out-of-tree DKMS module, with
+    two module-form fixes: module_exit now also unregisters the PHY
+    fixup (no dangling callback after rmmod), and MODULE_DEVICE_TABLE
+    uses the "mdio" table type so file2alias actually emits the
+    mdio:<id> alias the MDIO core requests (the old "mdio_bus_id" type
+    silently generated no alias — harmless when built-in, fatal for
+    module autoload)
+  * Programs the RJ45 LED mode: LED1 = link 10/100/1000, LED2 = activity
+
+ -- Seeed Studio <techsupport@seeed.cc>  Wed, 26 Aug 2026 12:00:00 +0800
