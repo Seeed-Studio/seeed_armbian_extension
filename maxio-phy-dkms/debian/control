@@ -1,0 +1,21 @@
+Source: maxio-phy-dkms
+Section: contrib/kernel
+Priority: optional
+Maintainer: Seeed Studio <techsupport@seeed.cc>
+Build-Depends: debhelper (>=11~), dkms (<< 3.0.3-3~) | dh-sequence-dkms
+Standards-Version: 4.6.2.1
+
+Package: maxio-phy-dkms
+Architecture: any
+Multi-Arch: foreign
+Depends: dkms (>= 1.95), ${misc:Depends}
+Description: Maxio MAE0621A Gigabit Ethernet PHY driver (DKMS)
+ Source for the Maxio MAE0621A PHY driver, compiled by DKMS at install
+ time against the running kernel (no prebuilt .ko). The MAE0621A is an
+ RTL8211F-compatible part used on the Seeed Studio reComputer
+ Industrial RK3576 carrier (GMAC1). Basic C22 operation already works
+ with the generic driver; this driver additionally programs the RJ45
+ LED mode (LED1 = link 10/100/1000, LED2 = activity) and registers the
+ same sequence as a PHY fixup against MDIO bind races.
+ .
+ Kernel headers are required to compile the module.

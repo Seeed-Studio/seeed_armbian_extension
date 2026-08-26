@@ -1,0 +1,18 @@
+# Kernel module compile results
+*.mod
+*.mod.c
+*.cmd
+*.o
+*.ko
+*.symvers
+.tmp_versions/
+modules.order
+Module.symvers
+
+# dpkg-buildpackage residue
+debian/.debhelper*
+debian/debhelper-build-stamp
+debian/maxio-phy-dkms/
+debian/files
+debian/*.log
+debian/*.substvars
