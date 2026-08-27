@@ -75,13 +75,16 @@ function ota_uboot_env_prefill_compose() {
     rm -f "${override_env}"
 }
 
-# Validate that the env area fits between the u-boot blob and partition 1.
+# Validate that the env area fits between the u-boot loader blob and
+# partition 1. Only the blob starting at sector 64 can reach the env gap
+# below 4 MiB: secure images split the loader (idbloader.img at sector 64 +
+# u-boot.itb at sector 16384) and the FIT lands inside partition 1 by
+# design, far beyond the env area.
 function ota_uboot_env_prefill_assert_layout() {
     local offset=$((OTA_UBOOT_ENV_OFFSET_HEX))
     local size=$((OTA_UBOOT_ENV_SIZE_HEX))
     local env_end_sector=$(((offset + size) / 512))
-    local uboot_bin="${UBOOT_CHROOT_DIR}/u-boot-rockchip.bin"
-    local first_part_start uboot_end
+    local first_part_start uboot_end sector64_blob candidate
 
     ((offset % 512 == 0 && size % 512 == 0)) ||
         exit_with_error "Env geometry not sector-aligned" "offset=${OTA_UBOOT_ENV_OFFSET_HEX} size=${OTA_UBOOT_ENV_SIZE_HEX}"
@@ -94,11 +97,17 @@ function ota_uboot_env_prefill_assert_layout() {
         ((first_part_start >= env_end_sector)) ||
         exit_with_error "Env area overlaps partition 1" "env ends at sector ${env_end_sector}, partition 1 starts at ${first_part_start}"
 
-    [[ -f "${uboot_bin}" ]] ||
-        exit_with_error "u-boot blob not found for overlap check" "${uboot_bin}"
-    uboot_end=$((64 * 512 + $(stat -c%s "${uboot_bin}")))
+    for candidate in u-boot-rockchip.bin rksd_loader.img idbloader.img; do
+        if [[ -f "${UBOOT_CHROOT_DIR}/${candidate}" ]]; then
+            sector64_blob="${UBOOT_CHROOT_DIR}/${candidate}"
+            break
+        fi
+    done
+    [[ -n "${sector64_blob}" ]] ||
+        exit_with_error "u-boot blob not found for overlap check" "no known loader blob in ${UBOOT_CHROOT_DIR}"
+    uboot_end=$((64 * 512 + $(stat -c%s "${sector64_blob}")))
     ((uboot_end <= offset)) ||
-        exit_with_error "u-boot blob overlaps env area" "blob ends at ${uboot_end}, env starts at ${offset}"
+        exit_with_error "u-boot blob overlaps env area" "$(basename "${sector64_blob}") ends at ${uboot_end}, env starts at ${offset}"
 }
 
 # Read the blob back from the image and verify CRC + token, then log the
