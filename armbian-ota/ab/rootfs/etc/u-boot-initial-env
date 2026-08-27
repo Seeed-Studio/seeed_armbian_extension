@@ -9,6 +9,10 @@ ota_in_progress=0
 slot_retry_max=3
 slot_retry_left=3
 
+# Compiled default is 0, which makes the autoboot prompt uninterruptible;
+# one second keeps serial recovery possible with only a minor boot cost.
+bootdelay=1
+
 # Normalize the retry counter, then roll back after retry exhaustion.
 ab_preboot=if test "${ota_in_progress}" = "1"; then if test "${slot_retry_left}" -gt "${slot_retry_max}"; then setenv slot_retry_left ${slot_retry_max}; fi; if test "${slot_retry_left}" -le 0; then setenv boot_slot ${boot_success}; setenv ota_in_progress 0; setenv slot_retry_left ${slot_retry_max}; saveenv; reset; fi; setexpr slot_retry_left ${slot_retry_left} - 1; saveenv; fi
 
