@@ -57,9 +57,9 @@ get_cmdline_ab_slot() {
     return 1
 }
 
-# Disk U-Boot actually loaded the FIT from, passed on the kernel command line
-# by the raw-fit A/B bootcmd (armbian.bootdev/armbian.bootdevnum). Identical
-# cloned A/B images on several disks expose duplicate PARTLABELs and LUKS
+# Disk U-Boot actually loaded the OS image from, passed on the kernel command
+# line by the bootcmd common prefix (armbian.bootdev/armbian.bootdevnum).
+# Identical cloned images on several disks expose duplicate PARTLABELs and LUKS
 # UUIDs, so a plain blkid first-match may address the wrong disk; partition
 # lookups below are anchored to this disk when the tokens are present.
 get_cmdline_boot_disk() {
