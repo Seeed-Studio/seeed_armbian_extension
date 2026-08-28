@@ -1,3 +1,15 @@
+wq9201s-wifi-bt-dkms (2.2.1.961-2) stable; urgency=medium
+
+  * Ship /etc/modules-load.d/wq-wlan.conf (hci_uart + wq_wlan): the
+    pre-firmware SDIO enumeration carries no modalias that maps to the
+    driver, so udev cannot autoload wq_wlan; btattach additionally
+    needs hci_uart's N_HCI line discipline. Previously these entries
+    were written by the Armbian board config, which only runs at image
+    build time — the package is now self-sufficient on existing
+    installs
+
+ -- Seeed Studio <techsupport@seeed.cc>  Thu, 28 Aug 2026 12:00:00 +0800
+
 wq9201s-wifi-bt-dkms (2.2.1.961-1) stable; urgency=medium
 
   * Initial DKMS package for WQ9201S WiFi+BT combo module
