@@ -18,6 +18,10 @@ override_dh_install:
 	# BT attach script + systemd service
 	dh_install bt/wq9201s-bt-attach usr/bin/
 	dh_install bt/wq9201s-bt.service usr/lib/systemd/system/
+	# wq_wlan has no udev autoload (pre-firmware SDIO enumeration carries no
+	# matching modalias) and btattach needs hci_uart's N_HCI line discipline —
+	# load both explicitly at boot.
+	dh_install modules-load/wq-wlan.conf etc/modules-load.d/
 
 override_dh_dkms:
 	dh_dkms -V $(VERSION)

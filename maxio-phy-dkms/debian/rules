@@ -8,6 +8,10 @@ VERSION := $(shell dpkg-parsechangelog -S Version | sed 's/-.*//')
 override_dh_install:
 	dh_install dkms.conf Makefile usr/src/maxio-phy-$(VERSION)
 	dh_install src/* usr/src/maxio-phy-$(VERSION)/src
+	# The vendor 6.1 mdio_bus emits an OF-style MODALIAS for PHYs with a
+	# device node, so the driver's mdio-id alias never matches and udev
+	# cannot autoload it — load it explicitly at boot.
+	dh_install modules-load/maxio-phy.conf etc/modules-load.d/
 
 override_dh_dkms:
 	dh_dkms -V $(VERSION)
