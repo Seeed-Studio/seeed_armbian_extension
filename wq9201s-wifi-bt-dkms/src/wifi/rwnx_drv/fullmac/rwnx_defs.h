@@ -336,7 +336,6 @@ struct rwnx_vif {
 	u8 crdt_gid;
 	u32 tkip_mic_failure_count;
 	bool b_disconnecting;
-	bool b_connected;
 	int extAP_supp;
 };
 
@@ -452,7 +451,11 @@ struct rwnx_sta {
 	u8 sta_idx;
 	u8 vif_idx;
 	u8 vlan_idx;
+#if LINUX_VERSION_CODE <= KERNEL_VERSION(4,6,7)
+	enum ieee80211_band band;
+#else
 	enum nl80211_band band;
+#endif
 	enum nl80211_chan_width width;
 	u16 center_freq;
 	u32 center_freq1;
@@ -479,7 +482,7 @@ struct rwnx_sta {
 	enum nl80211_mesh_power_mode mesh_pm;
 	int listen_interval;
 	struct twt_setup_ind twt_ind; /*TWT Setup indication*/
-	struct ieee80211_rx_ampdu rx_ampdu[8];
+	struct ieee80211_rx_ampdu *rx_ampdu[8];
 	u16 max_amsdu_len; /* IEEE80211_MAX_MPDU_LEN_xxx */
 	u8 format_mod;
 	u16 rx_mcs_idx;
@@ -702,28 +705,53 @@ struct rwnx_napi_param {
  * @payload: tracer data, total 32k
  */
 struct rwnx_tracer {
-	char payload[NUM_EVENT_OF_TRACER_DUMP][1024];
+	bool dump64;
+	bool dump32;    
+	u32 tracer_dump_event_num_64;
+	u32 tracer_dump_event_num_32;  
+	char payload64[NUM_EVENT_OF_TRACER_DUMP][1024];  
+	char payload32[NUM_EVENT_OF_TRACER_DUMP_32][1024];
 };
 
+#ifndef WQ_HW_MAC_MAX
+#define RWNX_MONITOR_MAX	2
+#else
+#define RWNX_MONITOR_MAX	WQ_HW_MAC_MAX
+#endif
+
 /**
- * rwnx_monitor_param - monitor tx parameters
+ * rwnx_monitor_cfg - monitor configuration.
  *
+ * @band: See NL80211_BAND_2GHZ/NL80211_BAND_5GHZ
+ * @vif_idx: Index of vif table.
  * @tx_mcs_idx: mcs 0-11 for HE-SU
- * @tmp_mcs_idx: mcs 0-11 for HE-SU for cache
+ * @tx_mcs_idx_tmp: mcs 0-11 for HE-SU for cache
  * @tx_bw_idx: 0:20MHz; 1:40MHz; 2:80MHz; 3:80+80/160MHz
  * @tx_power: transmission power (in dBm)
- * @ch_band: 20MHz; 40MHz; 80MHz;
- * @ch_index: channel number
+ * @ch_idx: channel number
+ * @ch_bw: 20MHz; 40MHz; 80MHz;
+ * @nss: count of nss. Monitor Default as 1.
  * @rx_rssi: RSSI(dBm)
  */
-struct rwnx_monitor_param {
+struct rwnx_monitor_cfg {
+	uint8_t band;
+	uint8_t vif_idx;
 	uint8_t tx_mcs_idx;
-	uint8_t tmp_mcs_idx;
+	uint8_t tx_mcs_idx_tmp;
+
 	uint8_t tx_bw_idx;
 	int8_t  tx_power;
-	uint8_t ch_band;
-	uint8_t ch_index;
+	uint8_t ch_idx;
+	uint8_t ch_bw;
+
+	uint8_t nss;
 	int16_t rx_rssi;
+};
+
+struct rwnx_monitor {
+	uint8_t mon_num_max;
+	uint8_t mon_num;
+	struct rwnx_monitor_cfg cfg[RWNX_MONITOR_MAX];
 };
 
 /**
@@ -810,7 +838,7 @@ struct rwnx_hw {
 	struct rwnx_vif **vif_table;
 	u8 vif_started;
 	u64 avail_idx_map;
-	u8 monitor_vif;
+	struct rwnx_monitor monitor;
 
 	// Stations
 	struct rwnx_sta *sta_table;
@@ -833,6 +861,7 @@ struct rwnx_hw {
 	atomic_t sending;
 	atomic_t usb_send_cnt;
 	atomic_t usb_com_ethip;
+	unsigned long rx_ipi_state;
 	Q_STATS(tx_stats)
 	struct rwnx_txq *txq;
 	struct rwnx_hwq hwq[NX_TXQ_CNT];
@@ -866,11 +895,6 @@ struct rwnx_hw {
 	atomic_t napi_rx_time;
 #endif
 
-#ifdef TX_IPI_SUPPORT
-	struct tasklet_struct xmit_task;
-	struct sk_buff_head xmit_ipi_queue;
-#endif
-
 	// IRQ
 	struct work_struct update_nss_task;
 	struct work_struct add_key_task;
@@ -879,11 +903,8 @@ struct rwnx_hw {
 	struct delayed_work bcn_change_task;
 	struct work_struct bcn_change_done_task;
 	struct work_struct tracer_dump_task;
-	struct work_struct connect_fail_task;
-	struct work_struct chip_reset_task;
 
 	struct rwnx_vif *csa_vif;
-	struct rwnx_vif *connect_fail_vif;
 	struct {
 		uint8_t vif_index;
 		struct ipv6_info ipv6;
@@ -947,13 +968,15 @@ struct rwnx_hw {
 	u16 txq_stop_threshlod;
 	u16 txq_restart_threshlod;
 
-	bool timer_dump_enable;
+	bool time_dump_enable;
 	atomic_t wq_hwq_task_time;
 	atomic_t rx_reorder_time;
+	atomic_t tx_xmit_time;
+	atomic_t tx_skb_free_time;
 	atomic_t ipc_rx_pkt_time;
-	atomic_t ipc_rx_msg_time;
 	atomic_t htc_rxq_time;
 	atomic_t htc_rxq_decap_time;
+	atomic_t htc_txq_done_time;
 
 	u16 ce_sw_watermark_in;   /* trigger stop datapath, reason ce watermark */
 	u16 ce_sw_watermark_out;  /* trigger restart datapath, reason ce watermark */
@@ -1009,15 +1032,11 @@ struct rwnx_hw {
 	u8 large_ap_mode;
 	u8 enable_tx_info;
 	u8 enable_show_tx_info;
+	u8 current_nss;
 	u8 enable_fw_stats;
 	u8 enable_show_fw_stats;
-	bool disconnecting_in_progress;
 
-	struct rwnx_monitor_param monitor_param;
 	struct rwnx_tracer tracer;
-	u32 dwell_time;
-	u32 cactimeout;
-	bool ignorecsa;
 	struct fw_stats_info fw_stats_info;
 };
 

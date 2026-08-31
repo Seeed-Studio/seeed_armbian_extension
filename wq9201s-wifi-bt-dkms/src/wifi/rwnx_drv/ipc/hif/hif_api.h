@@ -45,7 +45,6 @@ enum wq_usb_trigger_type {
 
 struct wq_hif_ops {
 	enum wq_hif_type hif;
-	const char *hif_proc_name;
 	/* pcie speed is 5G or 2.5G */
 	bool low_speed_mode;
 	/* restart or stop netdev queue when number of queued buffers if greater than this  */
@@ -87,7 +86,6 @@ struct wq_hif_ops {
 
 	/* debug API */
 	void (*dump_info)(struct wq_core *core);
-	void (*dump_less_info)(struct wq_core *core);
 	/* send special data pattern to trigger bus spy */
 	void (*send_trigger)(struct wq_core *core,
 			     enum wq_usb_trigger_type type, u16 info);
@@ -109,6 +107,7 @@ struct wq_hif_ops {
 	void (*hif_txq_ring_2task)(struct wq_core *core);
 	void (*hif_txq_ring_timerstart)(struct wq_core *core);
 	bool (*hif_bus_dead)(struct wq_core *core);
+	void (*hif_bus_attempt_recovery)(struct wq_core *core);
 };
 
 /* Auto-PM APIs */
@@ -210,12 +209,6 @@ static inline void hif_dump_info(struct wq_core *core)
 		core->hif_ops->dump_info(core);
 }
 
-static inline void dump_less_info(struct wq_core *core)
-{
-	if (core->hif_ops->dump_less_info)
-		core->hif_ops->dump_less_info(core);
-}
-
 static inline void hif_send_trigger(struct wq_core *core,
 				    enum wq_usb_trigger_type type, u16 info)
 {
@@ -250,7 +243,10 @@ static inline bool hif_bus_dead(struct wq_core *core)
 	return false;
 }
 
+static inline void hif_bus_attempt_recovery(struct wq_core *core)
+{
+	if (core->hif_ops->hif_bus_attempt_recovery)
+		return core->hif_ops->hif_bus_attempt_recovery(core);
+}
 
-extern char *wq_band;  /* insmod wq_wlan.ko band=2g / 5g / dual */
-extern enum wq_band_mode wq_band_pick(void);
 #endif /* _WQ_WLAN_HIF_H_ */

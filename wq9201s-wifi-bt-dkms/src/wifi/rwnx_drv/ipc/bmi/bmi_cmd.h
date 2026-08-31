@@ -77,14 +77,14 @@ typedef struct {
 } pcm_param_t;
 
 typedef struct {
-	uint8_t rcu_pattern;
-} bt_param_t;
-
-typedef struct {
 	uint32_t addr;
 	uint32_t len;
 	uint32_t val;
 } bmi_rw_t;
+
+typedef struct {
+	uint8_t rcu_pattern;
+} bt_param_t;
 
 typedef enum bmi_rw_efuse_type_e {
 	BMI_READ_EFUSE_RAW = 0x00,

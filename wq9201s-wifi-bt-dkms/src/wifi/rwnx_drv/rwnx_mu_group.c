@@ -499,7 +499,7 @@ void rwnx_mu_group_init(struct rwnx_hw *rwnx_hw)
 	mu->update_count = 1;
 	mu->group_cnt = 0;
 	mu->next_group_select = jiffies;
-	INIT_DELAYED_WORK(&mu->group_work, rwnx_mu_group_work);
+	WQ_INIT_DELAYED_WORK(&mu->group_work, rwnx_mu_group_work);
 	sema_init(&mu->lock, 1);
 }
 

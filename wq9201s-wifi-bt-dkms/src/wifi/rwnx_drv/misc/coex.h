@@ -17,42 +17,75 @@
 #ifndef _WQ_COEX_H
 #define _WQ_COEX_H
 
+#include <linux/types.h>
+
 #define COEX_MAX_WIFI_AC 11
 
 #define PTA_ABORT_PROP_NUM 39
 
 enum {
-    WQ_BT_PTI_TYPE_BT,
-    WQ_BT_PTI_TYPE_LE,
+	WQ_BT_PTI_TYPE_BT,
+	WQ_BT_PTI_TYPE_LE,
 };
 
+#define COEX_THREE_ANT 0
+#define COEX_DUAL_ANT 1
+#define COEX_SIGNAL_ANT 2
+
+#define COEX_BT_USE_SELF_ANT 0
+#define COEX_USE_EXTERN_SWITCH 1
+#define COEX_BT_USE_WIFI_ANT 2
+
+#define COEX_POLICY_FIX_TIME_DIV 0
+#define COEX_POLICY_FIX_FREQ_DIV 1
+#define COEX_POLICY_AUTO_MODE 2
+
+#define COEX_TIMEDIV_TIMESLICE 0
+#define COEX_TIMEDIV_ONLY_PRIO 1
+
+#define COEX_WIFI_ONLY_DBAC 0
+#define COEX_WIFI_SUPPORT_DBDC 1
+
+#define COEX_WIFI_NSS1_FORCE 1
+
+#define COEX_WIFI_NSS1 1
+#define COEX_WIFI_NSS2 2
+
+#define COEX_MODE_FREQ_DIV 0
+#define COEX_MODE_TIME_DEV 1
+
 typedef enum {
-	COEX_WIFI_CUS_SCENE_UPD,// wifi stack -> dtop
-	COEX_BT_CUS_SCENE_UPD,  // bt stack -> dtop
-	COEX_WIFI_STAT_UPD,     // wifi stack -> dtop
-	COEX_CFG_UPD,           // dtop host -> dtop
-	COEX_BT_STAT_UPD,       // bt stack -> dtop
-	COEX_WIFI_PTI_UPD,      // dtop host -> dtop -> wifi stack
-	COEX_BT_PTI_UPD,        // dtop host -> dtop -> bt stack
+	COEX_WIFI_CUS_SCENE_UPD, // wifi stack -> dtop
+	COEX_BT_CUS_SCENE_UPD, // bt stack -> dtop
+	COEX_WIFI_STAT_UPD, // wifi stack -> dtop
+	COEX_CFG_UPD, // dtop host -> dtop
+	COEX_BT_STAT_UPD, // bt stack -> dtop
+	COEX_WIFI_PTI_UPD, // dtop host -> dtop -> wifi stack
+	COEX_BT_PTI_UPD, // dtop host -> dtop -> bt stack
 	COEX_WIFI_PTI_UPD_DONE, // wifi stack -> dtop
-	COEX_BT_PTI_UPD_DONE,   // bt stack -> dtop
-	COEX_WIFI_CHAN_OP_UPD,  // wifi stack -> bt
+	COEX_BT_PTI_UPD_DONE, // bt stack -> dtop
+	COEX_WIFI_CHAN_OP_UPD, // wifi stack -> bt
 	COEX_WIFI_BT_TEST_MODE, // wifi stack -> dtop, only same with rom1.0, will delete.
 
-	COEX_SET_MARGIN,        // wifi stack -> dtop //I will delete it
-	COEX_SET_ABORT_PROP,    // dtop host -> dtop
+	COEX_SET_MARGIN, // wifi stack -> dtop //I will delete it
+	COEX_SET_ABORT_PROP, // dtop host -> dtop
 
-	COEX_CMD_PARSE,         // wifi stack -> dtop
-	COEX_WIFI_PHY_UPD,      // wifi stack -> dtop
+	COEX_CMD_PARSE, // wifi stack -> dtop
+	COEX_WIFI_PHY_UPD, // wifi stack -> dtop
 	COEX_WIFI_RSSI_UPD,
 	COEX_BT_RSSI_UPD,
 	COEX_CALIBRATION_START, // wifi->wifi_soc->bt_soc->bt stack
-	COEX_CALIBRATION_END,   // wifi->wifi_soc->bt_soc->bt stack
+	COEX_CALIBRATION_END, // wifi->wifi_soc->bt_soc->bt stack
 	COEX_ANTENNA_MODE,
 	COEX_ANT2_MODE_UPD,
 	COEX_WIFI_VIF_COUNT_UPD,
 	COEX_SET_WIFI_MODE,
-	COEX_BT_TP_MODE_UPD,
+	COEX_SET_NSS1_FORCE,
+	COEX_SET_WIFI_NSS,
+	COEX_SET_POLICY,
+	COEX_SET_TIMEDIV_MODE,
+	COEX_WIFI_POLICY_UPD,
+	COEX_WIFI_SET_IPERF_MODE,
 } COEX_MSG_ID_e;
 
 typedef enum {
@@ -80,15 +113,15 @@ typedef enum {
 } COEX_BT_CUS_SCE_e;
 
 typedef enum {
-    BLE_CON_ONLY,
-    BLE_BIS_ONLY,
-    BLE_CIS_ONLY,
-    BLE_CON_BIS,
-    BLE_CON_CIS,
-    BLE_BIS_CIS,
-    BLE_CON_BIS_CIS,
-    BLE_UNKNOW_SCE,
-    BLE_CUS_SCE_MAX = BLE_UNKNOW_SCE,
+	BLE_CON_ONLY,
+	BLE_BIS_ONLY,
+	BLE_CIS_ONLY,
+	BLE_CON_BIS,
+	BLE_CON_CIS,
+	BLE_BIS_CIS,
+	BLE_CON_BIS_CIS,
+	BLE_UNKNOW_SCE,
+	BLE_CUS_SCE_MAX = BLE_UNKNOW_SCE,
 } COEX_BLE_CUS_SCE_e;
 
 typedef struct le_pti_struct {
@@ -155,8 +188,8 @@ typedef struct wifi_pti_struct {
 } wifi_pti_t;
 
 typedef struct wifi_pti_upd {
-    uint8_t wifi_status;
-    wifi_pti_t pti;
+	uint8_t wifi_status;
+	wifi_pti_t pti;
 } wifi_pti_upd_t;
 
 typedef struct bt_pti_upd {
@@ -175,22 +208,27 @@ struct coex_abort_prop_s {
 	uint32_t prop[PTA_ABORT_PROP_NUM];
 };
 
+typedef struct coex_cfg_struct {
+	uint8_t timeslice_eb;
+	uint8_t reserve[3]; /*align 4 byte*/
+	uint32_t wifi_time_dura;
+	uint32_t bt_time_dura;
+} coex_cfg_t;
+
 typedef struct coex_msg_s {
 	uint8_t msg_id;
 	uint8_t data[0];
 } __attribute((packed)) coex_msg_t;
 
-typedef struct coex_cfg_s {
-    uint16_t bt_rx_abort_wifi_tx_en;
-    int16_t bt_rx_abort_wifi_tx_rssi_thre;
-    uint16_t bt_tx_pwr_adj_by_tx_retry_en;
-    uint16_t bt_tx_pwr_adj_by_tx_retry_thre;
-    uint16_t wifi_tx_pwr_adj_by_bt_mode_en;
-    uint16_t wifi_tx_pwr_adj_pwr_val;
-} coex_cfg_t;
+// 前向声明
+struct mm_coex_info_upd;
+
+struct wq_core;
 
 void coex_msg_parse(struct mm_coex_info_upd *ind);
 void coex_init(struct wq_core *core);
-void coex_cmd_proc(struct wq_core *core);
+void coex_cmd_proc_creat(struct wq_core *core);
+void coex_cmd_proc_remove(void);
 void coex_deinit(void);
+int coex_param_load(struct wq_core *core);
 #endif

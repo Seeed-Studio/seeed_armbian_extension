@@ -170,8 +170,9 @@ static bool fw_log_q_is_equal_or_max_than(struct fw_log *log, u32 cnt)
 	return false;
 }
 
-static void fw_log_usb_ep_msg_in_cb(struct urb *urb)
+static __maybe_unused void fw_log_usb_ep_msg_in_cb(struct urb *urb)
 {
+#ifdef CONFIG_WQ_WLAN_USB
 	struct fw_log *log = (struct fw_log *)urb->context;
 	struct wq_core *core = log->parent;
 
@@ -193,10 +194,12 @@ static void fw_log_usb_ep_msg_in_cb(struct urb *urb)
 	}
 
 	fw_log_usb_ep_msg_in(log);
+#endif
 }
 
 int fw_log_usb_ep_msg_in(struct fw_log *log)
 {
+#ifdef CONFIG_WQ_WLAN_USB
 	int err;
 	struct urb *urb;
 	struct wq_core *core = log->parent;
@@ -233,7 +236,7 @@ int fw_log_usb_ep_msg_in(struct fw_log *log)
 		usb_unanchor_urb(urb);
 	}
 	usb_free_urb(urb);
-
+#endif
 	return 0;
 }
 
@@ -246,10 +249,12 @@ static int fw_log_usb_ep_in_init(struct fw_log *log)
 
 static void fw_log_usb_ep_in_deinit(struct fw_log *log)
 {
+#ifdef CONFIG_WQ_WLAN_USB
 	usb_kill_anchored_urbs(&log->anchor);
 
 	if (log->skb)
 		dev_kfree_skb_any(log->skb);
+#endif
 }
 
 static void fw_log_do_work(struct work_struct *w)
@@ -291,7 +296,7 @@ static void fw_log_do_work(struct work_struct *w)
 
 		if (log->type == FW_LOG_TTY) {
 			if (log->tty_open_cnt) {
-				//copied = 0;
+				copied = 0;
 				tty_port = &log->tty_port;
 				spin_lock_irqsave(&log->lock, flags);
 				/* only one chance to insert data. */
@@ -463,13 +468,7 @@ static int fw_log_tty_device_init(struct fw_log *log)
 	}
 
 	tty_driver->driver_name = "wq_tty_drv";
-	if (strlen(log->parent->bus_name)) {
-		snprintf((char *)log->tty_name, sizeof(log->tty_name), "ttyLog_%s", log->parent->bus_name);
-	} else {
-		snprintf((char *)log->tty_name, sizeof(log->tty_name), "ttyLog");
-	}
-
-	tty_driver->name = log->tty_name;
+	tty_driver->name = "ttyLog";
 	tty_driver->type = TTY_DRIVER_TYPE_SERIAL;
 	tty_driver->subtype = SERIAL_TYPE_NORMAL;
 	tty_driver->init_termios = tty_std_termios;
@@ -622,9 +621,10 @@ static struct fw_log *fw_log_alloc(void)
 	log->usb_in_ep = 13; /* USB host log use EP13 */
 
 	sema_init(&log->sem, 1);
-	INIT_WORK(&log->worker, fw_log_do_work);
+	WQ_INIT_WORK(&log->worker, fw_log_do_work);
+#ifdef CONFIG_WQ_WLAN_USB
 	init_usb_anchor(&log->anchor);
-
+#endif
 	return log;
 }
 
@@ -1045,7 +1045,7 @@ static ssize_t fw_log_type_write(struct file *file, const char __user *buffer,
 		fw_log_hif_enable(log, true, true);
 		goto out;
 	} else {
-		//next_type = log->type;
+		next_type = log->type;
 		WQ_DBG(DM_TRBUS, DL_WRN, "%s\n", usage);
 		goto out;
 	}
@@ -1113,70 +1113,23 @@ static const struct wq_proc_ops fw_log_type_ops = {
 
 static void fw_log_proc_init(struct fw_log *log)
 {
-	if (strlen(log->parent->bus_name)) {
-		const char proc_name[128];
-		struct proc_dir_entry *bus_dir, *fw_log_dir;
-
-		/* creat proc bus dir */
-		memset((char *)proc_name, 0, sizeof(proc_name));
-		snprintf((char *)proc_name, sizeof(proc_name), "driver/%s", log->parent->bus_name);
-		bus_dir = proc_mkdir(proc_name, NULL);
-
-		/* creat proc fw log dir */
-		fw_log_dir = proc_mkdir("fw_log", bus_dir);
-
-		/* creat proc file */
-		proc_create_data("level", S_IFREG | 0644, fw_log_dir,
-				&fw_log_level_ops, log);
-
-		proc_create_data("module", S_IFREG | 0644, fw_log_dir,
-				&fw_log_module_ops, log);
-
-		proc_create_data("type", S_IFREG | 0644, fw_log_dir,
-				&fw_log_type_ops, log);
-	} else {
-		/* creat proc dir */
-		proc_mkdir(FW_LOG_PROC_DIR_NAME, NULL);
-		/* creat proc file */
-		proc_create_data(FW_LOG_PROC_DIR_NAME "/level", S_IFREG | 0644, NULL,
-				&fw_log_level_ops, log);
-		proc_create_data(FW_LOG_PROC_DIR_NAME "/module", S_IFREG | 0644, NULL,
-				&fw_log_module_ops, log);
-		proc_create_data(FW_LOG_PROC_DIR_NAME "/type", S_IFREG | 0644, NULL,
-				&fw_log_type_ops, log);
-	}
+	/* creat proc dir */
+	proc_mkdir(FW_LOG_PROC_DIR_NAME, NULL);
+	/* creat proc file */
+	proc_create_data(FW_LOG_PROC_DIR_NAME "/level", S_IFREG | 0644, NULL,
+			 &fw_log_level_ops, log);
+	proc_create_data(FW_LOG_PROC_DIR_NAME "/module", S_IFREG | 0644, NULL,
+			 &fw_log_module_ops, log);
+	proc_create_data(FW_LOG_PROC_DIR_NAME "/type", S_IFREG | 0644, NULL,
+			 &fw_log_type_ops, log);
 }
 
-static void fw_log_proc_deinit(struct fw_log *log)
+static void fw_log_proc_deinit(void)
 {
-	if (strlen(log->parent->bus_name)) {
-		const char proc_name[128];
-
-		memset((char *)proc_name, 0, sizeof(proc_name));
-		snprintf((char *)proc_name, sizeof(proc_name), "driver/%s/fw_log/level", log->parent->bus_name);
-		remove_proc_entry(proc_name, NULL);
-
-		memset((char *)proc_name, 0, sizeof(proc_name));
-		snprintf((char *)proc_name, sizeof(proc_name), "driver/%s/fw_log/module", log->parent->bus_name);
-		remove_proc_entry(proc_name, NULL);
-
-		memset((char *)proc_name, 0, sizeof(proc_name));
-		snprintf((char *)proc_name, sizeof(proc_name), "driver/%s/fw_log/type", log->parent->bus_name);
-		remove_proc_entry(proc_name, NULL);
-
-		memset((char *)proc_name, 0, sizeof(proc_name));
-		snprintf((char *)proc_name, sizeof(proc_name), "driver/%s/fw_log", log->parent->bus_name);
-		remove_proc_entry(proc_name, NULL);
-
-		memset((char *)proc_name, 0, sizeof(proc_name));
-		snprintf((char *)proc_name, sizeof(proc_name), "driver/%s", log->parent->bus_name);
-		remove_proc_entry(proc_name, NULL);
-	} else {
-		remove_proc_entry(FW_LOG_PROC_DIR_NAME "/level", NULL);
-		remove_proc_entry(FW_LOG_PROC_DIR_NAME "/module", NULL);
-		remove_proc_entry(FW_LOG_PROC_DIR_NAME "/type", NULL);
-		remove_proc_entry(FW_LOG_PROC_DIR_NAME, NULL);
-	}
+	remove_proc_entry(FW_LOG_PROC_DIR_NAME "/level", NULL);
+	remove_proc_entry(FW_LOG_PROC_DIR_NAME "/module", NULL);
+	remove_proc_entry(FW_LOG_PROC_DIR_NAME "/type", NULL);
+	remove_proc_entry(FW_LOG_PROC_DIR_NAME, NULL);
 }
 
 int wq_fw_log_push(struct wq_core *core, struct sk_buff *skb, uint32_t size)
@@ -1264,11 +1217,11 @@ int wq_fw_log_proc_init(struct wq_core *core)
 
 	/* default creat tty device */
 	if (wq_conf.fw_log_enable) {
-		ret = fw_log_type_change(log, wq_conf.fw_log_type);
+		ret = fw_log_type_change(log, FW_LOG_TTY);
 		if (ret)
 			goto out;
 
-		WQ_DBG(DM_TRBUS, DL_WRN, "%s: creat logtype(%d) success\n", __func__, wq_conf.fw_log_type);
+		WQ_DBG(DM_TRBUS, DL_WRN, "%s: creat tty success\n", __func__);
 		WQ_DBG(DM_TRBUS, DL_WRN, "%s: enable hif log success\n",
 		       __func__);
 	}
@@ -1316,7 +1269,7 @@ int wq_fw_log_proc_deinit(struct wq_core *core)
 		WQ_DBG(DM_TRBUS, DL_WRN, "%s: file deinit\n", __func__);
 	}
 
-	fw_log_proc_deinit(log);
+	fw_log_proc_deinit();
 	WQ_DBG(DM_TRBUS, DL_WRN, "%s: remove fw_log proc file\n", __func__);
 
 	kfree(core->fw_log);

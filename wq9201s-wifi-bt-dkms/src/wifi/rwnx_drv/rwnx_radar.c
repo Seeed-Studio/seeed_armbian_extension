@@ -121,10 +121,10 @@ struct radar_detector_specs {
 /* radar types as defined by ETSI EN-301-893 v1.7.1 */
 static const struct radar_detector_specs etsi_radar_ref_types_v17_riu[] = {
 	ETSI_PATTERN_SHORT(0, 0, 8, 700, 700, 18),
-	ETSI_PATTERN_SHORT(1, 0, 5, 200, 1000, 10),
-	ETSI_PATTERN_SHORT(2, 0, 15, 200, 1600, 15),
-	ETSI_PATTERN_SHORT(3, 0, 15, 2300, 4000, 25),
-	ETSI_PATTERN_SHORT(4, 20, 30, 2000, 4000, 20),
+	ETSI_PATTERN_SHORT(1, 0, 10, 200, 1000, 10),
+	ETSI_PATTERN_SHORT(2, 0, 22, 200, 1600, 15),
+	ETSI_PATTERN_SHORT(3, 0, 22, 2300, 4000, 25),
+	ETSI_PATTERN_SHORT(4, 20, 38, 2000, 4000, 20),
 	ETSI_PATTERN_INTERLEAVED(5, 0, 8, 300, 400, 2, 3, 10),
 	ETSI_PATTERN_INTERLEAVED(6, 0, 8, 400, 1200, 2, 3, 15),
 };
@@ -515,8 +515,7 @@ static bool pde_short_create_sequences(struct pri_detector *pde, u64 ts,
 		u64 min_valid_ts;
 		u32 delta_ts = ts - p->ts;
 		pulse_idx++;
-		WQ_DBG(DM_GENERIC, DL_VRB, "%s:delta_ts:%d, pri_min:%d, pri_max:%d, min count:%d\n",
-			__func__, delta_ts, pde->rs->pri_min, pde->rs->pri_max, min_count);
+
 		if (delta_ts < pde->rs->pri_min)
 			/* ignore too small pri */
 			continue;
@@ -657,9 +656,6 @@ static struct pri_sequence *pde_short_check_detection(struct pri_detector *pde)
          * 1) have enough pulses
          * 2) have more matching than false pulses
          */
-		WQ_DBG(DM_GENERIC, DL_VRB, "%s:ps->count:%d, ps->count_falses:%d, ps->ppb_thresh:%d\n",
-			__func__, ps->count, ps->count_falses, ps->ppb_thresh);
-
 		if ((ps->count >= ps->ppb_thresh) &&
 		    (ps->count * pde->rs->num_pri > ps->count_falses)) {
 			return ps;
@@ -999,7 +995,7 @@ static struct pri_detector *pri_detector_get(struct dfs_pattern_detector *dpd,
  *
  * @dpd: dfs_pattern_detector
  */
-void dfs_pattern_detector_reset(struct dfs_pattern_detector *dpd)
+static void dfs_pattern_detector_reset(struct dfs_pattern_detector *dpd)
 {
 	struct pri_detector *pde;
 	int i;
@@ -1058,7 +1054,6 @@ static void dfs_pattern_detector_pri_overflow(struct dfs_pattern_detector *dpd)
  *
  * @dpd: dfs_pattern_detector
  * @chain: Chain that correspond to this pattern_detector (only for debug)
- * @rd: rwnx_radar_detected
  * @freq: frequency of the pulse
  * @pri: Delta with previous pulse. (0 if delta is too big for u16)
  * @len: width of the pulse
@@ -1071,8 +1066,8 @@ static void dfs_pattern_detector_pri_overflow(struct dfs_pattern_detector *dpd)
  * @return True is the pulse complete a radar pattern, false otherwise
  */
 static bool dfs_pattern_detector_add_pulse(struct dfs_pattern_detector *dpd,
-					   enum rwnx_radar_chain chain, struct rwnx_radar_detected *rd,
-					   u16 freq, u16 pri, u16 len, u32 now, bool ignore_width)
+					   enum rwnx_radar_chain chain,
+					   u16 freq, u16 pri, u16 len, u32 now)
 {
 	u32 i;
 
@@ -1104,19 +1099,16 @@ static bool dfs_pattern_detector_add_pulse(struct dfs_pattern_detector *dpd,
 		const struct radar_detector_specs *rs = &dpd->radar_spec[i];
 
 		/* no need to look up for pde if len is not within range */
-		if (!ignore_width && ((rs->width_min > len) || (rs->width_max < len))) {
+		if ((rs->width_min > len) || (rs->width_max < len)) {
 			continue;
 		}
-		WQ_DBG(DM_GENERIC, DL_VRB, "%s: type:%d width_min:%d width_max:%d - pulse width:%d pri:%d\n",
-			__func__, i, rs->width_min, rs->width_max, len, pri);
+
 		pde = pri_detector_get(dpd, freq, i);
 		ps = pde->ops->add_pulse(pde, len, dpd->last_pulse_ts, pri);
 
 		if (ps != NULL) {
 			trace_radar_detected(chain, dpd->region, pde->freq, i,
 					     ps->pri);
-
-			rd->type[rd->index] = i;
 			// reset everything instead of just the channel detector
 			dfs_pattern_detector_reset(dpd);
 			return true;
@@ -1236,67 +1228,53 @@ dfs_pattern_detector_init(enum nl80211_dfs_regions region, u8 chain)
 /******************************************************************************
  * driver interface
  *****************************************************************************/
-static u16 rwnx_radar_get_center_freq(struct rwnx_hw *rwnx_hw, u8 chain, u8 ch_index)
+static u16 rwnx_radar_get_center_freq(struct rwnx_hw *rwnx_hw, u8 chain)
 {
 	if (chain == RWNX_RADAR_FCU)
 		return rwnx_hw->phy.sec_chan.center1_freq;
 
 	if (chain == RWNX_RADAR_RIU) {
-		if (!rwnx_chanctx_valid(rwnx_hw, ch_index)) {
+		if (!rwnx_chanctx_valid(rwnx_hw, rwnx_hw->cur_chanctx)) {
 			WARN(1, "Radar pulse without channel information");
 		} else
-			return rwnx_hw->chanctx_table[ch_index]
+			return rwnx_hw->chanctx_table[rwnx_hw->cur_chanctx]
 				.chan_def.center_freq1;
 	}
 
 	return 0;
 }
 
-static void rwnx_radar_detected(struct rwnx_hw *rwnx_hw, u8 ch_index)
+static void rwnx_radar_detected(struct rwnx_hw *rwnx_hw)
 {
 	struct cfg80211_chan_def chan_def;
 
-	if (!rwnx_chanctx_valid(rwnx_hw, ch_index)) {
+	if (!rwnx_chanctx_valid(rwnx_hw, rwnx_hw->cur_chanctx)) {
 		WARN(1, "Radar detected without channel information");
 		return;
 	}
 
 	/*
-	 recopy chan_def in local variable because rwnx_radar_cancel_cac may
-	 clean the variable (if in CAC and it's the only vif using this context)
-	 and CAC should be aborted before reporting the radar.
-	*/
-	chan_def = rwnx_hw->chanctx_table[ch_index].chan_def;
+      recopy chan_def in local variable because rwnx_radar_cancel_cac may
+      clean the variable (if in CAC and it's the only vif using this context)
+      and CAC should be aborted before reporting the radar.
+    */
+	chan_def = rwnx_hw->chanctx_table[rwnx_hw->cur_chanctx].chan_def;
 
 	rwnx_radar_cancel_cac(&rwnx_hw->radar);
-
-	if (!rwnx_hw->ignorecsa)
-		cfg80211_radar_event(rwnx_hw->wiphy, &chan_def, GFP_ATOMIC);
-
+	cfg80211_radar_event(rwnx_hw->wiphy, &chan_def, GFP_KERNEL);
 }
 
-void rwnx_radar_process_pulse(struct rwnx_hw *rwnx_hw)
+static void rwnx_radar_process_pulse(struct work_struct *ws)
 {
-	struct rwnx_radar *radar = &rwnx_hw->radar;
+	struct rwnx_radar *radar =
+		container_of(ws, struct rwnx_radar, detection_work);
+	struct rwnx_hw *rwnx_hw = container_of(radar, struct rwnx_hw, radar);
 	int chain;
 	u32 pulses[RWNX_RADAR_LAST][RWNX_RADAR_PULSE_MAX];
 	u16 pulses_count[RWNX_RADAR_LAST];
 	u32 now =
 		jiffies; /* would be better to store jiffies value in IT handler */
-	struct rwnx_vif *vif, *tmp;
-	u8 ch_index;
 
-	if (rwnx_hw->radar.cac_vif) {
-		ch_index = rwnx_hw->radar.cac_vif->ch_index;
-	} else {
-		list_for_each_entry_safe (vif, tmp, &rwnx_hw->vifs, list) {
-			if (RWNX_VIF_TYPE(vif) == NL80211_IFTYPE_AP) {
-				ch_index = vif->ch_index;
-				// TODO: currently, only one AP interface support
-				break;
-			}
-		}
-	}
 	/* recopy pulses locally to avoid too long spin_lock */
 	spin_lock_bh(&radar->lock);
 	for (chain = RWNX_RADAR_RIU; chain < RWNX_RADAR_LAST; chain++) {
@@ -1336,25 +1314,23 @@ void rwnx_radar_process_pulse(struct rwnx_hw *rwnx_hw)
 		if (pulses_count[chain] == 0)
 			continue;
 
-		freq = rwnx_radar_get_center_freq(rwnx_hw, chain, ch_index);
+		freq = rwnx_radar_get_center_freq(rwnx_hw, chain);
 
 		for (i = 0; i < pulses_count[chain]; i++) {
 			struct radar_pulse *p =
 				(struct radar_pulse *)&pulses[chain][i];
 			trace_radar_pulse(chain, p);
 			if (dfs_pattern_detector_add_pulse(
-				    radar->dpd[chain], chain, &radar->detected[chain],
+				    radar->dpd[chain], chain,
 				    (s16)freq + (2 * p->freq), p->rep,
-				    (p->len * 2), now, radar->ignore_pulse_width)) {
+				    (p->len * 2), now)) {
 				u16 idx = radar->detected[chain].index;
 
 				if (chain == RWNX_RADAR_RIU) {
-					WQ_DBG(DM_GENERIC, DL_WRN, "found radar on freq %d\n",
-							freq);
 					/* operating chain, inform upper layer to change channel */
 					if (radar->dpd[chain]->enabled ==
 					    RWNX_RADAR_DETECT_REPORT) {
-						rwnx_radar_detected(rwnx_hw, ch_index);
+						rwnx_radar_detected(rwnx_hw);
 						/* no need to report new radar until upper layer set a
                            new channel. This prevent warning if a new radar is
                            detected while mac80211 is changing channel */
@@ -1400,9 +1376,9 @@ static void rwnx_radar_cac_work(struct work_struct *ws)
 	}
 
 	ctxt = &rwnx_hw->chanctx_table[radar->cac_vif->ch_index];
-	rwnx_send_apm_stop_cac_req(rwnx_hw, radar->cac_vif);
 	cfg80211_cac_event(radar->cac_vif->ndev, &ctxt->chan_def,
-			radar->abort_cac ? NL80211_RADAR_CAC_ABORTED : NL80211_RADAR_CAC_FINISHED, GFP_KERNEL);
+			   NL80211_RADAR_CAC_FINISHED, GFP_KERNEL);
+	rwnx_send_apm_stop_cac_req(rwnx_hw, radar->cac_vif);
 	rwnx_chanctx_unlink(radar->cac_vif);
 
 	radar->cac_vif = NULL;
@@ -1424,10 +1400,8 @@ bool rwnx_radar_detection_init(struct rwnx_radar *radar)
 		return false;
 	}
 
-	/* execution in place instead of defered to workqueue, aviod
-	schedule work fail caused by recevie ind message to fast */
-//	INIT_WORK(&radar->detection_work, rwnx_radar_process_pulse);
-	INIT_DELAYED_WORK(&radar->cac_work, rwnx_radar_cac_work);
+	WQ_INIT_WORK(&radar->detection_work, rwnx_radar_process_pulse);
+	WQ_INIT_DELAYED_WORK(&radar->cac_work, rwnx_radar_cac_work);
 	radar->cac_vif = NULL;
 	return true;
 }
@@ -1479,31 +1453,38 @@ void rwnx_radar_start_cac(struct rwnx_radar *radar, u32 cac_time_ms,
 {
 	WARN(radar->cac_vif != NULL, "CAC already in progress");
 	radar->cac_vif = vif;
-	radar->abort_cac = false;
 	schedule_delayed_work(&radar->cac_work, msecs_to_jiffies(cac_time_ms));
 }
 
 void rwnx_radar_cancel_cac(struct rwnx_radar *radar)
 {
+	struct rwnx_hw *rwnx_hw = container_of(radar, struct rwnx_hw, radar);
+
 	if (radar->cac_vif == NULL) {
 		return;
 	}
 
 	if (cancel_delayed_work(&radar->cac_work)) {
-		radar->abort_cac = true;
-		schedule_delayed_work(&radar->cac_work, 0);
+		struct rwnx_chanctx *ctxt;
+		ctxt = &rwnx_hw->chanctx_table[radar->cac_vif->ch_index];
+		rwnx_send_apm_stop_cac_req(rwnx_hw, radar->cac_vif);
+		cfg80211_cac_event(radar->cac_vif->ndev, &ctxt->chan_def,
+				   NL80211_RADAR_CAC_ABORTED, GFP_KERNEL);
+		rwnx_chanctx_unlink(radar->cac_vif);
 	}
+
+	radar->cac_vif = NULL;
 }
 
-void rwnx_radar_detection_enable_on_cur_channel(struct rwnx_hw *rwnx_hw, struct rwnx_vif *vif)
+void rwnx_radar_detection_enable_on_cur_channel(struct rwnx_hw *rwnx_hw)
 {
 	struct rwnx_chanctx *ctxt;
 
 	/* If no information on current channel do nothing */
-	if (!rwnx_chanctx_valid(rwnx_hw, vif->ch_index))
+	if (!rwnx_chanctx_valid(rwnx_hw, rwnx_hw->cur_chanctx))
 		return;
 
-	ctxt = &rwnx_hw->chanctx_table[vif->ch_index];
+	ctxt = &rwnx_hw->chanctx_table[rwnx_hw->cur_chanctx];
 	if (ctxt->chan_def.chan->flags & IEEE80211_CHAN_RADAR) {
 		rwnx_radar_detection_enable(&rwnx_hw->radar,
 					    RWNX_RADAR_DETECT_REPORT,
@@ -1602,7 +1583,7 @@ int rwnx_radar_dump_radar_detected(char *buf, size_t len,
 				   struct rwnx_radar *radar, u8 chain)
 {
 	struct rwnx_radar_detected *detect = &(radar->detected[chain]);
-	char info[] = "2001/02/02 - 02:20 5126MHz type00\n";
+	char info[] = "2001/02/02 - 02:20 5126MHz\n";
 	int idx, i, res, write = 0;
 	int count = detect->count;
 
@@ -1620,10 +1601,10 @@ int rwnx_radar_dump_radar_detected(char *buf, size_t len,
 		time64_to_tm(detect->time[idx], 0, &tm);
 
 		res = scnprintf(&buf[write], len,
-				"%.4d/%.2d/%.2d - %.2d:%.2d %4.4dMHz type%-2d\n",
+				"%.4d/%.2d/%.2d - %.2d:%.2d %4.4dMHz\n",
 				(int)tm.tm_year + 1900, tm.tm_mon + 1,
 				tm.tm_mday, tm.tm_hour, tm.tm_min,
-				detect->freq[idx], detect->type[idx]);
+				detect->freq[idx]);
 		write += res;
 		len -= res;
 

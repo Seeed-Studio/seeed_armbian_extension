@@ -42,19 +42,11 @@
 #define CMD_MSG_TIMEOUT 200
 
 #ifndef DTOP_PROC_DIR
-#ifdef DUAL_USB_SUPPORT
-#define DTOP_PROC_DIR "driver/dtop_usb1"
-#else
 #define DTOP_PROC_DIR "driver/dtop_usb"
-#endif
 #endif
 
 #ifndef PROC_DIR_FW
-#ifdef DUAL_USB_SUPPORT
-#define PROC_DIR_FW "driver/fw1"
-#else
 #define PROC_DIR_FW "driver/fw"
-#endif
 #endif
 
 #if (LINUX_VERSION_CODE < KERNEL_VERSION(5, 6, 0))

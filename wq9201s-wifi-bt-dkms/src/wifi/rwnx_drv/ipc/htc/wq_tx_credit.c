@@ -284,7 +284,7 @@ bool rwnx_get_dev_credit(struct rwnx_hw *rwnx_hw, u8 hwq_id, u16 txq_idx,
 		// If available credit number is less than 1/4, we do not
 		// assign credit to BCMC queue
 		if (txq_idx >= NX_FIRST_BCMC_TXQ_IDX &&
-		    crdt_mgmt->drv_crdt_num <= ((crdt_mgmt->dev_credit_sz)/2)) {
+		    crdt_mgmt->drv_crdt_num <= ((crdt_mgmt->dev_credit_sz)/4)) {
 			WQ_DBG(DM_CRDT, DL_INF, "skip credit for BCMC(%d), drv_crdt_num: %d\n",
 				txq_idx, crdt_mgmt->drv_crdt_num);
 			goto done_failed;
@@ -581,7 +581,7 @@ done_succ:
 		       *type_id, ret);
 	}
 
- done:
+done:
 	spin_unlock_irqrestore(&crdt_mgmt->credit_mgmt_lock, flags);
 
 	return ret;
@@ -684,7 +684,7 @@ bool rwnx_return_dev_credit(struct rwnx_hw *rwnx_hw, u8 *grp0, u8 *grp1)
 
 	return true;
 }
-WQ_TX_CREDIT_API(rwnx_return_dev_credit);
+EXPORT_SYMBOL(rwnx_return_dev_credit);
 
 bool rwnx_return_dev_credit_ex(struct rwnx_hw *rwnx_hw, u8 grp, u8 type_id)
 {
@@ -844,18 +844,13 @@ void rwnx_credit_enable(struct rwnx_hw *rwnx_hw, int enable, int extra_enable)
 
 	crdt_mgmt->enabled = !!enable;
 
-	// Force enable WQ_ENABLE_EXTRA_CRDT if it has enabled through INI file
-	if (wq_conf.enable_extra_crdit) {
-		extra_enable = 1;
-	}
-
 	if (enable && extra_enable) {
 		crdt_mgmt->enabled |= WQ_ENABLE_EXTRA_CRDT;
 		atomic_set(&crdt_mgmt->extra_credit_cnt,
 			rwnx_hw->mod_params.extra_cred_num);
 	}
 
-	WQ_DBG(DM_CRDT, DL_ERR, "%s: enable: %s, extra: %s\n", __func__,
+	WQ_DBG(DM_CRDT, DL_INF, "%s: enable: %s, extra: %s\n", __func__,
 	       enable ? "enabled" : "disabled",
 	       (crdt_mgmt->enabled & WQ_ENABLE_EXTRA_CRDT) ? "enabled" : "disabled");
 }
@@ -868,4 +863,4 @@ void wq_reschedule_hwq(struct wq_core *core)
 	if (crdt_mgmt->enabled)
 		tasklet_hi_schedule(&core->hw->credit_task);
 }
-WQ_TX_CREDIT_API(wq_reschedule_hwq);
+EXPORT_SYMBOL(wq_reschedule_hwq);

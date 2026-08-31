@@ -7,7 +7,6 @@
 #include "config.h"
 #include "rwnx_tx.h" /* for NX_TX_PAYLOAD_MAX and RWNX_TX_LIFETIME_MS */
 #include "wq_log.h"
-#include "core.h"
 
 #ifndef sizeof_field
 #define sizeof_field(TYPE, MEMBER) sizeof((((TYPE *)0)->MEMBER))
@@ -27,8 +26,7 @@
 	._name = _default,
 
 struct wq_conf wq_conf = { WQ_CONF_ITEMS };
-WQ_CORE_API(wq_conf);
-
+EXPORT_SYMBOL(wq_conf);
 
 const struct wq_conf wq_conf_def = { WQ_CONF_ITEMS };
 
@@ -123,6 +121,8 @@ static int wq_conf_set_bytes(const struct wq_conf_map *map, const char *val,
 		strncpy((char *)result, val, map->array_size);
 	} else if (strcmp(map->name, "fw_log_path") == 0) {
 		strncpy((char *)result, val, map->array_size);
+	} else if (strcmp(map->name, "phy_cfg_name") == 0) {
+		strncpy((char *)result, val, map->array_size);
 	} else if (strcmp(map->name, "pcm_format") == 0) {
 		strncpy((char *)result, val, map->array_size);
 	}
@@ -138,6 +138,8 @@ static int wq_conf_get_bytes(const struct wq_conf_map *map, char *buffer,
 	else if (strcmp(map->name, "drvcc") == 0)
 		return scnprintf(buffer, WQ_CONF_BUF_SIZE, "%s", (char *)p);
 	else if (strcmp(map->name, "fw_log_path") == 0)
+		return scnprintf(buffer, WQ_CONF_BUF_SIZE, "%s", (char *)p);
+	else if (strcmp(map->name, "phy_cfg_name") == 0)
 		return scnprintf(buffer, WQ_CONF_BUF_SIZE, "%s", (char *)p);
 	else if (strcmp(map->name, "pcm_format") == 0)
 		return scnprintf(buffer, WQ_CONF_BUF_SIZE, "%s", (char *)p);

@@ -1,3 +1,15 @@
+wq9201s-wifi-bt-dkms (2.2.3.94-1) stable; urgency=medium
+
+  * Update driver + firmware to vendor release v2.2.3.94 (from 2.2.1.961)
+  * Vendor integrated in-tree: fw-download failure rescan (chip reset +
+    mmc rescan) and >= 6.1.107 amsdu 8-arg signature handling
+  * Only Makefile patch left: M=$(PWD) -> M=$(CURDIR) (DKMS make -C build)
+  * ini: 1-antenna profile base (ant_mode=2, coex_ant_mode=2)
+  * Firmware: H4-variant OEM 0366 (md5 c12fccf6..., device-proven with H4
+    btattach) + native-batch PHY 4366 (replaces renamed 2186 file)
+
+ -- Seeed Studio <techsupport@seeed.cc>  Fri, 28 Aug 2026 13:38:34 +0800
+
 wq9201s-wifi-bt-dkms (2.2.1.961-2) stable; urgency=medium
 
   * Ship /etc/modules-load.d/wq-wlan.conf (hci_uart + wq_wlan): the

@@ -17,7 +17,7 @@ struct rwnx_hw;
 struct wiphy;
 
 int rwnx_handle_dynparams(struct rwnx_hw *rwnx_hw, struct wiphy *wiphy);
-void rwnx_custregd(struct rwnx_hw *rwnx_hw, struct wiphy *wiphy, const struct ieee80211_regdomain *regdomain);
+void rwnx_custregd(struct rwnx_hw *rwnx_hw, struct wiphy *wiphy);
 void rwnx_enable_wapi(struct rwnx_hw *rwnx_hw);
 void rwnx_enable_mfp(struct rwnx_hw *rwnx_hw);
 void rwnx_enable_gcmp(struct rwnx_hw *rwnx_hw);

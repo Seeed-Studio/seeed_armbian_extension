@@ -23,11 +23,6 @@
 #include "rwnx_defs.h"
 #include "fw_log.h"
 #include "fw_api/wifi/mac/dp_tx.h"
-#include <linux/gpio.h>
-#include <linux/version.h>
-#if LINUX_VERSION_CODE >= KERNEL_VERSION(3, 13, 0)
-#include <linux/gpio/consumer.h>
-#endif
 
 /****************************
  * USB Configuration
@@ -62,10 +57,10 @@ char *fw_wifi_usb = NULL;
 module_param(fw_wifi_usb, charp, 0);
 MODULE_PARM_DESC(fw_wifi_usb, "wifi firmware name for usb, default: null.");
 
-/* Maximum number of subpkt in bundle supported in reception */
-int gv_usb_max_bundle_i = 0;
-/* Maximum size of bundle supported in reception */
-int gv_usb_mtu_pkt_bundle_i = 0;
+//USB2 : OUT bundle = 1 => i.e bundle off
+u16 gv_threshold_usb_out_bundle_max = 1;
+u16 gv_usb_out_pkt_len = 2048;
+EXPORT_SYMBOL(gv_threshold_usb_out_bundle_max);
 
 static struct wq_usb_recovery_ctx {
 	bool bus_dead;
@@ -134,23 +129,12 @@ static void wq_usb_autopm_resume(struct wq_core *core)
 static void wq_usb_dump_info(struct wq_core *core)
 {
 	struct wq_usb *wq_usb = container_of(core, struct wq_usb, core);
-	struct rwnx_hw *rwnx_hw = wq_usb->core.hw;
 
 	WQ_DBG(DM_TRBUS, DL_ERR,
 	       "%s: free in pool: pktin=%d, pktout=%d, msgin=%d, msgout=%d\n",
 	       __func__, wq_usb->pools.pktin.list.num,
 	       wq_usb->pools.pktout.list.num, wq_usb->pools.msgin.list.num,
 	       wq_usb->pools.msgout.list.num);
-
-	if (wq_conf.chip_reset_task == 1 && rwnx_hw != NULL) {
-		if (!core->flags.suspend) {
-			if (wq_usb->pools.pktin.list.num == WQ_PKTIN_URB_NUM &&
-			    wq_usb->pools.msgin.list.num == WQ_MSGIN_URB_NUM) {
-				printk(KERN_ERR "#### %s: schedule chip_reset worker ####\n", __func__);
-				schedule_work(&rwnx_hw->chip_reset_task);
-			}
-		}
-	}
 
 	spin_lock_bh(&wq_usb->usb_out_info_lock);
 	if (wq_usb->usb_out_times) {
@@ -237,11 +221,6 @@ static int wq_usb_rx_urb_check(struct wq_usb *wq_usb, struct urb *urb)
 	} while (0)
 
 	int status;
-	struct rwnx_hw *rwnx_hw = wq_usb->core.hw;
-
-	if (rwnx_hw != NULL && rwnx_hw->disconnecting_in_progress) {
-		return -ESHUTDOWN;
-	}
 
 	if (!wq_core_is_hif_ready(&wq_usb->core))
 		return -EPROTO;
@@ -282,10 +261,10 @@ static void wq_usb_pkt_in_cb(struct urb *urb)
 		skb = ctx->skb;
 
 		//check usb transfer length
-		if (gv_usb_mtu_pkt_bundle_i < urb->actual_length) {
+		if (WQ_USB_MTU_PKT_BUNDLE_I < urb->actual_length) {
 			WQ_DBG(DM_TRBUS, DL_WRN,
 			       "[auto]msg:%s: pktin_mtu=%u, actual_length=%u\n",
-			       __func__, gv_usb_mtu_pkt_bundle_i,
+			       __func__, WQ_USB_MTU_PKT_BUNDLE_I,
 			       urb->actual_length);
 		}
 
@@ -330,11 +309,11 @@ static int wq_usb_pkt_in(struct wq_usb *wq_usb, struct wq_urb_ctx *ctx)
 	}
 
 	// check skb length
-	if ((skb->len != 0) || (skb_tailroom(skb) < gv_usb_mtu_pkt_bundle_i)) {
+	if ((skb->len != 0) || (skb_tailroom(skb) < WQ_USB_MTU_PKT_BUNDLE_I)) {
 		WQ_DBG(DM_TRBUS, DL_WRN,
 		       "%s: ctx=0x%p, skb=0x%p(data=0x%p, len=%u, tailroom=%u), pktin_mtu=%u\n",
 		       __func__, ctx, skb, skb->data, skb->len,
-		       skb_tailroom(skb), gv_usb_mtu_pkt_bundle_i);
+		       skb_tailroom(skb), WQ_USB_MTU_PKT_BUNDLE_I);
 	} else {
 		WQ_DBG(DM_TRBUS, DL_VRB,
 		       "%s: ctx=0x%p, skb=0x%p(data=0x%p, len=%u, tailroom=%u)\n",
@@ -413,7 +392,7 @@ static int wq_usb_msg_in(struct wq_usb *wq_usb, struct wq_urb_ctx *ctx)
 	usb_fill_int_urb(urb, wq_usb->usbdev,
 			 usb_rcvintpipe(wq_usb->usbdev, WQ_USB_EP_BI_MSG),
 			 skb->data, skb_tailroom(skb), wq_usb_msg_in_cb, ctx,
-			 2);
+			 1);
 #endif
 
 	ret = usb_submit_urb(urb, GFP_ATOMIC);
@@ -469,7 +448,7 @@ void compress_txdesc(struct rwnx_hw *hw, struct sk_buff *skb)
 	    gv_cached_eth_ip_info.saddr == ip_hdr->saddr &&
 	    gv_cached_eth_ip_info.daddr == ip_hdr->daddr
 	    //in order to prevent and restore abnormal conditions, only compress eth/iphdr if throughput > 200Mbps
-	    && hw->tx_throughput > 120) {
+	    && hw->tx_throughput > 200) {
 		//compress ethhdr/iphdr if these bytes in gv_cached_eth_ip_info are the same with last time
 		compressed_hostdesc.compress_eth_ip_flag = 1;
 		atomic_inc(&hw->usb_com_ethip);
@@ -618,7 +597,7 @@ static void wq_usb_pkt_out_cb(struct urb *urb)
 	struct wq_usb *wq_usb = ctx->wq_usb;
 
 	if (wq_usb->core.hw->mod_params.compress_txdesc &&
-	    THRESHOLD_USB_OUT_BUNDLE_MAX == 1) {
+	    gv_threshold_usb_out_bundle_max== 1) {
 		decompress_txdesc(ctx->skb);
 	}
 
@@ -626,11 +605,6 @@ static void wq_usb_pkt_out_cb(struct urb *urb)
 
 	ctx->skb = NULL; /* skb is already taken by htc_tx_done */
 	wq_urb_ctx_free(&wq_usb->pools.pktout, ctx);
-
-	if (!skb_queue_empty(&wq_usb->bundle_retry_list) ||
-	    !skb_queue_empty(&wq_usb->buf_retry_list)) {
-		tasklet_hi_schedule(&wq_usb->retransmit_task);
-	}
 }
 
 static const u8 ep_map[WQ_QID_MAX] = {
@@ -655,7 +629,7 @@ static int wq_usb_tx_pkt(struct wq_core *core, enum wq_hif_qid qid,
 	// urb preparation
 	ctx = wq_urb_ctx_alloc(&wq_usb->pools.pktout);
 	if (!ctx) {
-		WQ_DBG(DM_TRBUS, DL_INF, "%s: no ctx to send\n", __func__);
+		WQ_DBG(DM_TRBUS, DL_WRN, "%s: no ctx to send\n", __func__);
 		return -ENOMEM;
 	}
 
@@ -666,7 +640,7 @@ static int wq_usb_tx_pkt(struct wq_core *core, enum wq_hif_qid qid,
 
 	// compress struct txdesc_host if fw also supports compression
 	if (core->hw->mod_params.compress_txdesc &&
-	    THRESHOLD_USB_OUT_BUNDLE_MAX == 1) {
+	    gv_threshold_usb_out_bundle_max== 1) {
 		compress_txdesc(core->hw, skb);
 	}
 
@@ -751,7 +725,7 @@ static int wq_usb_tx_msg(struct wq_core *core, enum wq_hif_qid qid,
 #else
 	usb_fill_int_urb(urb, wq_usb->usbdev,
 			 usb_sndintpipe(wq_usb->usbdev, ep_id), skb->data,
-			 skb->len, wq_usb_msg_out_cb, ctx, 2);
+			 skb->len, wq_usb_msg_out_cb, ctx, 1);
 #endif
 
 	wq_usb->cmd_start_time = ktime_get();
@@ -836,7 +810,7 @@ static int wq_usb_tx(struct wq_core *core, enum wq_hif_qid qid,
 					ret = wq_usb_tx_pkt(core, qid,
 						skb_bundle);
 					if (ret) {
-						WQ_DBG(DM_TRBUS, DL_INF,
+						WQ_DBG(DM_TRBUS, DL_ERR,
 							"%s(%d): skb tx fail\n", __func__, __LINE__);
 						__skb_queue_head(&wq_usb->bundle_retry_list, skb_bundle);
 						skb_queue_splice_tail_init(skbq, &wq_usb->buf_retry_list);
@@ -852,7 +826,7 @@ static int wq_usb_tx(struct wq_core *core, enum wq_hif_qid qid,
 
 			// TO DO: dequeue skb from skb_out_bundle pool(link to urb), and queue skb when tx done/fail
 			skb_bundle = dev_alloc_skb(
-				THRESHOLD_USB_OUT_BUNDLE_MAX * USB_OUT_PKT_LEN);
+				gv_threshold_usb_out_bundle_max* gv_usb_out_pkt_len);
 			if (!skb_bundle) {
 				WQ_DBG(DM_TRBUS, DL_ERR,
 				       "%s:%d alloc bundle skb fail\n",
@@ -866,6 +840,7 @@ static int wq_usb_tx(struct wq_core *core, enum wq_hif_qid qid,
 				ret = -ENOMEM;
 				break;
 			}
+
 			/*
 			 WQ_DBG(DM_TRBUS, DL_ERR, "%s: skb:%p len:%d head:%p data:%p tail:%#lx end:%#lx \n",
 			 __func__, skb_bundle, skb_bundle->len, skb_bundle->head, skb_bundle->data,
@@ -874,7 +849,6 @@ static int wq_usb_tx(struct wq_core *core, enum wq_hif_qid qid,
 
 			while ((skb_temp = __skb_dequeue(skbq)) != NULL) {
 				wq_usb_saved_crdt_t bundled_skb[THRESHOLD_USB_OUT_BUNDLE_MAX];
-				memset(bundled_skb, 0, sizeof(bundled_skb));
 
 				txcb_skb_bundle = WQ_SKB_TXCB(skb_bundle);
 
@@ -901,16 +875,16 @@ static int wq_usb_tx(struct wq_core *core, enum wq_hif_qid qid,
 
 				// copy skb_temp to skb_bundle, save skb_temp to skb array for
 				// free latter and count the number of skb in skb_bundle
-				if (skb_count % THRESHOLD_USB_OUT_BUNDLE_MAX ==
+				if (skb_count % gv_threshold_usb_out_bundle_max==
 					    0 ||
 				    !skb_queue_len(skbq)) {
 					skb_put(skb_bundle, skb_temp->len);
 				} else {
-					skb_put(skb_bundle, USB_OUT_PKT_LEN);
+					skb_put(skb_bundle, gv_usb_out_pkt_len);
 				}
-				skb_copy_bits(skb_temp, 0,
-					skb_bundle->data + (skb_count - 1) * USB_OUT_PKT_LEN,
-					skb_temp->len);
+				memcpy(skb_bundle->data + (skb_count -
+							   1) * gv_usb_out_pkt_len,
+				       skb_temp->data, skb_temp->len);
 
 				// copy txcb of skb_temp to skb_bundle if the skb_temp is the first of bundle
 				if (skb_count == 1) {
@@ -923,11 +897,10 @@ static int wq_usb_tx(struct wq_core *core, enum wq_hif_qid qid,
 				dev_kfree_skb_any(skb_temp);
 
 				// send skb_bundle if skb_count >= BUNDLE_MAX or skbq is empty
-				if (skb_count >= THRESHOLD_USB_OUT_BUNDLE_MAX ||
+				if (skb_count >= gv_threshold_usb_out_bundle_max||
 				    !skb_queue_len(skbq)) {
 					txcb_skb_bundle->usb_out_bundle_num =
 						skb_count;
-
 					txcb_skb_bundle->extra_crdt_num =
 						extra_crdt_sum;
 
@@ -943,7 +916,7 @@ static int wq_usb_tx(struct wq_core *core, enum wq_hif_qid qid,
 					ret = wq_usb_tx_pkt(core, qid,
 							    skb_bundle);
 					if (ret) {
-						WQ_DBG(DM_TRBUS, DL_INF,
+						WQ_DBG(DM_TRBUS, DL_ERR,
 							"%s: skb tx fail, skb_count: %d\n",
 							__func__, skb_count);
 
@@ -972,8 +945,8 @@ static int wq_usb_tx(struct wq_core *core, enum wq_hif_qid qid,
 					// if skbq is not empty, alloc skb_bundle for sending next
 					if (skb_queue_len(skbq) > 0) {
 						skb_bundle = dev_alloc_skb(
-							THRESHOLD_USB_OUT_BUNDLE_MAX *
-							USB_OUT_PKT_LEN);
+							gv_threshold_usb_out_bundle_max*
+							gv_usb_out_pkt_len);
 						if (!skb_bundle) {
 							WQ_DBG(DM_TRBUS, DL_WRN,
 							       "%s:%d alloc bundle skb fail\n",
@@ -1020,56 +993,8 @@ static int wq_usb_tx(struct wq_core *core, enum wq_hif_qid qid,
 		}
 	}
 
- done:
+done:
 	return ret;
-}
-
-int wq_usb_tx_retrigger(struct wq_core *core)
-{
-	struct wq_usb *wq_usb;
-	struct sk_buff *skb_bundle;
-	int ret;
-
-	wq_usb = container_of(core, struct wq_usb, core);
-
-	// If retransmission list is not empty, try to transmit it first
-	if (!skb_queue_empty(&wq_usb->bundle_retry_list)) {
-		while ((skb_bundle = __skb_dequeue(&wq_usb->bundle_retry_list))) {
-			// Increse the retry count
-			wq_usb->usb_retry_count++;
-
-			ret = wq_usb_tx_pkt(core, WQ_QID_AC_BE,
-				skb_bundle);
-			if (ret == -ENOMEM) {
-				WQ_DBG(DM_TX, DL_INF,
-					"%s: skb tx fail\n", __func__);
-				__skb_queue_head(&wq_usb->bundle_retry_list, skb_bundle);
-				return ret;
-			}
-		}
-	}
-
-	/* If there are remained skbs queued in the retry list, put the list in from of skbq */
-	if (!skb_queue_empty(&wq_usb->buf_retry_list)) {
-		struct sk_buff_head skbq;
-
-		__skb_queue_head_init(&skbq);
-		skb_queue_splice_init(&wq_usb->buf_retry_list, &skbq);
-		wq_usb_tx(core, WQ_QID_AC_BE, &skbq);
-	}
-
-	return 0;
-}
-
-void wq_usb_retransmit_task(unsigned long data)
-{
-	struct wq_usb *wq_usb = (struct wq_usb *)data;
-	struct wq_core *core = &wq_usb->core;
-	struct rwnx_hw *rwnx_hw = core->hw;
-
-	spin_lock_bh(&rwnx_hw->tx_lock);
-	wq_usb_tx_retrigger(core);
-	spin_unlock_bh(&rwnx_hw->tx_lock);
 }
 
 static int hif_get_hdr_sz_usb(struct wq_core *core)
@@ -1079,9 +1004,6 @@ static int hif_get_hdr_sz_usb(struct wq_core *core)
 
 static struct wq_hif_ops wq_usb_ops = {
 	.hif = WQ_HIF_USB,
-#ifdef DUAL_USB_SUPPORT
-	.hif_proc_name = "usb1",
-#endif
 	.txq_stop_threshlod = RWNX_NDEV_FLOW_CTRL_USB_STOP,
 	.txq_restart_threshlod = RWNX_NDEV_FLOW_CTRL_USB_RESTART,
 
@@ -1099,7 +1021,7 @@ static struct wq_hif_ops wq_usb_ops = {
 	.bmi_xfer = wq_usb_bmi_xfer,
 	.bmi_exchange = wq_usb_bmi_exchange,
 
-#if defined(CONFIG_WQ_DTOP) && !defined(CONFIG_WQ_GKI)
+#ifdef CONFIG_WQ_DTOP
 	.dtop_bulk_send = wq_usb_dtop_send,
 #endif
 };
@@ -1215,6 +1137,9 @@ static int wq_usb_probe(struct usb_interface *intf,
 
 	if (usb->speed == USB_SPEED_SUPER) {
 		// check endpoint number, TODO: u3 descriptors have not yet been finalized
+		enable_extra_credit = true;
+        gv_threshold_usb_out_bundle_max = THRESHOLD_USB_OUT_BUNDLE_MAX;
+        gv_usb_out_pkt_len = USB_OUT_PKT_LEN;
 	} else {
 		// check endpoint number
 		if ((desc->bNumEndpoints != WQ_USB_NUM_OF_EP) &&
@@ -1229,9 +1154,6 @@ static int wq_usb_probe(struct usb_interface *intf,
 	}
 
 	wq_usb_recovery.bus_dead = false;
-
-	gv_usb_max_bundle_i = wq_conf.usb_max_bundle_in;
-	gv_usb_mtu_pkt_bundle_i = WQ_USB_MAX_AMSDU_RX * gv_usb_max_bundle_i;
 
 	//1. device info preparation
 	wq_usb = (struct wq_usb *)wq_core_create(
@@ -1257,10 +1179,6 @@ static int wq_usb_probe(struct usb_interface *intf,
 
 	wq_usb->cmd_start_time = ktime_get();
 
-	// initialize retransmission tasklet
-	tasklet_init(&wq_usb->retransmit_task, wq_usb_retransmit_task,
-		     (unsigned long) wq_usb);
-
 	intf->needs_remote_wakeup = 1;
 	pm_runtime_set_autosuspend_delay(&usb->dev, WQ_USB_AUTOPM_DELAY);
 	// disable autopm
@@ -1269,7 +1187,7 @@ static int wq_usb_probe(struct usb_interface *intf,
 	wq_usb->nb.notifier_call = wq_usb_nb_notify;
 	bus_register_notifier(usb->dev.bus, &wq_usb->nb);
 
-	INIT_WORK(&wq_usb->trigger.work, wq_usb_trigger_work);
+	WQ_INIT_WORK(&wq_usb->trigger.work, wq_usb_trigger_work);
 	skb_queue_head_init(&wq_usb->bundle_retry_list);
 	skb_queue_head_init(&wq_usb->buf_retry_list);
 
@@ -1306,27 +1224,19 @@ static int wq_usb_probe(struct usb_interface *intf,
 	if (ret)
 		goto fail;
 
-	wq_usb->core.band = wq_band_pick();
-	WQ_DBG(DM_TRBUS, DL_WRN, "%s:core.band=%d\n", __func__, wq_usb->core.band);
-
 	ret = wq_wlan_create(&wq_usb->core, 1, enable_extra_credit);
 	if (ret)
 		goto fail;
 
-#if defined(CONFIG_WQ_DTOP) && !defined(CONFIG_WQ_GKI)
+#ifdef CONFIG_WQ_DTOP
 	ret = wq_usb_app_init(wq_usb);
 	if (ret)
 		goto fail;
 
 	wq_usb->dtop_inited = 1;
 #endif
-	snprintf((char *)wq_usb->core.bus_name, sizeof(wq_usb->core.bus_name), "wq_%s",
-		wq_usb_ops.hif_proc_name ? wq_usb_ops.hif_proc_name : wq_usb->core.hif_name);
-	WQ_DBG(DM_TRBUS, DL_ERR, "%s: bus_name %s\n", __func__, wq_usb->core.bus_name);
-
-#ifndef CONFIG_WQ_GKI
 	wq_fw_log_proc_init(&wq_usb->core);
-#endif
+
 	/* device initialize success */
 	LEAVE();
 
@@ -1385,12 +1295,6 @@ static void wq_usb_disconnect(struct usb_interface *intf)
 	struct rwnx_hw *rwnx_hw = wq_usb->core.hw;
 	int32_t leave_time;
 
-	if (rwnx_hw) {
-		rwnx_hw->disconnecting_in_progress = true;
-	}
-	/* sleep 100 msec to wait for all work done */
-	msleep(100);
-
 	WQ_DBG(DM_GENERIC, DL_WRN, "%s\n", __func__);
 
 	WARN_ON(!wq_usb);
@@ -1442,18 +1346,16 @@ static void wq_usb_disconnect(struct usb_interface *intf)
 	}
 
 	cancel_work_sync(&wq_usb->trigger.work);
-	tasklet_kill(&wq_usb->retransmit_task);
 
 	if (wq_usb->nb.notifier_call)
 		bus_unregister_notifier(usb->dev.bus, &wq_usb->nb);
 
-#if defined(CONFIG_WQ_DTOP) && !defined(CONFIG_WQ_GKI)
+#ifdef CONFIG_WQ_DTOP
 	if (wq_usb->dtop_inited)
 		wq_usb_app_deinit(wq_usb);
 #endif
-#ifndef CONFIG_WQ_GKI
 	wq_fw_log_proc_deinit(&wq_usb->core);
-#endif
+
 	wq_usb_wifi_shutdown(wq_usb);
 	// Some cmd may be sent during unregister wlan. If cmd_mgr has cmd waiting for cfm/ack,
 	// subsequent cmd cannot be pushed and cmd time-out may occur. So drain cmd here.
@@ -1481,7 +1383,6 @@ static int wq_usb_suspend(struct usb_interface *intf, pm_message_t message)
 {
 	struct wq_usb *wq_usb = (struct wq_usb *)usb_get_intfdata(intf);
 	int ret = 0;
-	int wait_count = 0;
 
 	ENTER();
 
@@ -1491,37 +1392,11 @@ static int wq_usb_suspend(struct usb_interface *intf, pm_message_t message)
 		WQ_DBG(DM_TRBUS, DL_WRN, "%s: wait wifi suspend", __func__);
 	}
 
-	// Enable power saving mode if ps_mode is 15 and ds_when_suspend is true
-	if (wq_conf.ds_when_suspend == true &&
-	    wq_conf.ps_mode == 15) {
-		ret = rwnx_send_me_set_ps_mode(wq_usb->core.hw, PS_MODE_ON);
-		if (ret) {
-			WQ_DBG(DM_TRBUS, DL_ERR, "%s: failed to set ps mode: %d\n",
-				__func__, ret);
-		}
-	}
-
-	// ask wlan to suspend
-	ret = wq_wlan_suspend(&wq_usb->core);
-	if (ret) {
-		WQ_DBG(DM_TRBUS, DL_ERR, "failed to suspend wlan: %d\n", ret);
-		return ret;
-	}
+	// Notify FW PM change
+	wq_core_suspend_set(&wq_usb->core, 1);
 
 	// wait it complete
-	//ret = usb_wait_anchor_empty_timeout(&wq_usb->anchors.msgout, 1000);
-
-	// GKI: replace usb_wait_anchor_empty_timeout(&wq_usb->anchors.msgout, 1000);
-	while (wait_count < 200) {
-		if (usb_anchor_empty(&wq_usb->anchors.msgout)) {
-			ret = 1;
-			break;
-		}
-
-		usleep_range(4000, 6000);
-		wait_count++;
-	}
-
+	ret = usb_wait_anchor_empty_timeout(&wq_usb->anchors.msgout, 1000);
 	if (ret == 0) {
 		WQ_DBG(DM_TRBUS, DL_WRN, "%s: wait timeout!", __func__);
 	} else {
@@ -1556,7 +1431,6 @@ static bool wq_usb_reset_resume_notify(struct wq_usb *wq_usb)
 static int wq_usb_resume(struct usb_interface *intf)
 {
 	struct wq_usb *wq_usb = (struct wq_usb *)usb_get_intfdata(intf);
-	int ret;
 
 	ENTER();
 
@@ -1566,20 +1440,8 @@ static int wq_usb_resume(struct usb_interface *intf)
 	// re-fill urb
 	wq_usb_submit_in_urb(wq_usb);
 
-	ret = wq_wlan_resume(&wq_usb->core);
-	if (ret) {
-		WQ_DBG(DM_TRBUS, DL_ERR, "failed to resume wlan: %d\n", ret);
-	}
-
-	// Disable power saving mode if ps_mode is 15 and ds_when_suspend is true
-	if (wq_conf.ds_when_suspend == true &&
-	    wq_conf.ps_mode == 15) {
-		rwnx_send_me_set_ps_mode(wq_usb->core.hw, PS_MODE_OFF);
-		if (ret) {
-			WQ_DBG(DM_TRBUS, DL_ERR, "%s: failed to set ps mode: %d\n",
-				__func__, ret);
-		}
-	}
+	// Notify FW PM change
+	wq_core_suspend_set(&wq_usb->core, 0);
 
 	if (wq_usb->core.flags.suspend)
 		complete(&wq_usb->resume_wait);
@@ -1611,13 +1473,8 @@ static int wq_usb_reset_resume(struct usb_interface *intf)
 static const struct usb_device_id wq_usb_id_table[] = {
 	/* support list (Vendor ID, Product ID) */
 	{ USB_DEVICE(0x0FFE, 0x0001) },
-#ifdef DUAL_USB_SUPPORT
-	// the VID and PID of current USB device is 0x0FFE and 0x1003
-	{ USB_DEVICE_INTERFACE_NUMBER(0x0FFE, 0x1003, 1) },
-#else
 	// the VID and PID of current USB device is 0x0FFE and 0x3
 	{ USB_DEVICE_INTERFACE_NUMBER(0x0FFE, 0x0003, 1) },
-#endif
 	// the VID and PID of current USB device is 0x0FFE and 0x4, for u3
 	{ USB_DEVICE_INTERFACE_NUMBER(0x0FFE, 0x0004, 0) },
 	// the VID and PID of current USB device is 0x0FFE and 0x5
@@ -1630,11 +1487,7 @@ static const struct usb_device_id wq_usb_id_table[] = {
 MODULE_DEVICE_TABLE(usb, wq_usb_id_table);
 
 static struct usb_driver wq_usb_driver = {
-#ifdef DUAL_USB_SUPPORT
-	.name = "wq_usb1",
-#else
 	.name = "wq_usb",
-#endif
 	.probe = wq_usb_probe,
 	.disconnect = wq_usb_disconnect,
 	.id_table = wq_usb_id_table,
@@ -1651,9 +1504,9 @@ static struct usb_driver wq_usb_driver = {
 int __init wq_usb_init(void)
 {
 	int ret;
-#ifdef WQ_WLAN_ALL_IN_ONE
+
 	wq_module_init();
-#endif
+
 	ret = usb_register(&wq_usb_driver);
 	if (ret)
 		WQ_DBG(DM_TRBUS, DL_INF, "USB Driver Registration Failed\n");
@@ -1666,9 +1519,7 @@ void __exit wq_usb_exit(void)
 {
 	complete(&wq_usb_recovery.close_by_user);
 	usb_deregister(&wq_usb_driver);
-#ifdef WQ_WLAN_ALL_IN_ONE
 	wq_module_exit();
-#endif
 }
 
 #ifndef WQ_WLAN_ALL_IN_ONE

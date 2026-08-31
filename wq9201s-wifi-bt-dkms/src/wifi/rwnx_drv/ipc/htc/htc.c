@@ -8,7 +8,7 @@
 #include "wq_log.h"
 #include "wq_profiling.h"
 #include "utils.h"
-#include "core.h"
+#include "fullmac/rwnx_defs.h"
 
 #define HTC_TASK_BUDGET 0
 #define NAPI_RX_WEIGHT 64
@@ -130,8 +130,8 @@ enum wq_hif_ver hif_htc_decap(struct sk_buff *skb, enum wq_hif_qid qid)
 	struct wq_htc_v0 *htc_v0 = (struct wq_htc_v0 *)(hif_hdr_ptr + 1);
 	struct wq_hif_hdr hif_hdr;
 	u32 buf_len;
-	u32 raw = le32_to_cpu(*(u32 *)hif_hdr_ptr);
-	memcpy(&hif_hdr, &raw, sizeof(raw));
+
+	*(u32 *)&hif_hdr = le32_to_cpu(*(u32 *)hif_hdr_ptr);
 
 	if (hif_hdr.ver == WQ_HIF_HDR_VER_0) {
 		buf_len = HEADROOM_HIF_HTC + le32_to_cpu(htc_v0->buf_len);
@@ -139,9 +139,10 @@ enum wq_hif_ver hif_htc_decap(struct sk_buff *skb, enum wq_hif_qid qid)
 		// align(hif hdr + htc hdr + buf_len + crc tailer) < skb->len is acceptted
 		// align(hif hdr + htc hdr + buf_len + crc tailer) > skb->len is invalid
 		if (ALIGN(buf_len + TAILROOM_HIF, sizeof(u32)) > skb->len) {
-			WQ_DBG(DM_IPC, DL_ERR, "%s:buf_len:%d, %d-%d-%d, skb_len:%d\n",
-				__func__, buf_len, HEADROOM_HIF_HTC, TAILROOM_HIF,
-				htc_v0->buf_len, skb->len);
+			WQ_DBG(DM_IPC, DL_ERR,
+			       "%s:buf_len:%d, %d-%d-%d, skb_len:%d\n",
+			       __func__, buf_len, HEADROOM_HIF_HTC,
+			       TAILROOM_HIF, htc_v0->buf_len, skb->len);
 			WARN_ON(1);
 			goto invalid;
 		}
@@ -175,7 +176,7 @@ invalid:
 	BUG_ON(1);
 	return WQ_HIF_HDR_VER_RESERVED;
 }
-WQ_HTC_API(hif_htc_decap);
+EXPORT_SYMBOL(hif_htc_decap);
 
 static int htc_enqueue_tx_waitq(struct sk_buff_head *skbq, enum wq_hif_qid qid)
 {
@@ -270,8 +271,14 @@ int htc_tx(struct wq_core *core, enum wq_hif_qid qid, struct sk_buff_head *skbq,
 			struct wq_skb_txcb *txcb = WQ_SKB_TXCB(skb);
 			if (type == WQ_IPC_TPE_PKT) {
 				u = WQ_IPC_FLAGS_TX_NORMAL_QUEUE;
-				if (txcb->pkt_cls & BIT(WQ_PKT_CLS_EAPOL))
+				if (txcb->pkt_cls & BIT(WQ_PKT_CLS_EAPOL) ||
+				    txcb->pkt_cls &
+					    BIT(WQ_PKT_CLS_FORCE_TX_HIGH)) {
 					u = WQ_IPC_FLAGS_TX_HIGH_QUEUE;
+					WQ_DBG(DM_IPC, DL_WRN,
+					       "%s: xmit in high queue\n",
+					       __func__);
+				}
 			}
 			seq = ++txq->fc.seq;
 			hif_htc_encap_v0(core, skb, qid, seq, u);
@@ -285,10 +292,12 @@ int htc_tx(struct wq_core *core, enum wq_hif_qid qid, struct sk_buff_head *skbq,
 		ret = core->hif_ops->hif_tx(core, qid, skbq);
 		spin_unlock_bh(&txq->up.lock);
 	} else if (core->hif_ops->hif == WQ_HIF_SDIO) {
-		if (atomic_fetch_add(skb_queue_len(skbq), &htc_tx_waitq.pending_req) == 0) {
+		int qlen = skb_queue_len(skbq);
+		if (atomic_add_return(qlen, &htc_tx_waitq.pending_req) - qlen ==
+		    0) {
 			hif_autopm_get_async(core);
 		}
-		spin_lock_bh(&txq->up.lock);
+
 		skb_queue_walk(skbq, skb)
 		{
 			struct wq_skb_txcb *txcb = WQ_SKB_TXCB(skb);
@@ -301,8 +310,8 @@ int htc_tx(struct wq_core *core, enum wq_hif_qid qid, struct sk_buff_head *skbq,
 			       __func__, qid, seq, (u16)seq,
 			       skb_queue_len(skbq), u);
 		}
+
 		ret = core->hif_ops->hif_tx(core, qid, skbq);
-		spin_unlock_bh(&txq->up.lock);
 	} else {
 		hif_htc_bundle_encap_v0(skbq, qid, 0, u);
 		skb_queue_walk(skbq, skb)
@@ -310,7 +319,9 @@ int htc_tx(struct wq_core *core, enum wq_hif_qid qid, struct sk_buff_head *skbq,
 			struct wq_skb_txcb *txcb = WQ_SKB_TXCB(skb);
 
 			txcb->qid = qid;
-			if (atomic_fetch_inc(&htc_tx_waitq.pending_req) == 0) {
+			if (atomic_add_return(1, &htc_tx_waitq.pending_req) -
+				    1 ==
+			    0) {
 				hif_autopm_get_async(core);
 			}
 		}
@@ -321,7 +332,7 @@ int htc_tx(struct wq_core *core, enum wq_hif_qid qid, struct sk_buff_head *skbq,
 		ret = __htc_hif_tx(core, qid, skbq);
 	}
 
-	if (ret && ret != -ENOBUFS && ret!= -ENXIO) {
+	if (ret && ret != -ENOBUFS && ret != -ENXIO) {
 		skb_queue_walk(skbq, skb)
 		{
 			WQ_DBG(DM_IPC, DL_ERR,
@@ -343,14 +354,19 @@ static void __htc_txq_done(struct wq_core *core, struct sk_buff_head *skbq,
 	struct sk_buff *skb;
 	enum wq_hif_qid qid;
 	struct htc_txq *txq;
+	struct rwnx_hw *rwnx_hw = core->hw;
+	u64 time_start_us = 0, time_end_us = 0;
 
-	if (atomic_sub_return(skb_queue_len(skbq),&htc_tx_waitq.pending_req) == 0) {
-		hif_autopm_put_async(core);
+	if (rwnx_hw && rwnx_hw->time_dump_enable) {
+		time_start_us = (u64)ktime_to_us(ktime_get());
 	}
 
 	while ((skb = __skb_dequeue(skbq))) {
 		struct wq_skb_txcb *txcb = WQ_SKB_TXCB(skb);
 		int seq = -1;
+		if (atomic_dec_return(&htc_tx_waitq.pending_req) == 0) {
+			hif_autopm_put_async(core);
+		}
 
 		qid = txcb->qid;
 		BUG_ON(qid >= WQ_QID_MAX);
@@ -389,7 +405,8 @@ static void __htc_txq_done(struct wq_core *core, struct sk_buff_head *skbq,
 		    wq_ipc_tx_pkt_done_pre(core, skb, status) < 0)
 			continue;
 
-		if (core->hif_ops->hif == WQ_HIF_SDIO) {
+		if (core->hif_ops->hif == WQ_HIF_SDIO ||
+		    core->hif_ops->hif == WQ_HIF_PCIE) {
 			if (qid == WQ_QID_MSG) {
 				wq_ipc_tx_msg_done(&txq->up, skb);
 			} else {
@@ -400,13 +417,20 @@ static void __htc_txq_done(struct wq_core *core, struct sk_buff_head *skbq,
 		}
 	}
 
-	if (core->hif_ops->hif != WQ_HIF_SDIO) {
+	if (core->hif_ops->hif != WQ_HIF_SDIO &&
+	    core->hif_ops->hif != WQ_HIF_PCIE) {
 		for (qid = 0; qid < ARRAY_SIZE(core->htc.txq); qid++) {
 			txq = &core->htc.txq[qid];
 			if (!skb_queue_empty(&txq->up.head)) {
 				htc_q_kickoff(&txq->up);
 			}
 		}
+	}
+
+	if (rwnx_hw && rwnx_hw->time_dump_enable) {
+		time_end_us = (u64)ktime_to_us(ktime_get());
+		atomic_add((u32)(time_end_us - time_start_us),
+			   &rwnx_hw->htc_txq_done_time);
 	}
 }
 
@@ -444,20 +468,54 @@ void __htc_ll_msdu_tx_done(struct wq_core *core, struct sk_buff *skb,
 }
 
 #ifdef NAPI_SUPPORT
+#ifdef RX_IPI_SUPPORT
+#define RX_IPI_STATE_SCHED                     0
+
+#if LINUX_VERSION_CODE > KERNEL_VERSION(4, 13, 16)
+struct __call_single_data csd;
+#else
+struct call_single_data csd;
+#endif
+
+static void wq_rx_ipi_wrapper(void *param)
+{
+	struct rwnx_hw *rwnx_hw = param;
+	struct napi_struct *napi = &rwnx_hw->napi_rx;
+
+	napi_schedule(napi);
+	smp_mb__before_atomic();
+	clear_bit(RX_IPI_STATE_SCHED, &rwnx_hw->rx_ipi_state);
+}
+#endif
+
 static void htc_napi_schedule(struct rwnx_hw *rwnx_hw)
 {
 	if (rwnx_hw->napi_param.param_enable) {
-		if (skb_queue_len(&rwnx_hw->napi_rx_pkt_list) > rwnx_hw->napi_param.packets_num) {
+		if (skb_queue_len(&rwnx_hw->napi_rx_pkt_list) >
+		    rwnx_hw->napi_param.packets_num) {
 			hrtimer_try_to_cancel(&rwnx_hw->napi_rx_defer_timer);
 			napi_schedule(&rwnx_hw->napi_rx);
 		} else {
-			hrtimer_start(
-				&rwnx_hw->napi_rx_defer_timer,
-				ns_to_ktime(rwnx_hw->napi_param.timeout),
-				HRTIMER_MODE_REL);
+			hrtimer_start(&rwnx_hw->napi_rx_defer_timer,
+				      ns_to_ktime(rwnx_hw->napi_param.timeout),
+				      HRTIMER_MODE_REL);
 		}
 	} else {
+#ifndef RX_IPI_SUPPORT
 		napi_schedule(&rwnx_hw->napi_rx);
+#else
+		/* only when interface is PCIe, we use IPI */
+		if (rwnx_hw->core->hif_ops->hif == WQ_HIF_PCIE)  {
+			if (!test_and_set_bit(RX_IPI_STATE_SCHED,
+				&rwnx_hw->rx_ipi_state)) {
+				csd.func = wq_rx_ipi_wrapper;
+				csd.info = rwnx_hw;
+				smp_call_function_single_async(wq_conf.rx_ipi_cpu, &csd);
+			}
+		}
+		else
+			napi_schedule(&rwnx_hw->napi_rx);
+#endif
 	}
 }
 #endif
@@ -543,15 +601,16 @@ static void __htc_rxq(struct wq_core *core, struct sk_buff_head *skbq)
 	struct sk_buff *skb;
 #endif
 
-	if (rwnx_hw) {
+	if (rwnx_hw && rwnx_hw->time_dump_enable) {
 		time_start_us = (u64)ktime_to_us(ktime_get());
 	}
 
 	hif_htc_rxq_decap(core, skbq);
 
-	if (rwnx_hw) {
+	if (rwnx_hw && rwnx_hw->time_dump_enable) {
 		time_end_us = (u64)ktime_to_us(ktime_get());
-		atomic_add((u32)(time_end_us - time_start_us), &rwnx_hw->htc_rxq_decap_time);
+		atomic_add((u32)(time_end_us - time_start_us),
+			   &rwnx_hw->htc_rxq_decap_time);
 	}
 
 	rxq = &core->htc.rxq.msg;
@@ -569,8 +628,8 @@ static void __htc_rxq(struct wq_core *core, struct sk_buff_head *skbq)
 				local_bh_enable();
 			}
 
-			if (rwnx_hw->napi_param.napi_enable
-					&& !skb_queue_empty(&rwnx_hw->napi_rx_pkt_list)) {
+			if (rwnx_hw->napi_param.napi_enable &&
+			    !skb_queue_empty(&rwnx_hw->napi_rx_pkt_list)) {
 				htc_napi_schedule(rwnx_hw);
 			}
 		} else {
@@ -589,9 +648,10 @@ static void __htc_rxq(struct wq_core *core, struct sk_buff_head *skbq)
 	}
 #endif
 
-	if (rwnx_hw) {
+	if (rwnx_hw && rwnx_hw->time_dump_enable) {
 		time_end_us = (u64)ktime_to_us(ktime_get());
-		atomic_add((u32)(time_end_us - time_start_us), &rwnx_hw->htc_rxq_time);
+		atomic_add((u32)(time_end_us - time_start_us),
+			   &rwnx_hw->htc_rxq_time);
 	}
 }
 
@@ -775,7 +835,8 @@ static int htc_thread(void *data)
 
 		/* polling */
 		start_ms = jiffies_to_msecs(jiffies);
-		while (jiffies_to_msecs(jiffies) - start_ms <= HTC_POLLING_RX_TASK_TIME_MS) {
+		while (jiffies_to_msecs(jiffies) - start_ms <=
+		       HTC_POLLING_RX_TASK_TIME_MS) {
 			__htc_task(q);
 		}
 	}
@@ -841,7 +902,7 @@ void htc_tx_flush_waitq(struct wq_core *core)
 {
 	struct htc_tx_req *tx_req, *tmp;
 	int ret = 0;
-	struct htc_txq *txq __maybe_unused;
+	struct htc_txq *txq;
 
 	spin_lock_bh(&htc_tx_waitq.lock);
 

@@ -116,6 +116,13 @@ static const u32 ce_chn_to_irq_vec_map[CE_CHN_MAX] = {
 #define WQ_CE_ANN_PCIE_READ_FAILED(wq_pcie, retval)                            \
 	_wq_ce_ann_pcie_read_failed(wq_pcie, retval, __func__, __LINE__)
 
+static void wq_ce_attempt_to_recovery(struct wq_pcie *wq_pcie)
+{
+	if(wq_pcie_recovery_device(wq_pcie)) {
+		wq_ce_everything_dump(wq_pcie);
+		BUG_ON(1);
+	}
+}
 /*
  * Announce PCIe bus read may failed
  */
@@ -126,7 +133,7 @@ static void _wq_ce_ann_pcie_read_failed(struct wq_pcie *wq_pcie, u32 retval,
 	       "%s, %d: PCIe bus read may failed, return 0x%08x\n", func, line,
 	       retval);
 	(void)wq_pcie_show_bus_info(wq_pcie);
-	BUG_ON(1);
+	wq_ce_attempt_to_recovery(wq_pcie);
 }
 
 /**
@@ -395,6 +402,26 @@ static inline u16 hw_ce_chn_rx_ridx_get(struct wq_pcie *wq_pcie,
 		WQ_CE_ANN_PCIE_READ_FAILED(wq_pcie, val);
 
 	return (u16)REG_FIELD_GET(CHN_RX_RING_FIFO_RD_IDX, val);
+}
+
+/**
+ * @brief: get CE channel rx ring hardware status
+ * @param: CE channel UUID
+*/
+static inline int hw_ce_chn_rx_status_get(struct wq_pcie *wq_pcie,
+					CE_CHN_UUID chn)
+{
+	u32 val;
+
+	val = WQ_PCIE_RD32(wq_pcie,
+			   CE_REG(chn, CFG_DMA_CHN_RX_RING_FIFO_ST0_ADDR));
+
+	if (WQ_PCIE_MAY_RD_ERR == val) {
+		WQ_CE_ANN_PCIE_READ_FAILED(wq_pcie, val);
+		return -ENODEV;
+	}
+
+	return 0;
 }
 
 /**
@@ -1296,7 +1323,7 @@ int wq_ce_irq_mask(struct wq_pcie *wq_pcie, CE_CHN_UUID chn, WQ_CE_CHN_DIR dir)
 	return 0;
 }
 
-static void wq_ce_src_ring_sw_idx_sync(struct wq_pcie *wq_pcie, CE_CHN_UUID chn)
+static int wq_ce_src_ring_sw_idx_sync(struct wq_pcie *wq_pcie, CE_CHN_UUID chn)
 {
 	struct ce_ring *src_ring;
 	u16 hw_widx;
@@ -1305,11 +1332,11 @@ static void wq_ce_src_ring_sw_idx_sync(struct wq_pcie *wq_pcie, CE_CHN_UUID chn)
 	src_ring = &wq_pcie->ce_states[chn].src->ring;
 
 	if (src_ring->widx_incr)
-		return;
+		return 0;
 
 	if (src_ring->sw_widx != src_ring->hw_ridx ||
 	    src_ring->hw_ridx != src_ring->sw_ridx)
-		return;
+		return 0;
 
 	hw_widx = hw_ce_chn_rx_widx_get(wq_pcie, chn);
 	src_depth = (u16)(1u << src_ring->depth_log2);
@@ -1317,19 +1344,20 @@ static void wq_ce_src_ring_sw_idx_sync(struct wq_pcie *wq_pcie, CE_CHN_UUID chn)
 	if (hw_widx >= src_depth) {
 		WQ_CE_LOG("chn=%d, hw_widx=%d, src_depth=%d\n", (int)chn,
 			  (int)hw_widx, (int)src_depth);
-		wq_ce_everything_dump(wq_pcie);
-		BUG_ON(1);
+		wq_ce_attempt_to_recovery(wq_pcie);
+		return -ENXIO;
 	}
 
 	if (src_ring->sw_widx != hw_widx) {
 		if (hw_widx) {
 			WQ_CE_LOG("chn=%d, sw_widx=%d, hw_widx=%d\n", (int)chn,
 				  (int)src_ring->sw_widx, (int)hw_widx);
-			wq_ce_everything_dump(wq_pcie);
-			BUG_ON(1);
+			wq_ce_attempt_to_recovery(wq_pcie);
+			return -ENXIO;
 		}
 		src_ring->sw_widx = src_ring->hw_ridx = src_ring->sw_ridx = 0;
 	}
+	return 0;
 }
 
 /* sw high watermark depth*0.9, if over high watermark, return -ENOBUFS */
@@ -1381,7 +1409,8 @@ static int wq_ce_send_nolock(struct wq_pcie *wq_pcie, CE_CHN_UUID chn,
 		return -EINVAL;
 
 	/* pci_wake_up */
-	wq_ce_src_ring_sw_idx_sync(wq_pcie, chn);
+	if(wq_ce_src_ring_sw_idx_sync(wq_pcie, chn))
+		return -ENXIO;
 
 	src_sz_max = wq_pcie->ce_attrs[chn].src_sz_max;
 
@@ -1444,7 +1473,10 @@ int wq_ce_send(struct wq_pcie *wq_pcie, CE_CHN_UUID chn, void *send_context,
 	struct ce_side *src_side;
 	unsigned long iflags;
 	int ret;
-
+	if(wq_pcie->bus_dead) {
+		WQ_DBG(DM_TRBUS, DL_ERR, "%s: fw crashed!\n", __func__);
+		return -ENXIO;
+	}
 	if (!(wq_pcie != NULL && chn < CE_CHN_MAX &&
 	      (src_side = wq_pcie->ce_states[chn].src) != NULL))
 		return -EINVAL;
@@ -1474,9 +1506,13 @@ static int wq_ce_send_completed_next_nolock(struct wq_pcie *wq_pcie,
 	src_ring = &src_side->ring;
 
 	if (src_ring->sw_ridx == src_ring->hw_ridx) {
-		src_ring->hw_ridx = hw_ce_chn_rx_ridx_get(wq_pcie, chn);
-		if (src_ring->sw_ridx == src_ring->hw_ridx)
-			return -ENODATA;
+		if (!hw_ce_chn_rx_status_get(wq_pcie, chn)) {
+			src_ring->hw_ridx = hw_ce_chn_rx_ridx_get(wq_pcie, chn);
+			if (src_ring->sw_ridx == src_ring->hw_ridx)
+				return -ENODATA;
+		} else {
+			return -ENODEV;
+		}
 	}
 
 	if (send_context != NULL)
@@ -1627,7 +1663,7 @@ int wq_ce_recv(struct wq_pcie *wq_pcie, CE_CHN_UUID chn, void *recv_context,
 	return ret;
 }
 
-static void wq_ce_dst_ring_sw_idx_sync(struct wq_pcie *wq_pcie, CE_CHN_UUID chn)
+static int wq_ce_dst_ring_sw_idx_sync(struct wq_pcie *wq_pcie, CE_CHN_UUID chn)
 {
 	struct ce_ring *dst_ring;
 	u16 hw_widx;
@@ -1636,7 +1672,7 @@ static void wq_ce_dst_ring_sw_idx_sync(struct wq_pcie *wq_pcie, CE_CHN_UUID chn)
 	dst_ring = &wq_pcie->ce_states[chn].dst->ring;
 
 	if (!CE_FIFO_SW_FULL(dst_ring))
-		return;
+		return 0;
 
 	hw_widx = hw_ce_chn_tx_widx_get(wq_pcie, chn);
 	dst_depth = (u16)(1u << dst_ring->depth_log2);
@@ -1644,20 +1680,21 @@ static void wq_ce_dst_ring_sw_idx_sync(struct wq_pcie *wq_pcie, CE_CHN_UUID chn)
 	if (hw_widx >= dst_depth) {
 		WQ_CE_LOG("chn=%d, hw_widx=%d, dst_depth=%d\n", (int)chn,
 			  (int)hw_widx, (int)dst_depth);
-		wq_ce_everything_dump(wq_pcie);
-		BUG_ON(1);
+		wq_ce_attempt_to_recovery(wq_pcie);
+		return -ENXIO;
 	}
 
 	if (dst_ring->sw_widx != hw_widx) {
 		if (hw_widx != dst_ring->depth_mask) {
 			WQ_CE_LOG("chn=%d, sw_widx=%d, hw_widx=%d\n", (int)chn,
 				  (int)dst_ring->sw_widx, (int)hw_widx);
-			wq_ce_everything_dump(wq_pcie);
-			BUG_ON(1);
+			wq_ce_attempt_to_recovery(wq_pcie);
+			return -ENXIO;
 		}
 		dst_ring->sw_widx = dst_ring->depth_mask;
 		dst_ring->hw_ridx = dst_ring->sw_ridx = 0;
 	}
+	return 0;
 }
 
 static int wq_ce_recv_completed_next_nolock(struct wq_pcie *wq_pcie,
@@ -1679,7 +1716,9 @@ static int wq_ce_recv_completed_next_nolock(struct wq_pcie *wq_pcie,
 		return -EINVAL;
 
 	/* pci_wake_up */
-	wq_ce_dst_ring_sw_idx_sync(wq_pcie, chn);
+	if(wq_ce_dst_ring_sw_idx_sync(wq_pcie, chn)) {
+		return -ENXIO;
+	}
 
 	dst_ring = &dst_side->ring;
 
@@ -1710,7 +1749,8 @@ static int wq_ce_recv_completed_next_nolock(struct wq_pcie *wq_pcie,
 		WQ_CE_LOG("ce chn:%d recv wait desc metadata timeout "
 				"flags:0x%08x\n",
 				chn, _flags);
-		BUG_ON(1);
+		wq_ce_attempt_to_recovery(wq_pcie);
+		return -ENXIO;
 	}
 #endif
 
@@ -1880,6 +1920,10 @@ int wq_ce_stop(struct wq_pcie *wq_pcie, CE_CHN_UUID chn)
 {
 	int timeout;
 	u32 dbg_bus, status;
+	if(wq_pcie->bus_dead) {
+		WQ_DBG(DM_TRBUS, DL_ERR, "%s: fw crashed!\n", __func__);
+		return -ENXIO;
+	}
 
 	if (chn >= CE_CHN_MAX)
 		return -EINVAL;
@@ -1898,7 +1942,10 @@ int wq_ce_stop(struct wq_pcie *wq_pcie, CE_CHN_UUID chn)
 	timeout = 0;
 
 	do {
-		BUG_ON(timeout >= 1000);
+		if(timeout >= 1000) {
+			wq_ce_attempt_to_recovery(wq_pcie);
+			return -ENXIO;
+		}
 		++timeout;
 
 		nop();

@@ -91,8 +91,21 @@ void wq_tx_skb_dma_unmap(struct wq_core *core, struct sk_buff *skb)
 
 void wq_tx_skb_free_any(struct wq_core *core, struct sk_buff *skb)
 {
+	struct rwnx_hw *rwnx_hw = core->hw;
+	u64 time_start_us = 0, time_end_us = 0;
+
 	wq_tx_skb_dma_unmap(core, skb);
+
+	if (rwnx_hw && rwnx_hw->time_dump_enable) {
+		time_start_us = (u64)ktime_to_us(ktime_get());
+	}
+
 	dev_kfree_skb_any(skb);
+
+	if (rwnx_hw && rwnx_hw->time_dump_enable) {
+		time_end_us = (u64)ktime_to_us(ktime_get());
+		atomic_add((u32)(time_end_us - time_start_us), &rwnx_hw->tx_skb_free_time);
+	}
 }
 
 static inline int wq_ipc_can_handle_FWREADY(struct wq_core *core)
@@ -298,7 +311,6 @@ static inline struct sk_buff *__wq_ipc_msdu_macdone(struct wq_core *core,
 		if (!macdone) {
 			if (!list_empty(&msdu->macdone.free)) {
 				list_for_each (pos, &msdu->macdone.free) {
-					(void)READ_ONCE(pos->next);
 					freecnt++;
 				}
 			}
@@ -646,10 +658,10 @@ static void wq_fw_stats_info_event(struct rwnx_hw *rwnx_hw,
 		pkt_rate_cnt->he_su_mcs[10], pkt_rate_cnt->he_su_mcs[11]);
 
  done:
-        last_cca_busy[mac_id] = fw_stats_info->cca_busy;
-        last_cca_busy_sec_20[mac_id] = fw_stats_info->cca_busy_sec_20;
-        last_cca_busy_sec_40[mac_id] = fw_stats_info->cca_busy_sec_40;
-        last_cca_busy_ts[mac_id] = fw_stats_info->cca_busy_ts;
+	last_cca_busy[mac_id] = fw_stats_info->cca_busy;
+	last_cca_busy_sec_20[mac_id] = fw_stats_info->cca_busy_sec_20;
+	last_cca_busy_sec_40[mac_id] = fw_stats_info->cca_busy_sec_40;
+	last_cca_busy_ts[mac_id] = fw_stats_info->cca_busy_ts;
 }
 
 static void wq_ipc_event_handler(struct wq_core *core, enum e2a_event_id id,
@@ -658,18 +670,15 @@ static void wq_ipc_event_handler(struct wq_core *core, enum e2a_event_id id,
 	struct rwnx_hw *rwnx_hw = core->hw;
 	struct ipc_e2a_msg *e2a = payload; /* most of them is e2a_msg */
 	int param_len = -1;
-	static u32 tracer_dump_event_num;
 
-    if (id == MAC_E2A_FWREADY && wq_ipc_can_handle_FWREADY(core)) {
-        param_len = wq_e2a_msg_param_len(id, e2a, len);
-        if (param_len >= 0) {
-            WQ_DBG(DM_IPC, DL_INF, "%s: wlan firmware is ready\n",
-                   dev_name(core->dev));
-		    wq_core_state_set(core, WQ_CORE_STATE_WLAN_FW_READY);
-		    complete_all(&core->fw_ready);
-  		    /* later HIF will create and register wlan interface(s) */
-		    return;
-        }
+	if (id == MAC_E2A_FWREADY && wq_ipc_can_handle_FWREADY(core) &&
+	    (param_len = wq_e2a_msg_param_len(id, e2a, len)) >= 0) {
+		WQ_DBG(DM_IPC, DL_INF, "%s: wlan firmware is ready\n",
+		       dev_name(core->dev));
+		wq_core_state_set(core, WQ_CORE_STATE_WLAN_FW_READY);
+		complete_all(&core->fw_ready);
+		/* later HIF will create and register wlan interface(s) */
+		return;
 	}
 
 	if (id >= MAC_E2A_LAST || wq_ipc_is_not_ready(core)) {
@@ -718,14 +727,18 @@ static void wq_ipc_event_handler(struct wq_core *core, enum e2a_event_id id,
 	case MAC_E2A_PACKET_DUMP:
 #ifndef PHY_ADC_DUMP
 		WQ_EVENT_LEN_ASSERT(len / PKTDUMP_COUNT, WIFI_DBG_PKTDUMP);
-	#ifndef CONFIG_WQ_GKI
-		wq_pktlog_save(&rwnx_hw->pktlog, payload, sizeof(WIFI_DBG_PKTDUMP) * PKTDUMP_COUNT);
-	#endif
+		if (rwnx_hw->core->hif_ops->hif == WQ_HIF_USB) {
+			wq_packet_dump_evt_handler(payload);
+		} else {
+			wq_pktlog_save(&rwnx_hw->pktlog, payload, sizeof(WIFI_DBG_PKTDUMP) * PKTDUMP_COUNT);
+		}
 #else
-	#ifndef CONFIG_WQ_GKI
 		WQ_DBG(DM_IPC, DL_WRN, "PHY ADC DUMP START\n");
-		wq_pktlog_save(&rwnx_hw->pktlog, payload, 1024);//PHY_ADC_DUMP_LEN);
-	#endif
+		if (rwnx_hw->core->hif_ops->hif == WQ_HIF_USB) {
+			wq_packet_dump_evt_handler(payload);
+		} else {
+			wq_pktlog_save(rwnx_hw, payload, 1024);//PHY_ADC_DUMP_LEN);
+		}
 #endif
 		break;
 	case MAC_E2A_BAM_ADDBA:
@@ -794,13 +807,26 @@ static void wq_ipc_event_handler(struct wq_core *core, enum e2a_event_id id,
 	}
 		break;
 	case MAC_E2A_TRACER_DUMP: {
-		memcpy(rwnx_hw->tracer.payload[tracer_dump_event_num], payload, 1024);
-		tracer_dump_event_num++;
-		if (tracer_dump_event_num == NUM_EVENT_OF_TRACER_DUMP) {
-			tracer_dump_event_num = 0;
+		memcpy(rwnx_hw->tracer.payload64[rwnx_hw->tracer.tracer_dump_event_num_64], payload, 1024);
+		rwnx_hw->tracer.tracer_dump_event_num_64++;
+		if (rwnx_hw->tracer.tracer_dump_event_num_64 == NUM_EVENT_OF_TRACER_DUMP) {
+            rwnx_hw->tracer.dump64 = true;
+			rwnx_hw->tracer.tracer_dump_event_num_64 = 0;
 			schedule_work(&rwnx_hw->tracer_dump_task);
 		}
+        
 	}
+		break;
+	case MAC_E2A_TRACER_DUMP_32: {
+    	memcpy(rwnx_hw->tracer.payload32[rwnx_hw->tracer.tracer_dump_event_num_32], payload, 1024);
+    	rwnx_hw->tracer.tracer_dump_event_num_32++;
+    	if (rwnx_hw->tracer.tracer_dump_event_num_32 == NUM_EVENT_OF_TRACER_DUMP_32) {            
+            rwnx_hw->tracer.dump32 = true;
+    		rwnx_hw->tracer.tracer_dump_event_num_32 = 0;
+    		schedule_work(&rwnx_hw->tracer_dump_task);
+	    }
+    
+    }
 		break;
 	case MAC_E2A_FW_STATS_INFO: {
 		struct fw_stats_info *fw_stats_info;
@@ -821,8 +847,6 @@ static int wq_ipc_rx_msg(struct htc_q *q, struct sk_buff *skb)
 {
 	struct wq_core *core = container_of(q, struct wq_core, htc.rxq.msg);
 	struct wq_htc_v0 *htc_v0 = ((struct wq_htc_v0 *)(skb->data)) - 1;
-	struct rwnx_hw *rwnx_hw = core->hw;
-	u64 time_start_us = 0, time_end_us = 0;
 
 	u32 flags = le32_to_cpu(htc_v0->flags);
 	enum wq_ipc_types type = WQ_IPC_TPE(flags);
@@ -835,8 +859,6 @@ static int wq_ipc_rx_msg(struct htc_q *q, struct sk_buff *skb)
 		       wq_core_state_name(core), skb);
 		return -1;
 	}
-
-	time_start_us = (u64)ktime_to_us(ktime_get());
 
 	WQ_DBG(DM_IPC, DL_VRB,
 	       "%s(%d) type=%d, status=%d, seq=%d, u=%d, len=%d, skb len=%d\n",
@@ -856,13 +878,6 @@ static int wq_ipc_rx_msg(struct htc_q *q, struct sk_buff *skb)
 
 	WARN_ON(skb->next);
 	dev_kfree_skb_any(skb);
-
-	time_end_us = (u64)ktime_to_us(ktime_get());
-
-	if (rwnx_hw) {
-		atomic_add((u32)(time_end_us - time_start_us), &rwnx_hw->ipc_rx_msg_time);
-	}
-
 	return 0;
 }
 
@@ -1058,7 +1073,9 @@ int __wq_ipc_rx_pkt(struct rwnx_hw *hw, struct sk_buff *skb)
 
 	PROFILING_SET(SW_PROF_IPC_RX_PKT);
 
-	time_start_us = (u64)ktime_to_us(ktime_get());
+	if (hw->time_dump_enable) {
+		time_start_us = (u64)ktime_to_us(ktime_get());
+	}
 
 	if (likely(hw->rx_ll.rx_ll_support)) {
 		rwnx_rxdataind_ll(hw, skb);
@@ -1066,8 +1083,10 @@ int __wq_ipc_rx_pkt(struct rwnx_hw *hw, struct sk_buff *skb)
 		rwnx_rxdataind(hw, skb);
 	}
 
-	time_end_us = (u64)ktime_to_us(ktime_get());
-	atomic_add((u32)(time_end_us - time_start_us), &hw->ipc_rx_pkt_time);
+	if (hw->time_dump_enable) {
+		time_end_us = (u64)ktime_to_us(ktime_get());
+		atomic_add((u32)(time_end_us - time_start_us), &hw->ipc_rx_pkt_time);
+	}
 
 	PROFILING_CLR(SW_PROF_IPC_RX_PKT);
 

@@ -11,7 +11,6 @@
 
 #define FW_DL_TIMEOUT 2000 /* msec */
 #define FW_RESET_WAIT_MS 100 /* time for the chip to complete a reset */
-
 typedef enum wq_fw_type_e {
 	WQ_FW_BOOTROM = 0,
 	WQ_FW_DTOP,

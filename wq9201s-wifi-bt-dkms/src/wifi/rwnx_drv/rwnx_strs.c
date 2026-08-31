@@ -119,14 +119,6 @@ static const char *const rwnx_mmid2str[MSG_I(MM_EXT_MAX)] = {
 	[MSG_I(MM_INFO_PWR_REQ)] = "MM_INFO_PWR_REQ",
 	[MSG_I(MM_CHAN_PWR_INFO_REQ)] = "MM_CHAN_PWR_INFO_REQ",
 	[MSG_I(MM_REG_DM_CODE_REQ)] = "MM_REG_DM_CODE_REQ",
-#ifdef CONFIG_SDR
-	[MSG_I(MM_SDR_CTRL_CMD_REQ)] = "MM_SDR_CTRL_CMD_REQ",
-	[MSG_I(MM_SDR_CTRL_CMD_CFM)] = "MM_SDR_CTRL_CMD_CFM",
-#endif
-#ifdef CONFIG_TRX_STAT
-	[MSG_I(MM_GET_TRX_STAT_REQ)] = "MM_GET_TRX_STAT_REQ",
-	[MSG_I(MM_GET_TRX_STAT_CFM)] = "MM_GET_TRX_STAT_CFM",
-#endif
 };
 
 static const char *const rwnx_dbgid2str[MSG_I(DBG_MAX)] = {
@@ -260,7 +252,6 @@ static const char *const rwnx_apmid2str[MSG_I(APM_MAX)] = {
 	[MSG_I(APM_PROBE_CLIENT_REQ)] = "APM_PROBE_CLIENT_REQ",
 	[MSG_I(APM_PROBE_CLIENT_CFM)] = "APM_PROBE_CLIENT_CFM",
 	[MSG_I(APM_PROBE_CLIENT_IND)] = "APM_PROBE_CLIENT_IND",
-	[MSG_I(APM_RADAR_PULSE_IND)] = "APM_RADAR_PULSE_IND",
 };
 
 static const char *const rwnx_meshid2str[MSG_I(MESH_MAX)] = {

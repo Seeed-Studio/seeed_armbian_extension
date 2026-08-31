@@ -233,7 +233,7 @@ struct rx_ht_vect {
 	u16 fec			: 1;
 
 	u16 length		:16;
-	s8  rssi_ant2;
+	s8 rssi_ant2;
 } __packed;
 
 struct rx_vht_vect {
@@ -255,10 +255,10 @@ struct rx_vht_vect {
 	u32 fec			: 1;
 	u32 length		:20;
 	u32 rsvd_vht4		: 4;
-	s8  rssi_ant2;
+	s8 rssi_ant2;
 } __packed;
 
-struct rx_he_vect {
+struct rx_he_su_er_vect {
 	u8 sounding		: 1;
 	u8 beamformed		: 1;
 	u8 gi_type		: 2;
@@ -280,11 +280,6 @@ struct rx_he_vect {
 
 	u8 pe_duration		: 4;
 	u8 spatial_reuse	: 4;
-
-	u8 sig_b_comp_mode	: 1;
-	u8 dcm_sig_b		: 1;
-	u8 mcs_sig_b		: 3;
-	u8 ru_size		: 3;
 
 	u32 mcs			: 4;
 	u32 nss			: 3;
@@ -328,36 +323,6 @@ struct rx_he_mu_vect {
 	u32 rsvd_he6		: 4;
 } __packed;
 
-struct rx_he_su_er_vect {
-	u8 sounding		: 1;
-	u8 beamformed		: 1;
-	u8 gi_type		: 2;
-	u8 stbc			: 1;
-	u8 rsvd_he1		: 3;
-
-	u8 uplink_flag		: 1;
-	u8 beam_change		: 1;
-	u8 dcm			: 1;
-	u8 he_ltf_type		: 2;
-	u8 doppler		: 1;
-	u8 rsvd_he2		: 2;
-
-	u8 bss_color		: 6;
-	u8 rsvd_he3		: 2;
-
-	u8 txop_duration	: 7;
-	u8 rsvd_he4		: 1;
-
-	u8 pe_duration		: 4;
-	u8 spatial_reuse	: 4;
-
-	u32 mcs			: 4;
-	u32 nss			: 3;
-	u32 fec			: 1;
-	u32 length		:20;
-	u32 rsvd_he6		: 4;
-} __packed;
-
 struct rx_he_tb_vect {
 	u8 sounding		: 1;
 	u8 beamformed		: 1;
@@ -391,6 +356,41 @@ struct rx_he_tb_vect {
 	u8 rsvd_he5		: 1;
 } __packed;
 
+struct rx_he_vect {
+	u8 sounding		: 1;
+	u8 beamformed		: 1;
+	u8 gi_type		: 2;
+	u8 stbc			: 1;
+	u8 rsvd_he1		: 3;
+
+	u8 uplink_flag		: 1;
+	u8 beam_change		: 1;
+	u8 dcm			: 1;
+	u8 he_ltf_type		: 2;
+	u8 doppler		: 1;
+	u8 rsvd_he2		: 2;
+
+	u8 bss_color		: 6;
+	u8 rsvd_he3		: 2;
+
+	u8 txop_duration	: 7;
+	u8 rsvd_he4		: 1;
+
+	u8 pe_duration		: 4;
+	u8 spatial_reuse	: 4;
+
+	u8 sig_b_comp_mode	: 1;
+	u8 dcm_sig_b		: 1;
+	u8 mcs_sig_b		: 3;
+	u8 ru_size		: 3;
+
+	u32 mcs			: 4;
+	u32 nss			: 3;
+	u32 fec			: 1;
+	u32 length		:20;
+	u32 rsvd_he6		: 4;
+} __packed;
+
 struct rx_vec_detail_1 {	/* = struct rx_vector_1 */
 	u8 format_mod		: 4;
 	u8 ch_bw		: 3;
@@ -419,7 +419,6 @@ struct rx_vec_detail_1 {	/* = struct rx_vector_1 */
 struct rx_he_su_er_vect_2 {
 	s8 rssi_ant2;
 } __packed;
-
 struct rx_he_mu_vect_2 {
 	u8 ch1_rualloc0;
 	u8 ch2_rualloc0;
@@ -430,22 +429,9 @@ struct rx_he_mu_vect_2 {
 
 struct rx_vec_detail_2 {	/* = struct rx_vector_2 */
 	union {
-		struct {
-			/** Receive Vector 2a */
-			u32 rcpi1		: 8;
-			u32 rcpi2		: 8;
-			u32 rcpi3		: 8;
-			u32 rcpi4		: 8;
-
-			/** Receive Vector 2b */
-			u32 evm1		: 8;
-			u32 evm2		: 8;
-			u32 evm3		: 8;
-			u32 evm4		: 8;
-		};
 		/* alias of he */
-		struct rx_he_su_er_vect_2 he_su_er;
-		struct rx_he_mu_vect_2    he_mu;
+		struct rx_he_su_er_vect_2	he_su_er;
+		struct rx_he_mu_vect_2		he_mu;
 	};
 };
 

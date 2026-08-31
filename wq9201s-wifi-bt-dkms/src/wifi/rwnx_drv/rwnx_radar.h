@@ -76,8 +76,6 @@ struct dfs_pattern_detector {
 };
 
 #define NX_NB_RADAR_DETECTED 4
-/// Number of pulses in a radar event structure
-#define RADAR_PULSE_MAX 4
 
 /**
  * struct rwnx_radar_detected - List of radar detected
@@ -85,19 +83,8 @@ struct dfs_pattern_detector {
 struct rwnx_radar_detected {
 	u16 index;
 	u16 count;
-	u16 type[NX_NB_RADAR_DETECTED];
 	s64 time[NX_NB_RADAR_DETECTED];
 	s16 freq[NX_NB_RADAR_DETECTED];
-};
-
-/// Definition of an array of radar pulses
-struct radar_pulse_array_desc {
-	/// Buffer containing the radar pulses
-	uint32_t pulse[RADAR_PULSE_MAX];
-	/// Index of the radar dectection chain that detected those pulses
-	uint32_t idx;
-	/// Number of valid pulses in the buffer
-	uint32_t cnt;
 };
 
 struct rwnx_radar {
@@ -108,9 +95,6 @@ struct rwnx_radar {
 	spinlock_t lock; /* lock for pulses processing */
 
 	/* In softmac cac is handled by mac80211 */
-	bool abort_cac;
-	bool ignore_pulse_width; /* do not check width for each pulse */
-	bool pulse_dump; /* dump radar pattern raw data */
 	struct delayed_work cac_work; /* Work used to handle CAC */
 	struct rwnx_vif *cac_vif; /* vif on which we started CAC */
 };
@@ -124,7 +108,7 @@ bool rwnx_radar_detection_is_enable(struct rwnx_radar *radar, u8 chain);
 void rwnx_radar_start_cac(struct rwnx_radar *radar, u32 cac_time_ms,
 			  struct rwnx_vif *vif);
 void rwnx_radar_cancel_cac(struct rwnx_radar *radar);
-void rwnx_radar_detection_enable_on_cur_channel(struct rwnx_hw *rwnx_hw, struct rwnx_vif *vif);
+void rwnx_radar_detection_enable_on_cur_channel(struct rwnx_hw *rwnx_hw);
 int rwnx_radar_dump_pattern_detector(char *buf, size_t len,
 				     struct rwnx_radar *radar, u8 chain);
 int rwnx_radar_dump_radar_detected(char *buf, size_t len,
@@ -171,7 +155,7 @@ static inline void rwnx_radar_cancel_cac(struct rwnx_radar *radar)
 }
 
 static inline void
-rwnx_radar_detection_enable_on_cur_channel(struct rwnx_hw *rwnx_hw, struct rwnx_vif *vif)
+rwnx_radar_detection_enable_on_cur_channel(struct rwnx_hw *rwnx_hw)
 {
 }
 

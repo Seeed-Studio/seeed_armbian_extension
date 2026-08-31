@@ -62,7 +62,7 @@ static int rwnx_freq_to_idx(struct rwnx_hw *rwnx_hw, int freq)
 		}
 	}
 
-	//BUG_ON(1);
+	WARN_ON(1);
 	WQ_DBG(DM_GENERIC, DL_ERR, "[auto]msg: %s: find freq(%d) failed!\n", __func__, freq);
 	idx = SCAN_CHANNEL_MAX;
 
@@ -150,8 +150,7 @@ static inline int rwnx_rx_chan_switch_ind(struct rwnx_hw *rwnx_hw,
 	}
 
 	rwnx_hw->cur_chanctx = chan_idx;
-	/* already invoke it on own channel context handler */
-	//rwnx_radar_detection_enable_on_cur_channel(rwnx_hw);
+	rwnx_radar_detection_enable_on_cur_channel(rwnx_hw);
 
 	PROFILING_CLR(SW_PROF_CHAN_SWITCH_IND);
 	return 0;
@@ -403,13 +402,12 @@ static inline int rwnx_rx_nss_update_ind(struct rwnx_hw *rwnx_hw,
 
 	ENTER();
 
-	if (rwnx_hw->mod_params.nss == nss) {
+	if (rwnx_hw->current_nss == nss) {
 		WQ_DBG(DM_GENERIC, DL_WRN,
 		       "rwnx_rx_nss_update_ind idx: nss not changed");
 		return 0;
 	}
-	rwnx_hw->mod_params.nss = nss;
-	rwnx_hw->version_cfm.nss = nss;
+	rwnx_hw->current_nss = nss;
 	//rwnx_hw->mod_params.use_80 = (nss == 2) ? true : false;
 
 	// Look for VIF entry
@@ -434,23 +432,6 @@ static inline int rwnx_rx_coex_info_update_ind(struct rwnx_hw *rwnx_hw,
 {
 	ENTER();
 	coex_msg_parse((struct mm_coex_info_upd *)msg->param);
-
-	return 0;
-}
-
-static inline int rwnx_cust_event_ind(struct rwnx_hw *rwnx_hw, 
-					       struct rwnx_cmd *cmd,
-					       struct ipc_e2a_msg *msg)
-{
-	struct mm_cust_evt_ind *ind = (struct mm_cust_evt_ind *)msg->param;
-	ENTER();
-	
-	WQ_DBG(DM_GENERIC, DL_WRN, "cust event param len: %d", ind->len);
-
-	if (ind->len > 1) {
-		print_hex_dump(KERN_DEBUG, "", DUMP_PREFIX_OFFSET,
-                       16, 1, ind->buff, ind->len, false);
-	}
 
 	return 0;
 }
@@ -512,8 +493,7 @@ static inline int rwnx_rx_csa_finish_ind(struct rwnx_hw *rwnx_hw,
 	struct mm_csa_finish_ind *ind = (struct mm_csa_finish_ind *)msg->param;
 	struct rwnx_vif *vif;
 	bool found = false;
-	struct cfg80211_chan_def chandef;
-	struct ieee80211_channel *chan;
+
 	ENTER();
 
 	// Look for VIF entry
@@ -544,17 +524,11 @@ static inline int rwnx_rx_csa_finish_ind(struct rwnx_hw *rwnx_hw,
 			}
 		} else {
 			if (ind->status == 0) {
-				chan = ieee80211_get_channel(rwnx_hw->wiphy, ind->chan.prim20_freq);
-				cfg80211_chandef_create(&chandef, chan, NL80211_CHAN_NO_HT);
-				if (!rwnx_hw->mod_params.ht_on)
-					chandef.width = NL80211_CHAN_WIDTH_20_NOHT;
-				else
-					chandef.width = chnl2bw[ind->chan.type];
-				chandef.center_freq1 = ind->chan.center1_freq;
-				chandef.center_freq2 = ind->chan.center2_freq;
 				rwnx_chanctx_unlink(vif);
-				rwnx_chanctx_link(vif, ind->chan_idx, &chandef);
-				if (vif->ch_index < NX_CHAN_CTXT_CNT) {
+				rwnx_chanctx_link(vif, ind->chan_idx, NULL);
+				if (rwnx_hw->cur_chanctx == ind->chan_idx) {
+					rwnx_radar_detection_enable_on_cur_channel(
+						rwnx_hw);
 					rwnx_txq_vif_start(vif,
 							   RWNX_TXQ_STOP_CHAN,
 							   rwnx_hw);
@@ -563,8 +537,9 @@ static inline int rwnx_rx_csa_finish_ind(struct rwnx_hw *rwnx_hw,
 							  RWNX_TXQ_STOP_CHAN,
 							  rwnx_hw);
 			}
+			rwnx_hw->csa_vif = vif;
+			schedule_work(&rwnx_hw->disconnect_task);
 		}
-
 	}
 
 	return 0;
@@ -726,7 +701,7 @@ static inline int rwnx_rx_scanu_result_ind(struct rwnx_hw *rwnx_hw,
 	char ssid[33];
 	int ssid_len;
 	int i;
-	unsigned char *frame, *src_mac;
+	unsigned char *frame;
 	u8 cap_info;
 
 	//ENTER();
@@ -734,7 +709,6 @@ static inline int rwnx_rx_scanu_result_ind(struct rwnx_hw *rwnx_hw,
 	chan = ieee80211_get_channel(rwnx_hw->wiphy, ind->center_freq);
 
 	frame = (unsigned char *)&ind->payload[0];
-	src_mac = frame + 10;
 	cap_info = frame[35];
 	ssid_len = frame[37];
 	if (ssid_len <= 32) {
@@ -746,13 +720,13 @@ static inline int rwnx_rx_scanu_result_ind(struct rwnx_hw *rwnx_hw,
 		}
 		ssid[i] = 0;
 	} else {
-		//ssid_len = 0;
+		ssid_len = 0;
 		strcpy(ssid, "err : ssid len > 32");
 	}
 
 	WQ_DBG(DM_GENERIC, DL_WRN,
-	       "scanu_result_ind: \"%s\" %d %d cap_info = %d mac = %pM\n", ssid,
-	       ind->center_freq, ind->rssi, cap_info, src_mac);
+	       "scanu_result_ind: \"%s\" %d %d cap_info = %d\n", ssid,
+	       ind->center_freq, ind->rssi, cap_info);
 
 	mgmt = (struct ieee80211_mgmt *)ind->payload;
 	if (!mgmt->u.probe_resp.timestamp) {
@@ -816,33 +790,25 @@ static inline int rwnx_rx_me_wow_resume_ind(struct rwnx_hw *rwnx_hw,
 					    struct ipc_e2a_msg *msg)
 {
 	struct me_wow_resume_ind *ind = (struct me_wow_resume_ind *)msg->param;
-	static struct sk_buff *skb = NULL;
-	u16 slice_len;
+	struct sk_buff *skb = NULL;
 	struct rwnx_vif *rwnx_vif;
 	ENTER();
 
-	if (skb == NULL) {
-		skb = dev_alloc_skb(ind->frame_len & 0x7fff);
-	}
+	dump_bytes(DL_WRN, "wakeup frame:", ind->frame, ind->frame_len);
+
+	skb = dev_alloc_skb(ind->frame_len);
 	BUG_ON(!skb);
 	rwnx_vif = rwnx_hw->vif_table[ind->vif_idx];
 
-	// The first 2 bytes store the slice length
-	slice_len = ntohs(*(u16 *)ind->frame);
-	memcpy(skb_put(skb, slice_len), ind->frame + sizeof(u16), slice_len);
-	WQ_DBG(DM_RX, DL_WRN, "slice_len:%d, total_len:%d", slice_len, ind->frame_len & 0x7fff);
+	skb->dev = rwnx_vif->ndev;
+	memcpy(skb_put(skb, ind->frame_len), ind->frame, ind->frame_len);
+	skb->protocol = eth_type_trans(skb, skb->dev);
 
-	// check if more data
-	if (!(ind->frame_len & BIT(15))) {
-		dump_bytes(DL_WRN, "wakeup frame:", skb->data, skb->len > 128 ? 128 : skb->len);
-		skb->dev = rwnx_vif->ndev;
-		skb->protocol = eth_type_trans(skb, skb->dev);
-		if (irq_count())
-			netif_receive_skb(skb);
-		else
-			netif_rx(skb);
-		skb = NULL;
-	}
+	if (irq_count())
+		netif_receive_skb(skb);
+	else
+		netif_rx(skb);
+
 	return 0;
 }
 
@@ -1012,7 +978,6 @@ u8 he_mcs_map_to_mcs_max(u8 he_mcs_map)
 }
 #endif
 
-/* Internal CSA mechanism */
 void rwnx_bcn_change_task(struct work_struct *w)
 {
 	struct delayed_work *dwork =
@@ -1035,6 +1000,8 @@ void rwnx_bcn_change_done_task(struct work_struct *w)
 	struct rwnx_hw *rwnx_hw =
 		container_of(w, struct rwnx_hw, bcn_change_done_task);
 	struct rwnx_vif *vif = rwnx_hw->csa_vif;
+	u8 ch_index;
+
 	rwnx_hw->csa_vif = NULL;
 
 	if (!vif || !(vif->ap.flags & RWNX_AP_STARTED)) {
@@ -1045,6 +1012,10 @@ void rwnx_bcn_change_done_task(struct work_struct *w)
 	WQ_DBG(DM_IPC, DL_WRN, "Send bcn change to FW : Internal CSA done\n");
 	rwnx_send_ch_switch(rwnx_hw, vif, vif->ap.chandef, false);
 
+	ch_index = vif->ch_index;
+	rwnx_chanctx_unlink(vif);
+	rwnx_chanctx_link(vif, ch_index, &vif->ap.chandef);
+
 #if LINUX_VERSION_CODE >= KERNEL_VERSION(6, 3, 0)
 	cfg80211_ch_switch_notify(vif->ndev, &vif->ap.chandef, 0, 0);
 #elif LINUX_VERSION_CODE >= KERNEL_VERSION(6, 1, 0) || defined(AMLOGIC_BUILD_COMPATIBLE)
@@ -1054,7 +1025,6 @@ void rwnx_bcn_change_done_task(struct work_struct *w)
 #endif
 }
 
-#ifndef CONFIG_WQ_GKI
 void write_filesystem(struct file *file, loff_t *offset,
 	char* data, unsigned int size)
 {
@@ -1149,12 +1119,25 @@ void rwnx_tracer_dump_task(struct work_struct *w)
 
 		WQ_DBG(DM_GENERIC, DL_WRN, "%s open success\n",fileName_bin);
 
-		for (i = 0; i < NUM_EVENT_OF_TRACER_DUMP; i++) {
-			write_filesystem(file_w, &file_w->f_pos,
-				(char*)rwnx_hw->tracer.payload[i], 1024);
-		}
+        if(rwnx_hw->tracer.dump32) {
+            for (i = 0; i < NUM_EVENT_OF_TRACER_DUMP_32; i++) {
+                write_filesystem(file_w, &file_w->f_pos,
+                    (char*)rwnx_hw->tracer.payload32[i], 1024);
+            }
+            
+            WQ_DBG(DM_GENERIC, DL_WRN, "dump 32KB success\n");
+        }else if(rwnx_hw->tracer.dump64) {
+ 
+            for (i = 0; i < NUM_EVENT_OF_TRACER_DUMP; i++) {
+                write_filesystem(file_w, &file_w->f_pos,
+                    (char*)rwnx_hw->tracer.payload64[i], 1024);
+            }
+            
+            WQ_DBG(DM_GENERIC, DL_WRN, "dump 64KB success\n");
+        }
+                
 		filp_close(file_w, NULL);
-		WQ_DBG(DM_GENERIC, DL_WRN, "%s write done\n",fileName_bin);
+		WQ_DBG(DM_GENERIC, DL_WRN, "%s tracer_bin write done\n",fileName_bin);
 	}
 
 done:
@@ -1162,25 +1145,6 @@ done:
 	set_fs(orig_fs);
 #endif
 	return;
-}
-#endif
-
-void rwnx_connect_fail_task(struct work_struct *w)
-{
-	struct rwnx_hw *rwnx_hw =
-		container_of(w, struct rwnx_hw, connect_fail_task);
-	struct rwnx_vif *rwnx_vif = rwnx_hw->connect_fail_vif;
-
-	if (rwnx_vif != NULL) {
-		if (rwnx_vif->b_connected) {
-			WQ_DBG(DM_GENERIC, DL_ERR, "%s:disconnect vid=%d\n",
-				__func__, rwnx_vif->vif_index);
-
-			rwnx_send_sm_disconnect_req(rwnx_hw, rwnx_vif, WLAN_REASON_DEAUTH_LEAVING);
-			rwnx_vif->b_connected = false;
-			rwnx_hw->connect_fail_vif = NULL;
-		}
-	}
 }
 
 /***************************************************************************
@@ -1214,7 +1178,6 @@ static inline int rwnx_rx_sm_connect_ind(struct rwnx_hw *rwnx_hw,
 		struct ieee80211_channel *chan;
 		struct cfg80211_chan_def chandef;
 
-		rwnx_vif->b_connected = true;
 		sta = &rwnx_hw->sta_table[ind->ap_idx];
 		sta->valid = true;
 		sta->sta_idx = ind->ap_idx;
@@ -1306,8 +1269,7 @@ static inline int rwnx_rx_sm_connect_ind(struct rwnx_hw *rwnx_hw,
 					sta->rx_nss++;
 				sta->rx_nss = min_t(int, sta->rx_nss,
 						    rwnx_hw->mod_params.nss);
-				if (sta->rx_nss > 0)
-					sta->rx_mcs_idx |= (sta->rx_nss - 1) << 3;
+				sta->rx_mcs_idx |= (sta->rx_nss - 1) << 3;
 			}
 		}
 		extcap_ie = cfg80211_find_ie(WLAN_EID_VHT_CAPABILITY, rsp_ie,
@@ -1438,7 +1400,7 @@ static inline int rwnx_rx_sm_connect_ind(struct rwnx_hw *rwnx_hw,
 		memset(&info, 0, sizeof(info));
 
 		if (rwnx_vif->ch_index < NX_CHAN_CTXT_CNT)
-#if LINUX_VERSION_CODE >= KERNEL_VERSION(6, 0, 0) || defined(AMLOGIC_BUILD_COMPATIBLE)
+#if LINUX_VERSION_CODE >= KERNEL_VERSION(6, 0, 0)
 			info.links[0].channel =
 				rwnx_hw->chanctx_table[rwnx_vif->ch_index]
 					.chan_def.chan;
@@ -1448,7 +1410,7 @@ static inline int rwnx_rx_sm_connect_ind(struct rwnx_hw *rwnx_hw,
 					.chan_def.chan;
 #endif
 
-#if LINUX_VERSION_CODE >= KERNEL_VERSION(6, 0, 0) || defined(AMLOGIC_BUILD_COMPATIBLE)
+#if LINUX_VERSION_CODE >= KERNEL_VERSION(6, 0, 0)
 		info.links[0].bssid = (const u8 *)&ind->bssid;
 #else
 		info.bssid = (const u8 *)&ind->bssid;
@@ -1461,7 +1423,7 @@ static inline int rwnx_rx_sm_connect_ind(struct rwnx_hw *rwnx_hw,
 	} else {
 		struct wireless_dev *wdev = &rwnx_vif->wdev;
 
-#if LINUX_VERSION_CODE >= KERNEL_VERSION(6, 1, 0) || defined(AMLOGIC_BUILD_COMPATIBLE)
+#if LINUX_VERSION_CODE >= KERNEL_VERSION(6, 1, 0)
 		WQ_DBG(DM_GENERIC, DL_ERR,
 		       "[auto]cfg80211_connect_result status_code=%d ssid_len=%d BSSID=%pM",
 		       ind->status_code, wdev->u.client.ssid_len,
@@ -1473,15 +1435,12 @@ static inline int rwnx_rx_sm_connect_ind(struct rwnx_hw *rwnx_hw,
 		       (const u8 *)&ind->bssid);
 #endif
 
-#if LINUX_VERSION_CODE >= KERNEL_VERSION(6, 1, 0) || defined(AMLOGIC_BUILD_COMPATIBLE)
-		if (wdev->u.client.ssid_len == 0) {
+#if LINUX_VERSION_CODE >= KERNEL_VERSION(6, 1, 0)
+		if (wdev->u.client.ssid_len == 0)
 #else
-		if (wdev->ssid_len == 0) {
+		if (wdev->ssid_len == 0)
 #endif
 			ind->status_code = WLAN_STATUS_UNSPECIFIED_FAILURE;
-			rwnx_hw->connect_fail_vif = rwnx_vif;
-			schedule_work(&rwnx_hw->connect_fail_task);
-		}
 
 		if (ind->status_code == 0) {
 			struct ieee80211_channel *chan;
@@ -1493,7 +1452,7 @@ static inline int rwnx_rx_sm_connect_ind(struct rwnx_hw *rwnx_hw,
 						     ind->chan.prim20_freq);
 			bss = cfg80211_get_bss(rwnx_hw->wiphy, chan,
 					       (const u8 *)ind->bssid.array,
-#if LINUX_VERSION_CODE >= KERNEL_VERSION(5, 19, 2) || defined(AMLOGIC_BUILD_COMPATIBLE)
+#if LINUX_VERSION_CODE >= KERNEL_VERSION(5, 19, 2)
 					       wdev->u.client.ssid,
 					       wdev->u.client.ssid_len,
 #else
@@ -1646,7 +1605,6 @@ static inline int rwnx_rx_sm_disconnect_ind(struct rwnx_hw *rwnx_hw,
 
 	dev = rwnx_vif->ndev;
 	sta_table = (struct rwnx_sta *)rwnx_vif->sta.ap;
-	rwnx_vif->b_connected = false;
 
 	/* if vif is not up, rwnx_close has already been called */
 	if (rwnx_vif->up) {
@@ -1866,11 +1824,6 @@ static inline int rwnx_rx_mesh_peer_update_ind(struct rwnx_hw *rwnx_hw,
 	struct rwnx_sta *rwnx_sta = &rwnx_hw->sta_table[ind->sta_idx];
 
 	ENTER();
-
-	if (rwnx_vif == NULL) {
-		WARN_ON(1);
-		return 0;
-	}
 
 	if ((ind->vif_idx >= (NX_VIRT_DEV_MAX + NX_REMOTE_STA_MAX)) ||
 	    (rwnx_vif &&
@@ -2120,10 +2073,7 @@ static inline int rwnx_rx_apm_probe_client_ind(struct rwnx_hw *rwnx_hw,
 	struct rwnx_vif *rwnx_vif = rwnx_hw->vif_table[ind->vif_idx];
 	struct rwnx_sta *rwnx_sta = &rwnx_hw->sta_table[ind->sta_idx];
 
-	if (ind->client_present) {
-		rwnx_sta->stats.last_act = jiffies;
-	}
-
+	rwnx_sta->stats.last_act = jiffies;
 	cfg80211_probe_status(rwnx_vif->ndev, rwnx_sta->mac_addr,
 			      (u64)ind->probe_id, ind->client_present, 0, false,
 			      GFP_ATOMIC);
@@ -2131,54 +2081,6 @@ static inline int rwnx_rx_apm_probe_client_ind(struct rwnx_hw *rwnx_hw,
 	return 0;
 }
 
-#ifdef CONFIG_RWNX_RADAR
-extern void rwnx_radar_process_pulse(struct rwnx_hw *rwnx_hw);
-static inline int rwnx_rx_apm_radar_pluse_ind(struct rwnx_hw *rwnx_hw,
-					       struct rwnx_cmd *cmd,
-					       struct ipc_e2a_msg *msg)
-{
-	int i;
-	struct radar_pulse_array_desc *pulses =
-		(struct radar_pulse_array_desc *)msg->param;
-
-	/* Look for pluse count meaning that this hostbuf contains RADAR pulses */
-	if (pulses->cnt == 0) {
-		return -1;
-	}
-
-	if (rwnx_radar_detection_is_enable(&rwnx_hw->radar, pulses->idx)) {
-		/* Save the received pulses only if radar detection is enabled */
-		for (i = 0; i < pulses->cnt; i++) {
-			struct rwnx_radar_pulses *p = &rwnx_hw->radar.pulses[pulses->idx];
-
-			if (rwnx_hw->radar.pulse_dump) {
-				struct radar_pulse *rp = (struct radar_pulse *)&pulses->pulse[i];
-				WQ_DBG(DM_GENERIC, DL_WRN, "PRI=%.5dus WIDTH=%.3dus FOM=%.2d%% freq=%dMHz\n",
-					rp->rep, rp->len * 2, rp->fom * 6, rp->freq * 2);
-			}
-
-			p->buffer[p->index] = pulses->pulse[i];
-			p->index = (p->index + 1) % RWNX_RADAR_PULSE_MAX;
-			if (p->count < RWNX_RADAR_PULSE_MAX)
-				p->count++;
-		}
-
-		rwnx_radar_process_pulse(rwnx_hw);
-	}
-	return 0;
-}
-#else
-
-static inline int rwnx_rx_apm_radar_pluse_ind(struct rwnx_hw *rwnx_hw,
-					       struct rwnx_cmd *cmd,
-					       struct ipc_e2a_msg *msg)
-{
-	return 0;
-}
-
-#endif
-
-#ifdef WQ_DBG_DUMP_RECOVERY_ENABLE
 static char wq_dbg_rec_type_str[][32] = {
 	"MAC_NOT_IDLE",	    "TX_TIMEOUT",
 	"IDLE_TIMEOUT",	    "HE_TB_TIMEOUT",
@@ -2194,8 +2096,6 @@ static char wq_dbg_rec_type_str[][32] = {
 	"TX_KEY_IDX_ERR",   "TX_DESC_AMPDU_ERR",
 	"TX_MAC_IDLE",	    "TX_BEACON_MAC_IDLE",
 };
-#endif
-
 static int wq_dbg_err_recovery_process(struct rwnx_hw *rwnx_hw,
 				       struct dbg_err_ind *ind)
 {
@@ -2220,11 +2120,9 @@ static int wq_dbg_err_recovery_process(struct rwnx_hw *rwnx_hw,
 		}
 		/* print event type */
 		if (i < MAC_REC_NUM) {
-#ifdef WQ_DBG_DUMP_RECOVERY_ENABLE
 			WQ_DBG(DM_GENERIC, DL_ERR,
 			       "########## MAC RECOVERRED: %s !!! ##########\n",
 			       wq_dbg_rec_type_str[i]);
-#endif
 		}
 
 		memcpy(&rwnx_hw->rec_stats, stats,
@@ -2293,7 +2191,6 @@ static msg_cb_fct mm_hdlrs[MSG_I(MM_EXT_MAX)] = {
 	[MSG_I(MM_PKTLOSS_IND)] = rwnx_rx_pktloss_notify_ind,
 	[MSG_I(MM_NSS_UPDATE_IND)] = rwnx_rx_nss_update_ind,
 	[MSG_I(MM_COEX_INFO_UPDATE_IND)] = rwnx_rx_coex_info_update_ind,
-	[MSG_I(MM_CUST_EVT_IND)] = rwnx_cust_event_ind,
 };
 
 static msg_cb_fct scan_hdlrs[MSG_I(SCANU_MAX)] = {
@@ -2320,7 +2217,6 @@ static msg_cb_fct sm_hdlrs[MSG_I(SM_EXT_MAX)] = {
 
 static msg_cb_fct apm_hdlrs[MSG_I(APM_MAX)] = {
 	[MSG_I(APM_PROBE_CLIENT_IND)] = rwnx_rx_apm_probe_client_ind,
-	[MSG_I(APM_RADAR_PULSE_IND)] = rwnx_rx_apm_radar_pluse_ind,
 };
 
 static msg_cb_fct twt_hdlrs[MSG_I(TWT_MAX)] = {
@@ -2369,7 +2265,7 @@ static int rwnx_rx_hml_connect_ind_handler(struct rwnx_hw *rwnx_hw,
 	const u8 *extcap_ie;
 	const struct ieee_types_extcap *extcap;
 	struct rwnx_sta *sta;
-	u8 txq_status __maybe_unused;
+	u8 txq_status;
 
 	/* retrieve IE addresses and lengths */
 	req_ie = (const u8 *)ind->assoc_ie_buf;

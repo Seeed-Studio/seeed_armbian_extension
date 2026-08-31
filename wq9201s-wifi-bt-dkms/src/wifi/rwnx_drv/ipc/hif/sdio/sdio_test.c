@@ -235,8 +235,6 @@ int wq_sdio_ut_send_rx_config(struct wq_sdio *wq_sdio)
 
 int wq_sdio_ut_prepare_tx_pkt(struct wq_sdio *wq_sdio)
 {
-	int ret = 0;
-
 #ifdef SDIO_TX_AGGR_MODE
 	struct wq_func *wq_func = &wq_sdio->wlan;
 	wq_ut_config_t *ut_config = &wq_sdio->ut_config;
@@ -251,8 +249,8 @@ int wq_sdio_ut_prepare_tx_pkt(struct wq_sdio *wq_sdio)
 	if ((req == NULL) || (req->aggr_cnt == ut_config->test_pkt_cnt)) {
 		req = wq_skbreq_dequeue(&wq_sdio->pools.aggrout.list);
 		if (!req) {
-			printk_ratelimited(KERN_INFO "%s: req is null, max_pkts %d, func aggrout num %d, func pktout_vo num %d, func pktout num %d\n", __func__,
-				ut_config->test_pkt_cnt, wq_func->q.aggrout.num, wq_func->q.pktout_vo.num, wq_func->q.pktout.num);
+			printk_ratelimited(KERN_INFO "%s: req is null, max_pkts %d, func aggrout num %d, func pktout num %d\n", __func__,
+				ut_config->test_pkt_cnt, wq_func->q.aggrout.num, wq_func->q.pktout.num);
 			goto exit;
 		}
 
@@ -277,7 +275,7 @@ exit:
 	spin_unlock_irqrestore(&(wq_func->q.aggrout.lock), flags);
 #endif
 
-	return ret;
+	return 0;
 }
 
 int wq_sdio_ut_rx_msg(struct wq_sdio *wq_sdio, struct sk_buff *skb)

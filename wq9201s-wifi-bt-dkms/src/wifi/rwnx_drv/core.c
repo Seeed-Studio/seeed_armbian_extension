@@ -128,6 +128,8 @@ struct wq_core *wq_core_create(struct wq_hif_ops *hif_ops, struct device *dev,
 	core->config.up_to_mcs7 = false;
 	core->config.force_rx_use_tasklet = hif_ops->hif == WQ_HIF_USB;
 	if (hif_ops->hif == WQ_HIF_PCIE) {
+		core->config.napi_enable = true;
+		core->config.force_rx_use_tasklet = true;
 		core->config.dma_map = true;
 		core->config.rx_ll = true;
 		if (hif_ops->low_speed_mode) {
@@ -150,6 +152,7 @@ struct wq_core *wq_core_create(struct wq_hif_ops *hif_ops, struct device *dev,
 		core->config.force_rx_use_tasklet = true;
 		core->config.ipc_rx_pkt_use_wq = true;
 	}
+	core->flags.is_shutdown = 0;
 
 	init_completion(&core->fw_ready);
 
@@ -315,11 +318,13 @@ int wq_wlan_create(struct wq_core *core, int tx_credit_enable,
 	if (wq_conf.ps_mode & BIT(1)) {
 		hif_autopm_allow(core);
 	}
-	INIT_WORK(&core->wq_bus_recovery_work, wq_bus_recovery_process);
+	WQ_INIT_WORK(&core->wq_bus_recovery_work, wq_bus_recovery_process);
 
 	return ret;
 }
 WQ_CORE_API(wq_wlan_create);
+
+#ifdef CONFIG_PM
 
 int wq_wlan_suspend(struct wq_core *core)
 {
@@ -343,12 +348,15 @@ int wq_wlan_resume(struct wq_core *core)
 	return rwnx_cfg80211_resume(core->hw->wiphy);
 }
 WQ_CORE_API(wq_wlan_resume);
+#endif
 
 int wq_wlan_shutdown(struct wq_core *core)
 {
 	if (NULL == core->hw) {
 		return 0;
 	}
+	/* set flag of shutdown */
+	core->flags.is_shutdown = 1;
 
 	rwnx_cfg80211_timer_shutdown(core->hw);
 

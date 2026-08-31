@@ -143,11 +143,6 @@ static void copy_connect_ies(struct rwnx_vif *vif, struct sm_connect_req *req,
 					 vif->sta.ft_assoc_ies_len);
 		pos = (uint8_t *)req->ie_buf;
 
-		if (sme->bssid == NULL) {
-			WQ_DBG(DM_GENERIC, DL_WRN, "copy_connect_ies: bssid is null\n");
-			return;
-		}
-
 		// We can use FT over the air
 		memcpy(&vif->sta.ft_target_ap, sme->bssid, ETH_ALEN);
 
@@ -471,8 +466,8 @@ int rwnx_send_start(struct rwnx_hw *rwnx_hw)
 	start_req_param->tx_timeout[AC_VO] = (u16)rwnx_hw->mod_params.tx_to_vo;
 
 	start_req_param->nbw_type = nbw_type;
-	WQ_DBG(DM_GENERIC, DL_WRN, "%s: nbw_type:%d\n", __func__,
-	       start_req_param->nbw_type);
+	WQ_DBG(DM_GENERIC, DL_WRN, "%s: nbw_type:%d uapsd_timeout:%u\n", __func__,
+	       start_req_param->nbw_type, start_req_param->uapsd_timeout);
 
 	/* Send the START REQ message to LMAC FW */
 	return rwnx_send_msg(rwnx_hw, start_req_param, MM_START_CFM);
@@ -726,12 +721,6 @@ void wq_nss_update_task_hdl(struct work_struct *w)
 			buf = NULL;
 		}
 
-		if (error) {
-			WQ_DBG(DM_GENERIC, DL_ERR,
-				"%s: send_bcn_change error(%d)",
-				__func__, error);
-		}
-
 		return;
 	}
 }
@@ -739,7 +728,7 @@ void wq_nss_update_task_hdl(struct work_struct *w)
 void rwnx_send_ptk_key_add(struct work_struct *w)
 {
 	int error = 0;
-	struct mm_key_add_cfm key_add_cfm = {0};
+	struct mm_key_add_cfm key_add_cfm;
 	struct rwnx_hw *rwnx_hw = container_of(w, struct rwnx_hw, add_key_task);
 	struct rwnx_vif *tmp_vif;
 	u8 vif_index = 0;
@@ -900,6 +889,7 @@ int rwnx_send_set_power(struct rwnx_hw *rwnx_hw, u8 vif_idx, s8 pwr,
 			struct mm_set_power_cfm *cfm)
 {
 	struct mm_set_power_req *req;
+	struct rwnx_monitor_cfg *p_cfg;
 
 	ENTER();
 
@@ -912,8 +902,8 @@ int rwnx_send_set_power(struct rwnx_hw *rwnx_hw, u8 vif_idx, s8 pwr,
 	/* Set parameters for the MM_SET_POWER_REQ message */
 	req->inst_nbr = vif_idx;
 	req->power = pwr;
-	if (rwnx_hw->monitor_vif != RWNX_INVALID_VIF) {
-		rwnx_hw->monitor_param.tx_power = pwr;
+	if (NULL != (p_cfg = rwnx_monitor_get_cfg(rwnx_hw, vif_idx))) {
+		p_cfg->tx_power = pwr;
 	}
 
 	/* Send the MM_SET_POWER_REQ message to LMAC FW */
@@ -1046,6 +1036,7 @@ int rwnx_write_reg(struct rwnx_hw *rwnx_hw, u32 addr, u32 val)
 {
 	struct rwnx_write_reg_cfg *req;
 	struct rwnx_write_reg_cfm cfm;
+	int ret;
 
 	BUG_ON(in_atomic());
 
@@ -1058,7 +1049,7 @@ int rwnx_write_reg(struct rwnx_hw *rwnx_hw, u32 addr, u32 val)
 	req->addr = addr;
 	req->value = val;
 
-	RWNX_SEND_MSG_EX(rwnx_hw, req, MM_REG_WRITE_CFM, &cfm);
+	ret = RWNX_SEND_MSG_EX(rwnx_hw, req, MM_REG_WRITE_CFM, &cfm);
 
 	return cfm.result;
 }
@@ -1067,6 +1058,7 @@ int rwnx_read_reg(struct rwnx_hw *rwnx_hw, u32 addr, u8 *buf, int buf_len)
 {
 	struct rwnx_read_reg_cfg *readreg;
 	struct rwnx_read_reg_cfm cfm;
+	int ret;
 
 	BUG_ON(in_atomic());
 
@@ -1079,7 +1071,7 @@ int rwnx_read_reg(struct rwnx_hw *rwnx_hw, u32 addr, u8 *buf, int buf_len)
 	readreg->addr = addr;
 	readreg->len = buf_len;
 
-	RWNX_SEND_MSG_EX(rwnx_hw, readreg, MM_REG_READ_CFM, &cfm);
+	ret = RWNX_SEND_MSG_EX(rwnx_hw, readreg, MM_REG_READ_CFM, &cfm);
 
 	if (cfm.result == REG_CFM_SUCC)
 		memcpy(buf, &cfm.value, sizeof(cfm.value));
@@ -1393,7 +1385,7 @@ int rwnx_send_me_sta_add(struct rwnx_hw *rwnx_hw,
 			 u8 inst_nbr, struct me_sta_add_cfm *cfm)
 {
 	struct me_sta_add_req *req;
-#if LINUX_VERSION_CODE >= KERNEL_VERSION(6, 0, 0) || defined(AMLOGIC_BUILD_COMPATIBLE)
+#if LINUX_VERSION_CODE >= KERNEL_VERSION(6, 0, 0)
 	u8 *ht_mcs = (u8 *)&params->link_sta_params.ht_capa->mcs;
 #else
 	u8 *ht_mcs = (u8 *)&params->ht_capa->mcs;
@@ -1415,7 +1407,7 @@ int rwnx_send_me_sta_add(struct rwnx_hw *rwnx_hw,
 	(void)memcpy((u8 *)&req->mac_addr, mac, ETH_ALEN);
 #endif
 
-#if LINUX_VERSION_CODE >= KERNEL_VERSION(6, 0, 0) || defined(AMLOGIC_BUILD_COMPATIBLE)
+#if LINUX_VERSION_CODE >= KERNEL_VERSION(6, 0, 0)
 	req->rate_set.length = params->link_sta_params.supported_rates_len;
 	for (i = 0; i < params->link_sta_params.supported_rates_len; i++)
 		req->rate_set.array[i] =
@@ -1427,7 +1419,7 @@ int rwnx_send_me_sta_add(struct rwnx_hw *rwnx_hw,
 #endif
 
 	req->flags = 0;
-#if LINUX_VERSION_CODE >= KERNEL_VERSION(6, 0, 0) || defined(AMLOGIC_BUILD_COMPATIBLE)
+#if LINUX_VERSION_CODE >= KERNEL_VERSION(6, 0, 0)
 	if (params->link_sta_params.ht_capa) {
 		const struct ieee80211_ht_cap *ht_capa =
 			params->link_sta_params.ht_capa;
@@ -1448,7 +1440,7 @@ int rwnx_send_me_sta_add(struct rwnx_hw *rwnx_hw,
 		req->ht_cap.asel_capa = ht_capa->antenna_selection_info;
 	}
 
-#if LINUX_VERSION_CODE >= KERNEL_VERSION(6, 0, 0) || defined(AMLOGIC_BUILD_COMPATIBLE)
+#if LINUX_VERSION_CODE >= KERNEL_VERSION(6, 0, 0)
 	if (params->link_sta_params.vht_capa) {
 		const struct ieee80211_vht_cap *vht_capa =
 			params->link_sta_params.vht_capa;
@@ -1471,7 +1463,7 @@ int rwnx_send_me_sta_add(struct rwnx_hw *rwnx_hw,
 	}
 
 #if LINUX_VERSION_CODE >= KERNEL_VERSION(4, 20, 0)
-#if LINUX_VERSION_CODE >= KERNEL_VERSION(6, 0, 0) || defined(AMLOGIC_BUILD_COMPATIBLE)
+#if LINUX_VERSION_CODE >= KERNEL_VERSION(6, 0, 0)
 	if (params->link_sta_params.he_capa) {
 		const struct ieee80211_he_cap_elem *he_capa =
 			params->link_sta_params.he_capa;
@@ -1504,7 +1496,7 @@ int rwnx_send_me_sta_add(struct rwnx_hw *rwnx_hw,
 	if (params->sta_flags_set & BIT(NL80211_STA_FLAG_MFP))
 		req->flags |= STA_MFP_CAPA;
 
-#if LINUX_VERSION_CODE >= KERNEL_VERSION(6, 0, 0) || defined(AMLOGIC_BUILD_COMPATIBLE)
+#if LINUX_VERSION_CODE >= KERNEL_VERSION(6, 0, 0)
 	if (params->link_sta_params.opmode_notif_used) {
 		req->flags |= STA_OPMOD_NOTIF;
 		req->opmode = params->link_sta_params.opmode_notif;
@@ -1683,7 +1675,6 @@ int rwnx_send_me_set_ps_mode(struct rwnx_hw *rwnx_hw, u8 ps_mode)
 	/* Send the ME_SET_PS_MODE_REQ message to FW */
 	return rwnx_send_msg(rwnx_hw, req, ME_SET_PS_MODE_CFM);
 }
-WQ_TX_MSG_API(rwnx_send_me_set_ps_mode);
 
 int rwnx_send_me_tx_credit_size_req(struct rwnx_hw *rwnx_hw,
 				    struct me_tx_credit_size_cfm *cfm)
@@ -1732,7 +1723,7 @@ int rwnx_send_me_set_wowlan_req(struct rwnx_hw *rwnx_hw,
 	struct cfg80211_wowlan_trig_pkt_pattern *patterns;
 #endif
 	struct me_wow_pattern *wow_pattern;
-	struct me_set_wowlan_cfm cfm = {0};
+	struct me_set_wowlan_cfm cfm;
 	u32 wowlan_config = 0;
 	u8 i, j;
 	int res = 0;
@@ -1880,7 +1871,6 @@ int rwnx_send_sm_connect_req(struct rwnx_hw *rwnx_hw, struct rwnx_vif *rwnx_vif,
 	ke_task_id_t task_id = TASK_SM;
 	ke_msg_id_t cfm_id = SM_CONNECT_CFM;
 	int is_wep = 0;
-	u32 akm;
 
 	ENTER();
 
@@ -1987,11 +1977,9 @@ int rwnx_send_sm_connect_req(struct rwnx_hw *rwnx_hw, struct rwnx_vif *rwnx_vif,
 
 	/* Set UAPSD queues */
 	req->uapsd_queues = rwnx_hw->mod_params.uapsd_queues;
-	akm = (sme->crypto.n_ciphers_pairwise > 0) ? sme->crypto.akm_suites[0] : 0;
 	WQ_DBG(DM_GENERIC, DL_WRN,
-	       "Connect to {SSID:%s,BSSID:%pM,Freq:%d} AP akm:%08x, mfp:%d, auth:%d\n",
-	       &req->ssid.array[0], (uint8_t *)&req->bssid, req->chan.freq,
-	       akm, sme->mfp, sme->auth_type);
+	       "Connect to {SSID:%s,BSSID:%pM,Freq:%d} AP\n",
+	       &req->ssid.array[0], (uint8_t *)&req->bssid, req->chan.freq);
 #ifdef CONFIG_HML
 #ifdef CONFIG_DEBUG_WQ_PRIV
 	if (cmd_id == HML_CONN_START_REQ) {
@@ -2132,17 +2120,15 @@ static int rwnx_ap_set_vif_chandef(struct rwnx_vif *vif,
 	chan->max_reg_power = chandef->chan->max_reg_power;
 	chan->beacon_found = chandef->chan->beacon_found;
 	chan->orig_flags = chandef->chan->orig_flags;
-#if LINUX_VERSION_CODE >= KERNEL_VERSION(5, 8, 0)
+#if LINUX_VERSION_CODE >= KERNEL_VERSION(5, 1, 0)
 	chan->freq_offset = chandef->chan->freq_offset;
 #endif
 	vif->ap.chandef.chan = chan;
 	vif->ap.chandef.width = chandef->width;
 	vif->ap.chandef.center_freq1 = chandef->center_freq1;
 	vif->ap.chandef.center_freq2 = chandef->center_freq2;
-#if LINUX_VERSION_CODE >= KERNEL_VERSION(5, 4, 0)
+#if LINUX_VERSION_CODE >= KERNEL_VERSION(5, 1, 0)
 	vif->ap.chandef.edmg = chandef->edmg;
-#endif
-#if LINUX_VERSION_CODE >= KERNEL_VERSION(5, 8, 0)
 	vif->ap.chandef.freq1_offset = chandef->freq1_offset;
 #endif
 
@@ -2197,8 +2183,8 @@ void store_supp_chan_pwr(struct rwnx_hw *rwnx_hw,
 #define RATE_1M_POS 0
 #define RATE_6M_POS 4
 	struct wiphy *wiphy = rwnx_hw->wiphy;
-	u8 sup_2gchan[MAC_DOMAINCHANNEL_24G_MAX] = {0};
-	u8 sup_5gchan[MAC_DOMAINCHANNEL_5G_MAX] = {0};
+	u8 sup_2gchan[MAC_DOMAINCHANNEL_24G_MAX];
+	u8 sup_5gchan[MAC_DOMAINCHANNEL_5G_MAX];
 	int chn, sup, i;
 	int chan_cnt_2g = 0;
 
@@ -2393,7 +2379,7 @@ int rwnx_send_apm_start_req(struct rwnx_hw *rwnx_hw, struct rwnx_vif *vif,
 #if LINUX_VERSION_CODE >= KERNEL_VERSION(6, 3, 0)
 			cfg80211_ch_switch_notify(vif->ndev, &vif->ap.chandef,
 						  0, 0);
-#elif LINUX_VERSION_CODE >= KERNEL_VERSION(6, 1, 0) || defined(AMLOGIC_BUILD_COMPATIBLE)
+#elif LINUX_VERSION_CODE >= KERNEL_VERSION(6, 1, 0)
 			cfg80211_ch_switch_notify(vif->ndev, &vif->ap.chandef,
 						  0);
 #else
@@ -2566,9 +2552,6 @@ int rwnx_send_scanu_req(struct rwnx_hw *rwnx_hw, struct rwnx_vif *rwnx_vif,
 		req->duration = ieee80211_tu_to_usec(param->duration);
 #endif
 
-	if (rwnx_hw->dwell_time != -1)
-		req->duration = rwnx_hw->dwell_time;
-
 	if (req->ssid_cnt == 0)
 		chan_flags |= CHAN_NO_IR;
 	for (i = 0; i < req->ssid_cnt; i++) {
@@ -2576,9 +2559,6 @@ int rwnx_send_scanu_req(struct rwnx_hw *rwnx_hw, struct rwnx_vif *rwnx_vif,
 		for (j = 0; j < param->ssids[i].ssid_len; j++)
 			req->ssid[i].array[j] = param->ssids[i].ssid[j];
 		req->ssid[i].length = param->ssids[i].ssid_len;
-
-        WQ_DBG(DM_GENERIC, DL_WRN, "%s : ssid_cnt %d-%d %s(%d)\n", __func__, i, req->ssid_cnt, req->ssid[i].array, req->ssid[i].length);
-
 	}
 
 	if (param->ie) {
@@ -2605,9 +2585,12 @@ int rwnx_send_scanu_req(struct rwnx_hw *rwnx_hw, struct rwnx_vif *rwnx_vif,
 		req->chan[i].tx_power = chan_to_fw_pwr(chan->max_reg_power);
 		if (gv_get_pwr_from_bin_flag) {
 			int channel_num =
-				(chan->band == NL80211_BAND_2GHZ) ?
-					      FREQ_TO_CHAN_24G(chan->center_freq) :
-					      FREQ_TO_CHAN_5G(chan->center_freq);
+			#if LINUX_VERSION_CODE <= KERNEL_VERSION(4,6,7)
+				(chan->band == IEEE80211_BAND_2GHZ) ? FREQ_TO_CHAN_24G(chan->center_freq) : FREQ_TO_CHAN_5G(chan->center_freq);
+			#else
+				(chan->band == NL80211_BAND_2GHZ) ? FREQ_TO_CHAN_24G(chan->center_freq) : FREQ_TO_CHAN_5G(chan->center_freq);
+			#endif
+
 			if (wq_supp_pwr[i].channel == channel_num) {
 				req->chan[i].tx_power = min(
 					chan_to_fw_pwr(chan->max_reg_power),
@@ -2662,7 +2645,7 @@ int rwnx_send_sched_scan_start_req(struct rwnx_hw *rwnx_hw,
 #endif
 	req->no_cck = 0;
 	req->bssid = mac_addr_bcst; //It will be modified later
-	req->duration = 100; //It will be modified later
+	req->duration = 0; // 0 means def value (about 110ms)
 
 	WQ_DBG(DM_GENERIC, DL_WRN, "sched_scan_plan cnt: %u\n",
 	       req->sscan_param.scan_plan_cnt);
@@ -3183,12 +3166,21 @@ int rwnx_send_tdls_peer_traffic_ind_req(struct rwnx_hw *rwnx_hw,
 }
 
 int rwnx_send_config_monitor_req(struct rwnx_hw *rwnx_hw,
-				 struct cfg80211_chan_def *chandef,
+				 struct cfg80211_chan_def *chandef, u8 vif_index,
 				 struct me_config_monitor_cfm *cfm)
 {
+	int ret;
 	struct me_config_monitor_req *req;
+	struct rwnx_monitor_cfg *p_cfg;
+	struct me_config_monitor_cfm rsp_cfm;
 
 	ENTER();
+
+	if (NULL == (p_cfg = rwnx_monitor_get_cfg(rwnx_hw, vif_index))) {
+		WQ_DBG(DM_GENERIC, DL_ERR, "%s: vif %d is not a monitor!\n",
+			__func__, vif_index);
+		return -EINVAL;
+	}
 
 	/* Build the ME_CONFIG_MONITOR_REQ message */
 	req = rwnx_msg_zalloc(ME_CONFIG_MONITOR_REQ, TASK_ME,
@@ -3196,25 +3188,38 @@ int rwnx_send_config_monitor_req(struct rwnx_hw *rwnx_hw,
 	if (!req)
 		return -ENOMEM;
 
+
 	if (chandef) {
-		req->chan_set = true;
+		req->chan_set = 1;
 		cfg80211_to_rwnx_chan(chandef, &req->chan);
-		req->chan.flags |= CHAN_PHY_CALI;
-		rwnx_hw->monitor_param.tx_power = req->chan.tx_power;
-		rwnx_hw->monitor_param.ch_band = (1 << req->chan.type) * 20;
-		rwnx_hw->monitor_param.ch_index =
-			ieee80211_frequency_to_channel(req->chan.center1_freq);
 		if (rwnx_hw->phy.limit_bw)
 			limit_chan_bw(&req->chan.type, req->chan.prim20_freq,
 				      &req->chan.center1_freq);
 	} else {
-		req->chan_set = false;
+		req->chan_set = 0;
 	}
 
+	req->vif_idx = vif_index;
 	req->uf = rwnx_hw->mod_params.uf;
 
 	/* Send the ME_CONFIG_MONITOR_REQ message to FW */
-	return RWNX_SEND_MSG_EX(rwnx_hw, req, ME_CONFIG_MONITOR_CFM, cfm);
+	ret = RWNX_SEND_MSG_EX(rwnx_hw, req, ME_CONFIG_MONITOR_CFM, &rsp_cfm);
+
+	if (chandef && !ret) {
+		p_cfg->tx_power = rsp_cfm.chan.tx_power;
+		p_cfg->ch_bw = (1 << rsp_cfm.chan.type) * 20;
+		p_cfg->ch_idx = ieee80211_frequency_to_channel(rsp_cfm.chan.center1_freq);
+		p_cfg->band = rsp_cfm.chan.band;
+	}
+
+	if (cfm) {
+		*cfm = rsp_cfm;
+	}
+
+	WQ_DBG(DM_GENERIC, DL_WRN, "%s: vif_index=%d, band=%d, chn %d.\n",
+		__func__, vif_index, p_cfg->band, p_cfg->ch_idx);
+
+	return ret;
 }
 #ifdef CONFIG_HML
 #ifdef DEBUG_WQ_PRIV
@@ -3876,8 +3881,8 @@ int rwnx_send_cca_data_get(struct rwnx_hw *rwnx_hw, u8 vif_idx, struct mm_get_cc
 
 	ret = RWNX_SEND_MSG_EX(rwnx_hw, req, MM_GET_CCA_CAP_CFM, cfm);
 
-	WQ_DBG(DM_GENERIC, DL_WRN,"%s(%u): get cca valid %d, vif %u, token %u, frq %u mHz, busy %u US, period %u US.\n",
-		__func__, vif_idx, cfm->valid, cfm->vif, cfm->token, cfm->freq, cfm->busy_time, cfm->period);
+	WQ_DBG(DM_GENERIC, DL_WRN,"%s(%u): get cca valid %d, vif %u, token %u, frq %u mHz, busy %u US, period %u MS, noise %d, nowifi %d, valid %d.\n",
+		__func__, vif_idx, cfm->valid, cfm->vif, cfm->token, cfm->freq, cfm->busy_time, cfm->period, cfm->rssi_noise, cfm->rssi_nowifi, cfm->rssi_total);
 
 	return ret;
 }
@@ -3949,9 +3954,6 @@ int rwnx_txq_ring_init(struct rwnx_hw *rwnx_hw, u16 sta_cnt)
 		{ CONFIG_RING2_SZ, 0 },
 		{ CONFIG_RING3_SZ, 0 },
 	};
-
-    /* Prevent static analysis false positive warning */
-    (void)ring_confg;
 
 	rwnx_hw->txq_ring_sts = NULL;
 
@@ -4101,15 +4103,14 @@ int rwnx_send_ini_conf_req(struct rwnx_hw *rwnx_hw)
 	req->max_support_ba_bitmap = wq_conf.max_support_ba_bitmap;
 	req->underrun_adapt_tx_rate = wq_conf.underrun_adapt_tx_rate;
 	req->mmode = wq_conf.mmode;
-	req->ht_only_ofdm = wq_conf.ht_only_ofdm;
-	req->default_txrate_6m = wq_conf.default_txrate_6m;
-	req->update_agc_by_rssi = wq_conf.update_agc_by_rssi;
+	req->nss = wq_conf.nss;
+	req->disable_mcs_0_4 = wq_conf.disable_mcs_0_4;
+	req->force_enable_11n_sgi = wq_conf.force_enable_11n_sgi;
+	req->force_2g_max_amsdu_2 = wq_conf.force_2g_max_amsdu_2;
+	req->ip_sleep_en = !!(wq_conf.ps_mode & BIT(0));
+	req->wsys_sleep_en = !!(wq_conf.ps_mode & BIT(1));
 	req->noise_thr = wq_conf.noise_thr;
-	req->usb_max_bundle_in = wq_conf.usb_max_bundle_in > 8 ? 8 : wq_conf.usb_max_bundle_in;
-	req->extension[0] = wq_conf.dual_scan_enable;
 	req->retry_more = wq_conf.retry_more;
-	req->mcc_sta_bias_level = wq_conf.mcc_sta_bias_level;
-	req->skip_dtim = wq_conf.skip_dtim;
 
 	WQ_DBG(DM_GENERIC, DL_WRN,
 	       "rwnx_send_ini_conf_req:send MM_INI_CONF_REQ\n");
@@ -4172,630 +4173,3 @@ int rwnx_send_force_pcie_link_speed_req(struct rwnx_hw *rwnx_hw, u32 *cfm)
 	return RWNX_SEND_MSG_EX(rwnx_hw, req,
 				ME_EXTEND_FORCE_PCIE_LINK_SPEED_CFM, cfm);
 }
-
-#ifdef CONFIG_SDR
-int rwnx_sdr_sap_set_sdr_cfg(struct rwnx_hw *rwnx_hw, u8 vif_idx, u8 sdr_en)
-{
-	struct mm_std_wifi_sdr_param_t *req;
-
-	ENTER();
-	req = rwnx_msg_zalloc(MM_SDR_CTRL_CMD_REQ, TASK_MM,
-		sizeof(struct mm_std_wifi_sdr_param_t));
-	if (!req)
-		return -ENOMEM;
-
-	req->req_id = SDR_SAP_SET_SDR_CFG;
-	req->vif_idx = vif_idx;
-	req->sap_set_sdr_cfg.sdr_en = sdr_en;
-
-	return rwnx_send_msg(rwnx_hw, req, MM_SDR_CTRL_CMD_CFM);
-}
-
-int rwnx_sdr_sap_rst_sta_cache(struct rwnx_hw *rwnx_hw, u8 vif_idx)
-{
-	struct mm_std_wifi_sdr_param_t *req;
-
-	ENTER();
-	req = rwnx_msg_zalloc(MM_SDR_CTRL_CMD_REQ, TASK_MM,
-		sizeof(struct mm_std_wifi_sdr_param_t));
-	if (!req)
-		return -ENOMEM;
-
-	req->req_id = SDR_SAP_RST_STA_CACHE;
-	req->vif_idx = vif_idx;
-
-	return rwnx_send_msg(rwnx_hw, req, MM_SDR_CTRL_CMD_CFM);
-}
-
-int rwnx_sdr_sap_add_sta_cfg(struct rwnx_hw *rwnx_hw, u8 vif_idx, u8 *mac,
-	u8 pwr, u16 sap_rate, u16 sta_rate, u8 slot)
-{
-	struct mm_std_wifi_sdr_param_t *req;
-
-	if (!mac) {
-		return -EINVAL;
-	}
-
-	ENTER();
-	req = rwnx_msg_zalloc(MM_SDR_CTRL_CMD_REQ, TASK_MM,
-		sizeof(struct mm_std_wifi_sdr_param_t));
-	if (!req)
-		return -ENOMEM;
-
-	req->req_id = SDR_SAP_ADD_STA_CFG;
-	req->vif_idx = vif_idx;
-	memcpy(req->sap_add_sta_cfg.mac, mac, MAC_ADDR_LEN);
-	req->sap_add_sta_cfg.sta_pwr_dbm = pwr;
-	req->sap_add_sta_cfg.sta_slot_tu = slot;
-	req->sap_add_sta_cfg.sap_rate = sap_rate;
-	req->sap_add_sta_cfg.sta_rate = sta_rate;
-
-	return rwnx_send_msg(rwnx_hw, req, MM_SDR_CTRL_CMD_CFM);
-}
-
-int rwnx_sdr_sap_commit_sta_cfgs(struct rwnx_hw *rwnx_hw,
-    u8 vif_idx, u8 refresh_immediate)
-{
-	struct mm_std_wifi_sdr_param_t *req;
-
-	ENTER();
-	req = rwnx_msg_zalloc(MM_SDR_CTRL_CMD_REQ, TASK_MM,
-		sizeof(struct mm_std_wifi_sdr_param_t));
-	if (!req)
-		return -ENOMEM;
-
-	req->req_id = SDR_SAP_COMMIT_STA_CFG;
-	req->vif_idx = vif_idx;
-	req->sap_commit_cfg.refresh_immediate = refresh_immediate;
-
-	return rwnx_send_msg(rwnx_hw, req, MM_SDR_CTRL_CMD_CFM);
-}
-
-int rwnx_sdr_sap_get_sta_cfg(struct rwnx_hw *rwnx_hw, u8 vif_idx, u8 sta_idx,
-	struct sdr_sap_get_sta_cfg_t *p_sta_cfg)
-{
-	int ret;
-	struct mm_std_wifi_sdr_param_t *req;
-	struct mm_std_wifi_sdr_param_t cfm;
-
-	ENTER();
-	req = rwnx_msg_zalloc(MM_SDR_CTRL_CMD_REQ, TASK_MM,
-		sizeof(struct mm_std_wifi_sdr_param_t));
-	if (!req)
-		return -ENOMEM;
-
-	req->req_id = SDR_SAP_GET_STA_CFG;
-	req->vif_idx = vif_idx;
-	req->sap_get_sta_cfg.curr_sta_index = sta_idx;
-
-	ret = RWNX_SEND_MSG_EX(rwnx_hw, req, MM_SDR_CTRL_CMD_CFM, &cfm);
-
-	if (p_sta_cfg) {
-		memcpy(p_sta_cfg, &cfm.sap_get_sta_cfg, sizeof(cfm.sap_get_sta_cfg));
-	}
-
-	return ret;
-}
-
-int rwnx_sdr_sap_set_sap_cfg(struct rwnx_hw *rwnx_hw, u8 vif_idx, u32 ctrl_flg,
-	u8 pwr, u8 slot, u8 bcn_extend_num)
-{
-	struct mm_std_wifi_sdr_param_t *req;
-
-	ENTER();
-	req = rwnx_msg_zalloc(MM_SDR_CTRL_CMD_REQ, TASK_MM,
-		sizeof(struct mm_std_wifi_sdr_param_t));
-	if (!req)
-		return -ENOMEM;
-
-	req->req_id = SDR_SAP_SET_SAP_CFG;
-	req->vif_idx = vif_idx;
-	req->sap_set_sap_cfg.ctrl_flg = ctrl_flg;
-	req->sap_set_sap_cfg.pwr_dbm = pwr;
-	req->sap_set_sap_cfg.slot_tu = slot;
-	req->sap_set_sap_cfg.bcn_extend_num = bcn_extend_num;
-
-	return rwnx_send_msg(rwnx_hw, req, MM_SDR_CTRL_CMD_CFM);
-}
-
-int rwnx_sdr_sap_get_sap_cfg(struct rwnx_hw *rwnx_hw, u8 vif_idx,
-	struct sdr_sap_get_sap_cfg_t *p_sap_cfg)
-{
-	int ret;
-	struct mm_std_wifi_sdr_param_t *req;
-	struct mm_std_wifi_sdr_param_t cfm;
-
-	ENTER();
-	req = rwnx_msg_zalloc(MM_SDR_CTRL_CMD_REQ, TASK_MM,
-		sizeof(struct mm_std_wifi_sdr_param_t));
-	if (!req)
-		return -ENOMEM;
-
-	req->req_id = SDR_SAP_GET_SAP_CFG;
-	req->vif_idx = vif_idx;
-
-	ret = RWNX_SEND_MSG_EX(rwnx_hw, req, MM_SDR_CTRL_CMD_CFM, &cfm);
-
-	if (p_sap_cfg) {
-		memcpy(p_sap_cfg, &cfm.sap_get_sap_cfg, sizeof(cfm.sap_get_sap_cfg));
-	}
-
-	return ret;
-}
-
-int rwnx_sdr_sta_get_sap_cfg(struct rwnx_hw *rwnx_hw, u8 vif_idx,
-	struct sdr_sta_get_sap_cfg_t *p_sap_cfg)
-{
-	int ret;
-	struct mm_std_wifi_sdr_param_t *req;
-	struct mm_std_wifi_sdr_param_t cfm;
-
-	ENTER();
-	req = rwnx_msg_zalloc(MM_SDR_CTRL_CMD_REQ, TASK_MM,
-		sizeof(struct mm_std_wifi_sdr_param_t));
-	if (!req)
-		return -ENOMEM;
-
-	req->req_id = SDR_STA_GET_SAP_CFG;
-	req->vif_idx = vif_idx;
-
-	ret = RWNX_SEND_MSG_EX(rwnx_hw, req, MM_SDR_CTRL_CMD_CFM, &cfm);
-
-	if (p_sap_cfg) {
-		memcpy(p_sap_cfg, &cfm.sta_get_sta_cfg, sizeof(cfm.sta_get_sta_cfg));
-	}
-
-	return ret;
-}
-
-int rwnx_sdr_sta_get_sta_cfg(struct rwnx_hw *rwnx_hw, u8 vif_idx,
-	struct sdr_sta_get_sta_cfg_t *p_sta_cfg)
-{
-	int ret;
-	struct mm_std_wifi_sdr_param_t *req;
-	struct mm_std_wifi_sdr_param_t cfm;
-
-	ENTER();
-	req = rwnx_msg_zalloc(MM_SDR_CTRL_CMD_REQ, TASK_MM,
-		sizeof(struct mm_std_wifi_sdr_param_t));
-	if (!req)
-		return -ENOMEM;
-
-	req->req_id = SDR_STA_GET_STA_CFG;
-	req->vif_idx = vif_idx;
-
-	ret = RWNX_SEND_MSG_EX(rwnx_hw, req, MM_SDR_CTRL_CMD_CFM, &cfm);
-
-	if (p_sta_cfg) {
-		memcpy(p_sta_cfg, &cfm.sta_get_sta_cfg, sizeof(cfm.sta_get_sta_cfg));
-	}
-
-	return ret;
-}
-
-int rwnx_sdr_sap_get_sdr_cfg(struct rwnx_hw *rwnx_hw, u8 vif_idx,
-	struct sdr_sap_get_sdr_cfg_t *p_sdr_cfg)
-{
-	int ret;
-	struct mm_std_wifi_sdr_param_t *req;
-	struct mm_std_wifi_sdr_param_t cfm;
-
-	ENTER();
-	req = rwnx_msg_zalloc(MM_SDR_CTRL_CMD_REQ, TASK_MM,
-		sizeof(struct mm_std_wifi_sdr_param_t));
-	if (!req)
-		return -ENOMEM;
-
-	req->req_id = SDR_SAP_GET_SDR_CFG;
-	req->vif_idx = vif_idx;
-
-	ret = RWNX_SEND_MSG_EX(rwnx_hw, req, MM_SDR_CTRL_CMD_CFM, &cfm);
-
-	if (p_sdr_cfg) {
-		memcpy(p_sdr_cfg, &cfm.sap_get_sdr_cfg, sizeof(cfm.sap_get_sdr_cfg));
-	}
-
-	return ret;
-}
-
-int rwnx_sdr_sta_get_sdr_cfg(struct rwnx_hw *rwnx_hw, u8 vif_idx,
-	struct sdr_sta_get_sdr_cfg_t *p_sdr_cfg)
-{
-	int ret;
-	struct mm_std_wifi_sdr_param_t *req;
-	struct mm_std_wifi_sdr_param_t cfm;
-
-	ENTER();
-	req = rwnx_msg_zalloc(MM_SDR_CTRL_CMD_REQ, TASK_MM,
-		sizeof(struct mm_std_wifi_sdr_param_t));
-	if (!req)
-		return -ENOMEM;
-
-	req->req_id = SDR_STA_GET_SDR_CFG;
-	req->vif_idx = vif_idx;
-
-	ret = RWNX_SEND_MSG_EX(rwnx_hw, req, MM_SDR_CTRL_CMD_CFM, &cfm);
-
-	if (p_sdr_cfg) {
-		memcpy(p_sdr_cfg, &cfm.sta_get_sdr_cfg, sizeof(cfm.sta_get_sdr_cfg));
-	}
-
-	return ret;
-}
-
-int rwnx_std_sdr_set_cco_mode(struct rwnx_hw *rwnx_hw, u8 vif_idx,
-    u8 cco_slot_tu, u8 bcn_extend_num)
-{
-	struct mm_std_wifi_sdr_param_t *req;
-
-	ENTER();
-
-	if (!rwnx_hw || !cco_slot_tu) {
-		return -EINVAL;
-	}
-
-	req = rwnx_msg_zalloc(MM_SDR_CTRL_CMD_REQ, TASK_MM,
-		sizeof(struct mm_std_wifi_sdr_param_t));
-	if (!req)
-		return -ENOMEM;
-
-	req->req_id = STD_SDR_SET_CCO_MODE;
-	req->vif_idx = vif_idx;
-	req->std_set_cco_mode.cco_tx_slot_time_tu = cco_slot_tu;
-	req->std_set_cco_mode.cco_bcn_extend_num = bcn_extend_num;
-
-	return rwnx_send_msg(rwnx_hw, req, MM_SDR_CTRL_CMD_CFM);
-}
-
-int rwnx_std_sdr_set_sta_mode(struct rwnx_hw *rwnx_hw, u8 vif_idx, u8 *p_cco_mac)
-{
-	struct mm_std_wifi_sdr_param_t *req;
-
-	ENTER();
-
-	if (!rwnx_hw || !p_cco_mac) {
-		return -EINVAL;
-	}
-
-	req = rwnx_msg_zalloc(MM_SDR_CTRL_CMD_REQ, TASK_MM,
-		sizeof(struct mm_std_wifi_sdr_param_t));
-	if (!req)
-		return -ENOMEM;
-
-	req->req_id = STD_SDR_SET_STA_MODE;
-	req->vif_idx = vif_idx;
-	memcpy(req->std_set_sta_mode.cco_bssid, p_cco_mac, MAC_ADDR_LEN);
-
-	return rwnx_send_msg(rwnx_hw, req, MM_SDR_CTRL_CMD_CFM);
-}
-
-int rwnx_std_sdr_set_monitor_mode(struct rwnx_hw *rwnx_hw, u8 vif_idx)
-{
-	struct mm_std_wifi_sdr_param_t *req;
-
-	ENTER();
-
-	if (!rwnx_hw) {
-		return -EINVAL;
-	}
-
-	req = rwnx_msg_zalloc(MM_SDR_CTRL_CMD_REQ, TASK_MM,
-		sizeof(struct mm_std_wifi_sdr_param_t));
-	if (!req)
-		return -ENOMEM;
-
-	req->req_id = STD_SDR_SET_MONITOR_MODE;
-	req->vif_idx = vif_idx;
-
-	return rwnx_send_msg(rwnx_hw, req, MM_SDR_CTRL_CMD_CFM);
-}
-
-int rwnx_std_sdr_cco_rst_cfg_cache(struct rwnx_hw *rwnx_hw, u8 vif_idx)
-{
-	struct mm_std_wifi_sdr_param_t *req;
-
-	ENTER();
-
-	if (!rwnx_hw) {
-		return -EINVAL;
-	}
-
-	req = rwnx_msg_zalloc(MM_SDR_CTRL_CMD_REQ, TASK_MM,
-		sizeof(struct mm_std_wifi_sdr_param_t));
-	if (!req)
-		return -ENOMEM;
-
-	req->req_id = STD_SDR_CCO_RST_CFG_CACHE;
-	req->vif_idx = vif_idx;
-
-	return rwnx_send_msg(rwnx_hw, req, MM_SDR_CTRL_CMD_CFM);
-}
-
-int rwnx_std_sdr_cco_add_sta_cfg(struct rwnx_hw *rwnx_hw, u8 vif_idx,
-	u8 *mac, u8 pwr, u8 slot, u16 rate)
-{
-	struct mm_std_wifi_sdr_param_t *req;
-
-	ENTER();
-
-	if (!rwnx_hw || !mac) {
-		return -EINVAL;
-	}
-
-	req = rwnx_msg_zalloc(MM_SDR_CTRL_CMD_REQ, TASK_MM,
-		sizeof(struct mm_std_wifi_sdr_param_t));
-	if (!req)
-		return -ENOMEM;
-
-	req->req_id = STD_SDR_CCO_ADD_STA_CFG;
-	req->vif_idx = vif_idx;
-	memcpy(req->std_cco_add_sta.sta_mac, mac, MAC_ADDR_LEN);
-	req->std_cco_add_sta.sta_pwr = pwr;
-	req->std_cco_add_sta.sta_slot_tu = slot;
-	req->std_cco_add_sta.sta_rate = rate;
-
-	return rwnx_send_msg(rwnx_hw, req, MM_SDR_CTRL_CMD_CFM);
-}
-
-int rwnx_std_sdr_cco_commit_cfg(struct rwnx_hw *rwnx_hw, u8 vif_idx,
-	u8 immediately_refresh)
-{
-	struct mm_std_wifi_sdr_param_t *req;
-
-	ENTER();
-
-	if (!rwnx_hw) {
-		return -EINVAL;
-	}
-
-	req = rwnx_msg_zalloc(MM_SDR_CTRL_CMD_REQ, TASK_MM,
-		sizeof(struct mm_std_wifi_sdr_param_t));
-	if (!req)
-		return -ENOMEM;
-
-	req->req_id = STD_SDR_CCO_COMMIT_STA_CFG;
-	req->vif_idx = vif_idx;
-	req->std_cco_commit_cfg.refresh_immediate = immediately_refresh;
-
-	return rwnx_send_msg(rwnx_hw, req, MM_SDR_CTRL_CMD_CFM);
-}
-
-int rwnx_std_sdr_get_work_mode(struct rwnx_hw *rwnx_hw, u8 vif_idx,
-	struct std_sdr_get_work_mode_t *p_work_mode)
-{
-	int ret;
-	struct mm_std_wifi_sdr_param_t *req;
-	struct mm_std_wifi_sdr_param_t cfm;
-
-	ENTER();
-
-	if (!rwnx_hw || !p_work_mode) {
-		return -EINVAL;
-	}
-
-	req = rwnx_msg_zalloc(MM_SDR_CTRL_CMD_REQ, TASK_MM,
-		sizeof(struct mm_std_wifi_sdr_param_t));
-	if (!req)
-		return -ENOMEM;
-
-	req->req_id = STD_SDR_GET_WORK_MODE;
-	req->vif_idx = vif_idx;
-
-	ret = RWNX_SEND_MSG_EX(rwnx_hw, req, MM_SDR_CTRL_CMD_CFM, &cfm);
-
-	memcpy(p_work_mode, &cfm.std_get_work_mode, sizeof(*p_work_mode));
-
-	return ret;
-}
-
-int rwnx_std_sdr_cco_get_sta_cfg(struct rwnx_hw *rwnx_hw, u8 vif_idx,
-    uint8_t sta_idx, struct std_sdr_cco_get_sta_cfg_t *p_sta_cfg)
-{
-	int ret;
-	struct mm_std_wifi_sdr_param_t *req;
-	struct mm_std_wifi_sdr_param_t cfm;
-
-	ENTER();
-
-	if (!rwnx_hw || !p_sta_cfg) {
-		return -EINVAL;
-	}
-
-	req = rwnx_msg_zalloc(MM_SDR_CTRL_CMD_REQ, TASK_MM,
-		sizeof(struct mm_std_wifi_sdr_param_t));
-	if (!req)
-		return -ENOMEM;
-
-	req->req_id = STD_SDR_CCO_GET_STA_CFG;
-	req->vif_idx = vif_idx;
-	req->std_cco_get_sta_cfg.curr_sta_index = sta_idx;
-
-	ret = RWNX_SEND_MSG_EX(rwnx_hw, req, MM_SDR_CTRL_CMD_CFM, &cfm);
-
-	memcpy(p_sta_cfg, &cfm.std_get_work_mode, sizeof(*p_sta_cfg));
-
-	return ret;
-}
-
-int rwnx_std_sdr_sta_get_cfg(struct rwnx_hw *rwnx_hw, u8 vif_idx,
-	struct std_sdr_sta_get_cfg_t *p_sta_cfg)
-{
-	int ret;
-	struct mm_std_wifi_sdr_param_t *req;
-	struct mm_std_wifi_sdr_param_t cfm;
-
-	ENTER();
-
-	if (!rwnx_hw || !p_sta_cfg) {
-		return -EINVAL;
-	}
-
-	req = rwnx_msg_zalloc(MM_SDR_CTRL_CMD_REQ, TASK_MM,
-		sizeof(struct mm_std_wifi_sdr_param_t));
-	if (!req)
-		return -ENOMEM;
-
-	req->req_id = STD_SDR_STA_GET_CFG;
-	req->vif_idx = vif_idx;
-
-	ret = RWNX_SEND_MSG_EX(rwnx_hw, req, MM_SDR_CTRL_CMD_CFM, &cfm);
-
-	memcpy(p_sta_cfg, &cfm.std_sta_get_cfg, sizeof(*p_sta_cfg));
-
-	return ret;
-}
-
-int rwnx_std_sdr_cust_cmd(struct rwnx_hw *rwnx_hw, u8 vif_idx, 
-	u8 param_num, u8 *params)
-{
-	struct mm_std_wifi_sdr_param_t *req;
-	uint8_t i;
-
-	ENTER();
-
-	if (!rwnx_hw || !params || param_num > MM_CUST_CMD_PARAM_MAX) {
-		return -EINVAL;
-	}
-
-	req = rwnx_msg_zalloc(MM_SDR_CTRL_CMD_REQ, TASK_MM,
-		sizeof(struct mm_std_wifi_sdr_param_t));
-	if (!req)
-		return -ENOMEM;
-
-	req->req_id = SDR_SDK_CUST_CMD_ID;
-	req->vif_idx = vif_idx;
-	for (i = 0; i < param_num && i < MM_CUST_CMD_PARAM_MAX; i++) {
-		req->req_param[i] = params[i];
-	}
-
-	return rwnx_send_msg(rwnx_hw, req, MM_SDR_CTRL_CMD_CFM);
-}
-
-int rwnx_sdr_sap_set_sdrgi(struct rwnx_hw *rwnx_hw, u8 vif_idx, 
-	u8 guard_interval_ten_us)
-{
-    struct mm_std_wifi_sdr_param_t *req;
-    ENTER();
-    req = rwnx_msg_zalloc(MM_SDR_CTRL_CMD_REQ, TASK_MM,
-        sizeof(struct mm_std_wifi_sdr_param_t));
-    if (!req)
-        return -ENOMEM;
-    req->req_id = SDR_SAP_SET_SDRGI_CFG;
-    req->vif_idx = vif_idx;
-    req->sap_set_sdrgi.sap_sdrgi_ten_us = guard_interval_ten_us;
-    return rwnx_send_msg(rwnx_hw, req, MM_SDR_CTRL_CMD_CFM);
-}
-
-int rwnx_sdr_sap_update_sta_cfg(struct rwnx_hw *rwnx_hw, u8 vif_idx, u8 *mac,
-	u8 pwr, u16 sap_rate_cfg, u16 sta_rate_cfg)
-{
-	struct mm_std_wifi_sdr_param_t *req;
- 
-	if (!mac) {
-		WQ_DBG(DM_GENERIC, DL_ERR, "Invalid MAC address\n");
-		return -EINVAL;
-	}
- 
-	ENTER();
-	req = rwnx_msg_zalloc(MM_SDR_CTRL_CMD_REQ, TASK_MM,
-		sizeof(struct mm_std_wifi_sdr_param_t));
-	if (!req) {
-		WQ_DBG(DM_GENERIC, DL_ERR, "Failed to allocate message\n");
-		return -ENOMEM;
-	}
- 
-	req->req_id = SDR_SAP_UPDATE_STA_CFG;
-	req->vif_idx = vif_idx;
-	memcpy(req->sap_update_sta_cfg.update_mac, mac, MAC_ADDR_LEN);
-	req->sap_update_sta_cfg.update_sta_pwr_dbm = pwr; 
-	req->sap_update_sta_cfg.update_sap_rate = sap_rate_cfg;
-	req->sap_update_sta_cfg.update_sta_rate = sta_rate_cfg;
- 
-	return rwnx_send_msg(rwnx_hw, req, MM_SDR_CTRL_CMD_CFM);
-}
-
-int rwnx_sdr_sap_set_exslot_sta_cfg(struct rwnx_hw *rwnx_hw, u8 vif_idx,
-	u8 ext_slot_tu, u8 ext_slot_num)
-{
-	struct mm_std_wifi_sdr_param_t *req;
-	ENTER();
-	req = rwnx_msg_zalloc(MM_SDR_CTRL_CMD_REQ, TASK_MM,
-		sizeof(struct mm_std_wifi_sdr_param_t));
-	if (!req) {
-		WQ_DBG(DM_GENERIC, DL_ERR, "Failed to allocate message\n");
-		return -ENOMEM;
-	}
- 
-	req->req_id = SDR_SAP_SET_EX_SLOT_STA_CFG;
-	req->vif_idx = vif_idx;
-	req->sap_set_exslot_sta_cfg.ext_slot_tu = ext_slot_tu;
-	req->sap_set_exslot_sta_cfg.ext_slot_num = ext_slot_num;
- 
-	return rwnx_send_msg(rwnx_hw, req, MM_SDR_CTRL_CMD_CFM);
-}
-
-int rwnx_sdr_sap_set_ack_timeout_cfg(struct rwnx_hw *rwnx_hw, u8 vif_idx, u8 ack_timeout)
-{
-	struct mm_std_wifi_sdr_param_t *req;
-	ENTER();
-	req = rwnx_msg_zalloc(MM_SDR_CTRL_CMD_REQ, TASK_MM,
-		sizeof(struct mm_std_wifi_sdr_param_t));
-	if (!req) {
-		WQ_DBG(DM_GENERIC, DL_ERR, "Failed to allocate message\n");
-		return -ENOMEM;
-	}
- 
-	req->req_id = SDR_SAP_SET_ACK_TIMEOUT_CFG;
-	req->vif_idx = vif_idx;
-	req->sap_set_ack_timeout_cfg.ack_timeout = ack_timeout;
- 
-	return rwnx_send_msg(rwnx_hw, req, MM_SDR_CTRL_CMD_CFM);
-}
-
-int rwnx_sdr_sap_set_sw_retry_cfg(struct rwnx_hw *rwnx_hw, u8 vif_idx, u8 sw_retry)
-{
-	struct mm_std_wifi_sdr_param_t *req;
-	ENTER();
-	req = rwnx_msg_zalloc(MM_SDR_CTRL_CMD_REQ, TASK_MM,
-		sizeof(struct mm_std_wifi_sdr_param_t));
-	if (!req) {
-		WQ_DBG(DM_GENERIC, DL_ERR, "Failed to allocate message\n");
-		return -ENOMEM;
-	}
- 
-	req->req_id = SDR_SAP_SET_SW_RETRY_CFG;
-	req->vif_idx = vif_idx;
-	req->sap_set_sw_retry_cfg.sw_retry = sw_retry;
- 
-	return rwnx_send_msg(rwnx_hw, req, MM_SDR_CTRL_CMD_CFM);
-}
-
-#endif /* end of #ifdef CONFIG_SDR */
-
-#ifdef CONFIG_TRX_STAT
-int rwnx_get_trx_statistics(struct rwnx_hw *rwnx_hw, u8 req_tx_stat,
-	u8 sta_idx, u8 clear_stat, struct mm_trx_stat_cfm_param_t *p_trx_stat)
-{
-	int ret;
-	struct mm_trx_stat_req_param_t *req;
-	struct mm_trx_stat_cfm_param_t cfm;
-
-	ENTER();
-	req = rwnx_msg_zalloc(MM_GET_TRX_STAT_REQ, TASK_MM,
-		sizeof(struct mm_trx_stat_req_param_t));
-	if (!req)
-		return -ENOMEM;
-
-	req->sta_idx = sta_idx;
-	req->clear_stat = clear_stat;
-	req->req_tx_stat = req_tx_stat;
-
-	ret = RWNX_SEND_MSG_EX(rwnx_hw, req, MM_GET_TRX_STAT_CFM, &cfm);
-
-	if (p_trx_stat) {
-		memcpy(p_trx_stat, &cfm, sizeof(cfm));
-	}
-
-	return ret;
-}
-#endif /* end of #ifdef CONFIG_TRX_STAT */

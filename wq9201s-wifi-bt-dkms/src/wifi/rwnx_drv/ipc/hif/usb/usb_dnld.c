@@ -17,7 +17,7 @@
  * ARE EXPRESSLY DISCLAIMED.  The License provides additional details about
  * this warranty disclaimer.
  *
- */
+ */ 
 #include "usb.h"
 #include "bmi_core.h"
 #include "bmi_cmd.h"
@@ -44,15 +44,6 @@ static void wq_usb_bmi_snd_msg_cb(struct urb *urb)
 	wake_up(&wq_usb->bmi.wait_q);
 }
 
-static u8 wq_usb_bmi_get_wifi_ep(struct wq_usb *wq_usb)
-{
-	if (wq_usb->usbdev->speed == USB_SPEED_SUPER) {
-		return WQ_USB3_EP_WIFI_BMI;
-	} else {
-		return WQ_USB_EP_WIFI_BMI;
-	}
-}
-
 static int wq_usb_bmi_snd_msg(struct wq_usb *wq_usb, u8 ep_id, u8 *data,
 			      u32 size, int timeout)
 {
@@ -60,7 +51,6 @@ static int wq_usb_bmi_snd_msg(struct wq_usb *wq_usb, u8 ep_id, u8 *data,
 	int timeout_left;
 	struct urb *urb;
 	unsigned long tout = msecs_to_jiffies(timeout);
-	u8 wifi_bmi_ep = wq_usb_bmi_get_wifi_ep(wq_usb);
 
 	wq_usb->bmi.woken = false;
 
@@ -76,14 +66,9 @@ static int wq_usb_bmi_snd_msg(struct wq_usb *wq_usb, u8 ep_id, u8 *data,
 				  usb_sndbulkpipe(wq_usb->usbdev, ep_id), data,
 				  size, wq_usb_bmi_snd_msg_cb, wq_usb);
 	} else {
-		if (wifi_bmi_ep == WQ_USB3_EP_WIFI_BMI)
-			usb_fill_bulk_urb(urb, wq_usb->usbdev,
-					  usb_sndbulkpipe(wq_usb->usbdev, wifi_bmi_ep), data,
-					  size, wq_usb_bmi_snd_msg_cb, wq_usb);
-		else
-			usb_fill_int_urb(urb, wq_usb->usbdev,
-					  usb_sndintpipe(wq_usb->usbdev, wifi_bmi_ep), data,
-					  size, wq_usb_bmi_snd_msg_cb, wq_usb, 2);
+		usb_fill_int_urb(urb, wq_usb->usbdev,
+				  usb_sndintpipe(wq_usb->usbdev, WQ_USB_EP_WIFI_BMI), data,
+				  size, wq_usb_bmi_snd_msg_cb, wq_usb, 1);
 	}
 
 	/* auto append zlp when size is multiple of bulk mps */
@@ -119,8 +104,9 @@ int wq_usb_bmi_exchange(struct wq_core *core, void *req, u32 req_len, void *rsp,
 	u8 *rcv_buf = NULL;
 	int ret = 0;
 	int len_xfer = 0;
-	int actual_length = 0;
-	u8 wifi_bmi_ep = wq_usb_bmi_get_wifi_ep(wq_usb);
+	int actual_length;
+	u8 cmd = WQ_VREQ_ID_BMI_CMD;
+	u8 speed = wq_usb->usbdev->speed;
 
 	if (!req || !rsp) {
 		return -EINVAL;
@@ -150,22 +136,38 @@ int wq_usb_bmi_exchange(struct wq_core *core, void *req, u32 req_len, void *rsp,
 				 4); /* 4 byte alignment for USB DMA engine */
 	memcpy(snd_buf, req, len_xfer);
 
-	ret = wq_usb_bmi_snd_msg(wq_usb, wifi_bmi_ep, snd_buf, len_xfer,
-				 timeout);
-	if (ret != 0) {
+	if (speed == USB_SPEED_SUPER) {
+		ret = usb_control_msg(wq_usb->usbdev,
+					usb_sndctrlpipe(wq_usb->usbdev, 0), cmd,
+					USB_DIR_OUT | USB_TYPE_VENDOR | USB_RECIP_DEVICE, 0,
+					0, snd_buf, len_xfer, timeout);
+		if (ret < len_xfer) {
+			WQ_DBG(DM_TRBUS, DL_ERR, "%s send msg error! ret: %d \n",
+				__func__, ret);
+			goto done;
+		}
+	} else {
+		ret = wq_usb_bmi_snd_msg(wq_usb, WQ_USB_EP_WIFI_BMI, snd_buf, len_xfer,
+					 timeout);
+		if (ret != 0) {
 		WQ_DBG(DM_TRBUS, DL_ERR, "%s send msg error! ret: %d \n",
 		       __func__, ret);
-		goto done;
+			goto done;
+		}
 	}
 
-	if (wifi_bmi_ep == WQ_USB3_EP_WIFI_BMI)
-		ret = usb_bulk_msg(wq_usb->usbdev,
-				usb_rcvbulkpipe(wq_usb->usbdev, wifi_bmi_ep),
-				rcv_buf, rsp_len, &actual_length, timeout);
-	else
+	if (speed == USB_SPEED_SUPER) {
+		ret = usb_control_msg(wq_usb->usbdev,
+					usb_rcvctrlpipe(wq_usb->usbdev, 0), cmd,
+					USB_DIR_IN | USB_TYPE_VENDOR | USB_RECIP_DEVICE, 0,
+					0, rcv_buf, rsp_len, timeout);
+		if (ret > 0)
+			actual_length = ret;
+	} else {
 		ret = usb_interrupt_msg(wq_usb->usbdev,
-				usb_rcvintpipe(wq_usb->usbdev, wifi_bmi_ep),
+				usb_rcvintpipe(wq_usb->usbdev, WQ_USB_EP_WIFI_BMI),
 				rcv_buf, rsp_len, &actual_length, timeout);
+	}
 
 	if (ret < 0) {
 		WQ_DBG(DM_TRBUS, DL_ERR,

@@ -6,9 +6,6 @@
 #include <linux/mmc/host.h>
 #include <linux/mmc/card.h>
 #include <linux/mmc/sdio_func.h>
-#include <linux/fs.h>
-#include <linux/uaccess.h>
-#include <linux/version.h>
 
 #include "sdio.h"
 
@@ -214,14 +211,15 @@ static int wq_sdio_adma_info_read(struct wq_func *wq_func, u8 *buf)
 
 	if (wq_func == &wq_sdio->wlan) {
 		atomic_inc(&wq_sdio->wlan_stats.rx_adma_total_cnt);
-		atomic_inc(&wq_sdio->wlan_stats.rx_adma_total_cnt_sec);
 	} else if (wq_func == &wq_sdio->dtop) {
 		atomic_inc(&wq_sdio->dtop_stats.rx_adma_total_cnt);
 	}
 
 	PROFILING_SET(SW_PROF_SDIO_MAIN_RX_INFO);
 
-	time_start_us = (u64)ktime_to_us(ktime_get());
+	if (wq_sdio->wlan_stats.time_dump_enable) {
+		time_start_us = (u64)ktime_to_us(ktime_get());
+	}
 
 	sdio_claim_host(func);
 	if (wq_sdio->fw_cfg_mode & SDIO_FW_CFG_ADMA_FUNX_MODE) {
@@ -235,10 +233,12 @@ static int wq_sdio_adma_info_read(struct wq_func *wq_func, u8 *buf)
 	}
 	sdio_release_host(func);
 
-	time_end_us = (u64)ktime_to_us(ktime_get());
+	if (wq_sdio->wlan_stats.time_dump_enable) {
+		time_end_us = (u64)ktime_to_us(ktime_get());
 
-	if (wq_func == &wq_sdio->wlan) {
-		atomic_add((u32)(time_end_us - time_start_us), &wq_sdio->wlan_stats.main_rx_adma_time);
+		if (wq_func == &wq_sdio->wlan) {
+			atomic_add((u32)(time_end_us - time_start_us), &wq_sdio->wlan_stats.main_rx_adma_time);
+		}
 	}
 
 	PROFILING_CLR(SW_PROF_SDIO_MAIN_RX_INFO);
@@ -274,9 +274,7 @@ static int wq_sdio_adma_read(struct wq_func *wq_func, void *dst, int len,
 
 	if (wq_func == &wq_sdio->wlan) {
 		atomic_inc(&wq_sdio->wlan_stats.rx_total_cnt);
-		atomic_inc(&wq_sdio->wlan_stats.rx_total_cnt_sec);
 		atomic_add(len, &wq_sdio->wlan_stats.rx_pkt_total_bytes);
-		atomic_add(len, &wq_sdio->wlan_stats.rx_pkt_total_bytes_sec);
 
 		if (sdio_ut_mode) {
 			wq_sdio->ut_stat.rx_pkt_total_bytes += len;
@@ -287,16 +285,20 @@ static int wq_sdio_adma_read(struct wq_func *wq_func, void *dst, int len,
 
 	PROFILING_SET(SW_PROF_SDIO_MAIN_RX);
 
-	time_start_us = (u64)ktime_to_us(ktime_get());
+	if (wq_sdio->wlan_stats.time_dump_enable) {
+		time_start_us = (u64)ktime_to_us(ktime_get());
+	}
 
 	sdio_claim_host(func);
 	status = sdio_readsb(func, dst, len, align_len);
 	sdio_release_host(func);
 
-	time_end_us = (u64)ktime_to_us(ktime_get());
+	if (wq_sdio->wlan_stats.time_dump_enable) {
+		time_end_us = (u64)ktime_to_us(ktime_get());
 
-	if (wq_func == &wq_sdio->wlan) {
-		atomic_add((u32)(time_end_us - time_start_us), &wq_sdio->wlan_stats.main_rx_time);
+		if (wq_func == &wq_sdio->wlan) {
+			atomic_add((u32)(time_end_us - time_start_us), &wq_sdio->wlan_stats.main_rx_time);
+		}
 	}
 
 	PROFILING_CLR(SW_PROF_SDIO_MAIN_RX);
@@ -324,6 +326,7 @@ static int wq_sdio_adma_read(struct wq_func *wq_func, void *dst, int len,
 	return status;
 }
 
+extern bool wsys_shutdown_debug;
 static int wq_sdio_adma_write(struct wq_func *wq_func, int len, void *src,
 			      u32 align_len)
 {
@@ -336,19 +339,35 @@ static int wq_sdio_adma_write(struct wq_func *wq_func, int len, void *src,
 	wq_sdio_config_k1_autoclock(false);
 #endif
 
+	if (wq_func == &wq_sdio->wlan) {
+		atomic_inc(&wq_sdio->wlan_stats.tx_buf_avail_wr_cnt);
+		atomic_inc(&wq_sdio->wlan_stats.tx_total_cnt);
+		atomic_add(len, &wq_sdio->wlan_stats.tx_pkt_total_bytes);
+
+		if (sdio_ut_mode) {
+			wq_sdio->ut_stat.tx_pkt_total_bytes += len;
+		}
+	} else if (wq_func == &wq_sdio->dtop) {
+		atomic_inc(&wq_sdio->dtop_stats.tx_total_cnt);
+	}
 
 	PROFILING_SET(SW_PROF_SDIO_MAIN_TX);
 
-	time_start_us = (u64)ktime_to_us(ktime_get());
+	if (wq_sdio->wlan_stats.time_dump_enable) {
+		time_start_us = (u64)ktime_to_us(ktime_get());
+	}
+	WARN_ON(wsys_shutdown_debug);
 
 	sdio_claim_host(func);
 	status = sdio_writesb(func, len, src, align_len);
 	sdio_release_host(func);
 
-	time_end_us = (u64)ktime_to_us(ktime_get());
+	if (wq_sdio->wlan_stats.time_dump_enable) {
+		time_end_us = (u64)ktime_to_us(ktime_get());
 
-	if (wq_func == &wq_sdio->wlan) {
-		atomic_add((u32)(time_end_us - time_start_us), &wq_sdio->wlan_stats.main_tx_time);
+		if (wq_func == &wq_sdio->wlan) {
+			atomic_add((u32)(time_end_us - time_start_us), &wq_sdio->wlan_stats.main_tx_time);
+		}
 	}
 
 	PROFILING_CLR(SW_PROF_SDIO_MAIN_TX);
@@ -589,11 +608,7 @@ static int wq_sdio_adma_deaggr(struct wq_sdio *wq_sdio, struct sk_buff *skb,
 			skb2 = wq_sdio_skb_extract(skb, pkt_len);
 			if (skb2) {
 				if (hdr->msg_hdr.msg_type == htons(MSG_TYPE_LOG)) {
-				#ifndef CONFIG_WQ_GKI
 					wq_fw_log_push(&wq_sdio->core, skb2, skb2->len);
-				#else
-					dev_kfree_skb_any(skb2);
-				#endif
 				} else if (hdr->msg_hdr.msg_type == htons(MSG_TYPE_UT_TP)) {
 					wq_sdio_ut_rx_msg(wq_sdio, skb2);
 				}
@@ -666,7 +681,6 @@ static int wq_sdio_adma_deaggr(struct wq_sdio *wq_sdio, struct sk_buff *skb,
 			if (skb2) {
 				aggr_len += pkt_len;
 				atomic_inc(&wq_sdio->wlan_stats.rx_pkt_total_num);
-				atomic_inc(&wq_sdio->wlan_stats.rx_pkt_total_num_sec);
 
 				switch (ipc_type) {
 				case WQ_IPC_TPE_EVT:
@@ -674,7 +688,11 @@ static int wq_sdio_adma_deaggr(struct wq_sdio *wq_sdio, struct sk_buff *skb,
 					       skb2);
 					break;
 				case WQ_IPC_TPE_PKT:
+#ifdef SDIO_RX_AGGR_MODE
 					__skb_queue_tail(skbq, skb2);
+#else
+					skb_queue_tail(skbq, skb2);
+#endif
 					break;
 				default:
 					WQ_DBG(DM_TRBUS, DL_ERR,
@@ -722,25 +740,33 @@ void wq_sdio_adma_rx_process_one(struct wq_func *wq_func)
 
 	req = wq_skbreq_dequeue(&wq_func->q.aggrin);
 	if (req) {
-		time_start_us = (u64)ktime_to_us(ktime_get());
+		if (wq_sdio->wlan_stats.time_dump_enable) {
+			time_start_us = (u64)ktime_to_us(ktime_get());
+		}
 
 		wq_sdio_adma_deaggr(wq_sdio, req->skb, &sk_list);
 
-		time_end_us = (u64)ktime_to_us(ktime_get());
-
-		if (wq_func == &wq_sdio->wlan) {
-			atomic_add((u32)(time_end_us - time_start_us), &wq_sdio->wlan_stats.rx_deaggr_time);
-		}
-
-		if (!skb_queue_empty(&sk_list)) {
-			time_start_us = (u64)ktime_to_us(ktime_get());
-
-			htc_rxq(&wq_sdio->core, &sk_list);
-
+		if (wq_sdio->wlan_stats.time_dump_enable) {
 			time_end_us = (u64)ktime_to_us(ktime_get());
 
 			if (wq_func == &wq_sdio->wlan) {
-				atomic_add((u32)(time_end_us - time_start_us), &wq_sdio->wlan_stats.rx_htc_time);
+				atomic_add((u32)(time_end_us - time_start_us), &wq_sdio->wlan_stats.rx_deaggr_time);
+			}
+		}
+
+		if (!skb_queue_empty(&sk_list)) {
+			if (wq_sdio->wlan_stats.time_dump_enable) {
+				time_start_us = (u64)ktime_to_us(ktime_get());
+			}
+
+			htc_rxq(&wq_sdio->core, &sk_list);
+
+			if (wq_sdio->wlan_stats.time_dump_enable) {
+				time_end_us = (u64)ktime_to_us(ktime_get());
+
+				if (wq_func == &wq_sdio->wlan) {
+					atomic_add((u32)(time_end_us - time_start_us), &wq_sdio->wlan_stats.rx_htc_time);
+				}
 			}
 		}
 
@@ -903,10 +929,12 @@ exit:
 #else
 static int wq_sdio_adma_rx(struct wq_func *wq_func)
 {
+	struct wq_sdio *wq_sdio = wq_func->wq_sdio;
 	int adma_cnt = 0;
 	u32 rx_len = wq_func->adma.info.rx_len;
 	int ret = 0;
 	struct sk_buff *skb = wq_func->adma.aggr.rx;
+	u64 time_start_us = 0, time_end_us = 0;
 
 	/**
 	 * fix: SDIO_ADMA_INFO_LEN not aligned to block size
@@ -941,7 +969,20 @@ static int wq_sdio_adma_rx(struct wq_func *wq_func)
 			(void*) (skb->data + ALIGN(rx_len, sizeof(u32))));
 
 	skb_put(skb, rx_len); /* trim ADMA info at the end */
-	wq_sdio_adma_rx_process_one(wq_func, skb);
+
+	time_start_us = (u64)ktime_to_us(ktime_get());
+
+	wq_sdio_adma_deaggr(wq_sdio, skb, &wq_func->q.rx_deaggr_skbq);
+
+	time_end_us = (u64)ktime_to_us(ktime_get());
+
+	if (wq_func == &wq_sdio->wlan) {
+		atomic_add((u32)(time_end_us - time_start_us), &wq_sdio->wlan_stats.rx_deaggr_time);
+	}
+
+	if (!skb_queue_empty(&wq_func->q.rx_deaggr_skbq)) {
+		wq_func_rx_trigger(wq_func);
+	}
 
 	WQ_DBG(DM_TRBUS, DL_INF, "%s: adma_cnt %d\n", __func__, adma_cnt);
 
@@ -950,43 +991,7 @@ exit:
 }
 #endif
 
-static inline int wq_func_is_pktout_empty(struct wq_func *wq_func)
-{
-#ifdef CONFIG_TX_BUS_QOS
-	unsigned long flags;
-	int empty;
-
-	spin_lock_irqsave(&(wq_func->q.pktout.lock), flags);
-
-	if (__wq_list_is_empty(&wq_func->q.pktout) && __wq_list_is_empty(&wq_func->q.pktout_vo)) {
-		empty = true;
-	} else {
-		empty = false;
-	}
-
-	spin_unlock_irqrestore(&wq_func->q.pktout.lock, flags);
-
-	return empty;
-#else
-	if (wq_list_is_empty(&wq_func->q.pktout)) {
-		return true;
-	} else {
-		return false;
-	}
-#endif
-}
-
 #ifdef SDIO_TX_AGGR_MODE
-static inline int wq_func_is_tx_empty(struct wq_func *wq_func)
-{
-	if (wq_list_is_empty(&wq_func->q.aggrout)
-			 && wq_list_is_empty(&wq_func->q.msgout) && wq_func_is_pktout_empty(wq_func)) {
-		return true;
-	} else {
-		return false;
-	}
-}
-
 static int __wq_sdio_adma_aggr(struct sk_buff *aggr, struct wq_list_head *q,
 			       struct wq_list_head *done, int max_pkts)
 {
@@ -1126,14 +1131,23 @@ static int __wq_sdio_adma_pkt_aggr(struct wq_skbreq *req_aggr, struct wq_list_he
 			.virt_qid = cpu_to_le32(req->virt_qid),
 		};
 		u32 len = sizeof(hdr) + skb->len;
+		struct wq_hif_hdr *hif_hdr_ptr = (struct wq_hif_hdr *)(skb->data);
+		u32 hif_len = (hif_hdr_ptr->dw_len << 2);
 
 		WQ_DBG(DM_TRBUS, DL_VRB, "%s: type %d, len %d\n", __func__,
 		       req->virt_qid, skb->len);
 
 		if (skb_tailroom(aggr) < len) {
 			WQ_DBG(DM_TRBUS, DL_WRN,
-			       "%s: error (tail room %d < %d)!\n", __func__,
+			       "%s: un-pop it (tail room %d < %d)!\n", __func__,
 			       skb_tailroom(aggr), len);
+			BUG_ON(1);
+		}
+
+		if (skb->len < hif_len) {
+			WQ_DBG(DM_TRBUS, DL_WRN,
+			       "%s: skb len is err (skb len %d < hif_len %d, dw_len %d, hdr len %d)!\n", __func__,
+			       skb->len, hif_len, hif_hdr_ptr->dw_len, hdr.len);
 			BUG_ON(1);
 		}
 
@@ -1202,21 +1216,17 @@ int wq_sdio_adma_tx_pkt_aggr_one(struct wq_func *wq_func, int max_pkts)
 	struct wq_list_head pktq;
 	struct wq_list_head pktq_done;
 	int pkts = 0, aggr_max_pkts;
-#ifdef CONFIG_TX_BUS_QOS
-	int vo_aggr_pkts;
-#endif
 	unsigned long flags;
 	u64 time_start_us = 0, time_end_us = 0;
 
-	time_start_us = (u64)ktime_to_us(ktime_get());
+	if (wq_sdio->wlan_stats.time_dump_enable) {
+		time_start_us = (u64)ktime_to_us(ktime_get());
+	}
 
 	INIT_WQ_LIST_HEAD(&pktq);
 	INIT_WQ_LIST_HEAD(&pktq_done);
 
-	if (atomic_cmpxchg(&wq_func->adma.tx_aggr_claimed, 0, 1) != 0) {
-		goto exit;
-	}
-
+	/* aggr out queue */
 	spin_lock_irqsave(&(wq_func->q.aggrout.lock), flags);
 
 	req_aggr = __wq_skbreq_peek_last(&wq_func->q.aggrout);
@@ -1225,9 +1235,9 @@ int wq_sdio_adma_tx_pkt_aggr_one(struct wq_func *wq_func, int max_pkts)
 		if (!req_aggr) {
 			spin_unlock_irqrestore(&(wq_func->q.aggrout.lock), flags);
 
-			printk_ratelimited(KERN_INFO "%s: req_aggr is null, max_pkts %d/%d, func aggrout num %d, func pktout_vo num %d, func pktout num %d\n", __func__,
-				max_pkts, SDIO_ADMA_TX_MAX_AGGR_SIZE, wq_func->q.aggrout.num, wq_func->q.pktout_vo.num, wq_func->q.pktout.num);
-			goto exit_claimed;
+			printk_ratelimited(KERN_INFO "%s: req_aggr is null, max_pkts %d/%d, func aggrout num %d, func pktout num %d\n", __func__,
+				max_pkts, SDIO_ADMA_TX_MAX_AGGR_SIZE, wq_func->q.aggrout.num, wq_func->q.pktout.num);
+			goto exit;
 		}
 
 		req_aggr->aggr_cnt = 0;
@@ -1252,26 +1262,6 @@ int wq_sdio_adma_tx_pkt_aggr_one(struct wq_func *wq_func, int max_pkts)
 		aggr_max_pkts = max_pkts;
 	}
 
-#ifdef CONFIG_TX_BUS_QOS
-	vo_aggr_pkts = (aggr_max_pkts * wq_sdio->pktout_vo_qos_weight / 100);
-	if (vo_aggr_pkts == 0) {
-		vo_aggr_pkts = aggr_max_pkts;
-	}
-
-	spin_lock_irqsave(&(wq_func->q.pktout.lock), flags);
-
-	/* pkt out vo queue */
-	for (pkts = 0; pkts < vo_aggr_pkts && (req = __wq_skbreq_dequeue(&wq_func->q.pktout_vo)); ++pkts) {
-		__wq_skbreq_enqueue(&pktq, req);
-	}
-
-	/* pkt out queue */
-	for (; pkts < aggr_max_pkts && (req = __wq_skbreq_dequeue(&wq_func->q.pktout)); ++pkts) {
-		__wq_skbreq_enqueue(&pktq, req);
-	}
-
-	spin_unlock_irqrestore(&wq_func->q.pktout.lock, flags);
-#else
 	/* pkt out queue */
 	spin_lock_irqsave(&(wq_func->q.pktout.lock), flags);
 
@@ -1280,44 +1270,36 @@ int wq_sdio_adma_tx_pkt_aggr_one(struct wq_func *wq_func, int max_pkts)
 	}
 
 	spin_unlock_irqrestore(&wq_func->q.pktout.lock, flags);
-#endif
-
-	if (pkts == 0) {
-		printk_ratelimited(KERN_INFO "%s: max_pkts %d, aggr_cnt %d, aggr_max_pkts %d, pktout num %d, pktq num %d\n", __func__,
-			max_pkts, req_aggr->aggr_cnt, aggr_max_pkts, wq_func->q.pktout.num, pktq.num);
-		goto exit_claimed;
-	}
 
 	pkts = wq_sdio_adma_pkt_aggr(wq_func, req_aggr, &pktq, &pktq_done);
 	if (!pkts) {
-		WQ_DBG(DM_TRBUS, DL_ERR, "%s: max_pkts %d, aggr_cnt %d, aggr_max_pkts %d, pktout num %d, pktq num %d\n", __func__,
-			max_pkts, req_aggr->aggr_cnt, aggr_max_pkts, wq_func->q.pktout.num, pktq.num);
-		goto exit_claimed;
+		goto exit;
 	}
 	BUG_ON(req_aggr->aggr_cnt == 0);
 
 	wq_skbreq_enqueue(&wq_func->q.aggrout, req_aggr);
 
-exit_claimed:
-	atomic_set(&wq_func->adma.tx_aggr_claimed, 0);
-
 exit:
-	time_end_us = (u64)ktime_to_us(ktime_get());
+	if (wq_sdio->wlan_stats.time_dump_enable) {
+		time_end_us = (u64)ktime_to_us(ktime_get());
 
-	if (wq_func == &wq_sdio->wlan) {
-		atomic_add((u32)(time_end_us - time_start_us), &wq_sdio->wlan_stats.tx_workq_aggr_time);
+		if (wq_func == &wq_sdio->wlan) {
+			atomic_add((u32)(time_end_us - time_start_us), &wq_sdio->wlan_stats.tx_workq_aggr_time);
+		}
+
+		time_start_us = (u64)ktime_to_us(ktime_get());
 	}
-
-	time_start_us = (u64)ktime_to_us(ktime_get());
 
 	if (pkts) {
 		wq_sdio_adma_tx_pkt_done(wq_sdio, wq_func, &pktq_done, 0);
 	}
 
-	time_end_us = (u64)ktime_to_us(ktime_get());
+	if (wq_sdio->wlan_stats.time_dump_enable) {
+		time_end_us = (u64)ktime_to_us(ktime_get());
 
-	if (wq_func == &wq_sdio->wlan) {
-		atomic_add((u32)(time_end_us - time_start_us), &wq_sdio->wlan_stats.tx_workq_tx_done_time);
+		if (wq_func == &wq_sdio->wlan) {
+			atomic_add((u32)(time_end_us - time_start_us), &wq_sdio->wlan_stats.tx_workq_tx_done_time);
+		}
 	}
 
 	return pkts;
@@ -1330,11 +1312,11 @@ int wq_sdio_adma_tx_pkt_aggr(struct wq_func *wq_func, int max_pkts)
 	PROFILING_SET(SW_PROF_SDIO_TX_AGGR);
 
 	if (max_pkts) {
-		if (!wq_func_is_pktout_empty(wq_func)) {
+		if (!wq_list_is_empty(&wq_func->q.pktout)) {
 			pkts += wq_sdio_adma_tx_pkt_aggr_one(wq_func, max_pkts);
 		}
 
-		if (!wq_func_is_pktout_empty(wq_func)) {
+		if (!wq_list_is_empty(&wq_func->q.pktout)) {
 			pkts += wq_sdio_adma_tx_pkt_aggr_one(wq_func, max_pkts);
 		}
 	} else {
@@ -1356,10 +1338,6 @@ static int wq_sdio_adma_tx_msg(struct wq_func *wq_func)
 	u32 align_len;
 	int ret = 0;
 
-	if (wq_func == &wq_sdio->dtop) {
-		atomic_inc(&wq_sdio->dtop_stats.tx_total_cnt);
-	}
-
 	if (!max_pkts) {
 		printk_ratelimited(KERN_INFO "%s: tx_buffer_avail %d, func msgout num %d\n",
 				   __func__, max_pkts, wq_func->q.msgout.num);
@@ -1380,8 +1358,8 @@ static int wq_sdio_adma_tx_msg(struct wq_func *wq_func)
 	WQ_DBG(DM_TRBUS, DL_INF, "%s: packet %d/%d, addr %d, align length %d\n",
 	       __func__, pkts, max_pkts, addr, align_len);
 
-	if (wq_func != &wq_sdio->dtop) {
-		atomic_add(pkts, &wq_sdio->wlan_stats.tx_msg_total_num);
+	if (wq_func == &wq_sdio->wlan) {
+		atomic_add(pkts, &wq_sdio->wlan_stats.tx_pkt_total_num);
 	}
 
 	ret = wq_sdio_adma_write(wq_func, addr, msg_aggr->data, align_len);
@@ -1413,44 +1391,32 @@ static int wq_sdio_adma_tx_pkt(struct wq_func *wq_func)
 	u32 skb_aggr_cnt = 0, skb_aggr_len = 0, aggr_left_cnt = 0;
 	int i, ret = 0;
 
-	if (wq_func == &wq_sdio->dtop) {
-		atomic_inc(&wq_sdio->dtop_stats.tx_total_cnt);
-	}
-
 	if (max_pkts < aggr_size) {
-		printk_ratelimited(KERN_INFO "%s: tx_buffer_avail %d, func aggrout num %d, pktout %d, pktout_vo %d\n",
-				   __func__, max_pkts, wq_func->q.aggrout.num, wq_func->q.pktout.num, wq_func->q.pktout_vo.num);
+		printk_ratelimited(KERN_INFO "%s: tx_buffer_avail %d, func aggrout num %d, aggr_size %d\n",
+				   __func__, max_pkts, wq_func->q.aggrout.num, aggr_size);
 		ret = -1;
-		atomic_inc(&wq_sdio->wlan_stats.tx_buf_avail_zero_cnt);
-		atomic_inc(&wq_sdio->wlan_stats.tx_buf_avail_zero_cnt_sec);
 		goto done;
-	} else {
-		atomic_inc(&wq_sdio->wlan_stats.tx_buf_avail_valid_cnt);
-		atomic_inc(&wq_sdio->wlan_stats.tx_buf_avail_valid_cnt_sec);
 	}
 
-	if (wq_list_is_empty(&wq_func->q.aggrout)) {
-		if (!wq_func_is_pktout_empty(wq_func)) {
-			u64 time_start_us = 0, time_end_us = 0;
+	if (wq_list_is_empty(&wq_func->q.aggrout) && !wq_list_is_empty(&wq_func->q.pktout)) {
+		u64 time_start_us = 0, time_end_us = 0;
 
-			WQ_DBG(DM_TRBUS, DL_INF,
-				"%s: aggrout list is empty, msgout num %u, pktout num %u, pktout_vo num %u\n",
-				__func__, wq_func->q.msgout.num, wq_func->q.pktout.num, wq_func->q.pktout_vo.num);
+		WQ_DBG(DM_TRBUS, DL_INF,
+		       "%s: aggrout list is empty, msgout num %u, pktout num %u\n",
+		       __func__, wq_func->q.msgout.num, wq_func->q.pktout.num);
+
+		if (wq_sdio->wlan_stats.time_dump_enable) {
+			time_start_us = (u64)ktime_to_us(ktime_get());
+		}
+
+		wq_func_tx_trigger(wq_func);
+
+		if (wq_sdio->wlan_stats.time_dump_enable) {
+			time_end_us = (u64)ktime_to_us(ktime_get());
 
 			if (wq_func == &wq_sdio->wlan) {
-				time_start_us = (u64)ktime_to_us(ktime_get());
-			}
-
-			wq_func_tx_trigger(wq_func);
-
-			if (wq_func == &wq_sdio->wlan) {
-				time_end_us = (u64)ktime_to_us(ktime_get());
 				atomic_add((u32)(time_end_us - time_start_us), &wq_sdio->wlan_stats.main_tx_aggr_time);
 			}
-
-			atomic_inc(&wq_sdio->wlan_stats.tx_buf_avail_valid_pkt_not_aggr_cnt_sec);
-		} else {
-			atomic_inc(&wq_sdio->wlan_stats.tx_buf_avail_valid_no_pkt_cnt_sec);
 		}
 	}
 
@@ -1495,15 +1461,6 @@ static int wq_sdio_adma_tx_pkt(struct wq_func *wq_func)
 
 	if (wq_func == &wq_sdio->wlan) {
 		atomic_add(skb_aggr_cnt, &wq_sdio->wlan_stats.tx_pkt_total_num);
-		atomic_add(skb_aggr_cnt, &wq_sdio->wlan_stats.tx_pkt_total_num_sec);
-		atomic_inc(&wq_sdio->wlan_stats.tx_total_cnt);
-		atomic_inc(&wq_sdio->wlan_stats.tx_total_cnt_sec);
-		atomic_add(addr, &wq_sdio->wlan_stats.tx_pkt_total_bytes);
-		atomic_add(addr, &wq_sdio->wlan_stats.tx_pkt_total_bytes_sec);
-
-		if (sdio_ut_mode) {
-			wq_sdio->ut_stat.tx_pkt_total_bytes += addr;
-		}
 	}
 
 	ret = wq_sdio_adma_write(wq_func, addr, skb_data_ptr, align_len);
@@ -1548,6 +1505,16 @@ static int wq_sdio_adma_tx(struct wq_func *wq_func)
 	return ret;
 }
 
+static inline int wq_func_is_tx_empty(struct wq_func *wq_func)
+{
+	if (wq_list_is_empty(&wq_func->q.aggrout)
+			&& wq_list_is_empty(&wq_func->q.msgout) && wq_list_is_empty(&wq_func->q.pktout)) {
+		return true;
+	} else {
+		return false;
+	}
+}
+
 #else
 static int __wq_sdio_adma_aggr(struct sk_buff *aggr, struct wq_list_head *q,
 			       struct wq_list_head *done, int max_pkts)
@@ -1584,47 +1551,10 @@ static int __wq_sdio_adma_aggr(struct sk_buff *aggr, struct wq_list_head *q,
 		       skb->len);
 		skb_put(aggr, len);
 
-		__wq_skbreq_enqueue(done, req);
+		wq_skbreq_enqueue(done, req);
 	}
 
 	spin_unlock_irqrestore(&(q->lock), flags);
-
-	return pkts;
-}
-
-static int __wq_sdio_adma_pkt_aggr(struct sk_buff *aggr, struct wq_list_head *q,
-			       struct wq_list_head *done)
-{
-	struct wq_skbreq *req;
-	int pkts = 0;
-
-	while ((req = __wq_skbreq_dequeue(q))) {
-		struct sk_buff *skb = req->skb;
-		struct wq_sdio_adma_pkt_hdr hdr = {
-			.len = cpu_to_le32(skb->len + sizeof(hdr.virt_qid)),
-			.virt_qid = cpu_to_le32(req->virt_qid),
-		};
-		u32 len = sizeof(hdr) + skb->len;
-
-		WQ_DBG(DM_TRBUS, DL_VRB, "%s: type %d, len %d\n", __func__,
-		       req->virt_qid, skb->len);
-
-		if (skb_tailroom(aggr) < len) {
-			WQ_DBG(DM_TRBUS, DL_WRN,
-			       "%s: error (tail room %d < %d)!\n", __func__,
-			       skb_tailroom(aggr), len);
-			BUG_ON(1);
-		}
-
-		/* FIXME: padding for alignment? */
-		memcpy(skb_tail_pointer(aggr), &hdr, sizeof(hdr));
-		memcpy(skb_tail_pointer(aggr) + sizeof(hdr), skb->data,
-		       skb->len);
-		skb_put(aggr, len);
-
-		pkts++;
-		__wq_skbreq_enqueue(done, req);
-	}
 
 	return pkts;
 }
@@ -1634,56 +1564,27 @@ static int wq_sdio_adma_aggr(struct wq_func *wq_func,
 			     struct wq_list_head *msg_aggr_done,
 			     struct wq_list_head *pkt_aggr_done, int max_pkts)
 {
-	int pkts = 0;
-	struct wq_list_head pktq;
-	struct wq_skbreq *req;
-	unsigned long flags;
-#ifdef CONFIG_TX_BUS_QOS
 	struct wq_sdio *wq_sdio = wq_func->wq_sdio;
-	int vo_aggr_pkts;
-#endif
+	int pkts = 0;
+	u64 time_start_us = 0, time_end_us = 0;
 
-	INIT_WQ_LIST_HEAD(&pktq);
+	time_start_us = (u64)ktime_to_us(ktime_get());
 
 	skb_trim(aggr, 0);
 
 	if (pkts < max_pkts)
 		pkts += __wq_sdio_adma_aggr(aggr, &wq_func->q.msgout,
 					    msg_aggr_done, max_pkts - pkts);
+	/* FIXME: should consider QoS? */
+	if (pkts < max_pkts)
+		pkts += __wq_sdio_adma_aggr(aggr, &wq_func->q.pktout,
+					    pkt_aggr_done, max_pkts - pkts);
 
-#ifdef CONFIG_TX_BUS_QOS
-	vo_aggr_pkts = ((max_pkts - pkts) * wq_sdio->pktout_vo_qos_weight / 100);
-	if (vo_aggr_pkts == 0) {
-		vo_aggr_pkts = (max_pkts - pkts);
+	time_end_us = (u64)ktime_to_us(ktime_get());
+
+	if (wq_func == &wq_sdio->wlan) {
+		atomic_add((u32)(time_end_us - time_start_us), &wq_sdio->wlan_stats.main_tx_aggr_time);
 	}
-
-	vo_aggr_pkts += pkts;
-
-	spin_lock_irqsave(&(wq_func->q.pktout.lock), flags);
-
-	/* pkt out vo queue */
-	for (; pkts < vo_aggr_pkts && (req = __wq_skbreq_dequeue(&wq_func->q.pktout_vo)); ++pkts) {
-		__wq_skbreq_enqueue(&pktq, req);
-	}
-
-	/* pkt out queue */
-	for (; pkts < (max_pkts - pkts) && (req = __wq_skbreq_dequeue(&wq_func->q.pktout)); ++pkts) {
-		__wq_skbreq_enqueue(&pktq, req);
-	}
-
-	spin_unlock_irqrestore(&wq_func->q.pktout.lock, flags);
-#else
-	/* pkt out queue */
-	spin_lock_irqsave(&(wq_func->q.pktout.lock), flags);
-
-	for (; pkts < (max_pkts - pkts) && (req = __wq_skbreq_dequeue(&wq_func->q.pktout)); ++pkts) {
-		__wq_skbreq_enqueue(&pktq, req);
-	}
-
-	spin_unlock_irqrestore(&wq_func->q.pktout.lock, flags);
-#endif
-
-	__wq_sdio_adma_pkt_aggr(aggr, &pktq, pkt_aggr_done);
 
 	return pkts;
 }
@@ -1704,7 +1605,7 @@ static void wq_sdio_adma_tx_done(struct wq_sdio *wq_sdio,
 	spin_lock_irqsave(&(wq_sdio->pools.msgout.list.lock), flags);
 
 	/* msg tx done */
-	while ((req = __wq_skbreq_dequeue(msg_aggr_done)) != NULL) {
+	while ((req = wq_skbreq_dequeue(msg_aggr_done)) != NULL) {
 		if (wq_func == &wq_sdio->wlan)
 			__skb_queue_tail(&sk_list_wlan, req->skb);
 		else
@@ -1719,7 +1620,7 @@ static void wq_sdio_adma_tx_done(struct wq_sdio *wq_sdio,
 	/* pkt tx done */
 	spin_lock_irqsave(&(wq_sdio->pools.pktout.list.lock), flags);
 
-	while ((req = __wq_skbreq_dequeue(pkt_aggr_done)) != NULL) {
+	while ((req = wq_skbreq_dequeue(pkt_aggr_done)) != NULL) {
 		WQ_DBG(DM_TRBUS, DL_INF, "%s, type %d, len %d\n", __func__,
 		       req->virt_qid, req->skb->len);
 
@@ -1744,7 +1645,6 @@ static void wq_sdio_adma_tx_done(struct wq_sdio *wq_sdio,
 static int wq_sdio_adma_tx(struct wq_func *wq_func)
 {
 	struct wq_sdio *wq_sdio = wq_func->wq_sdio;
-	struct wq_list_head msg_aggr_done, pkt_aggr_done;
 	struct sk_buff *aggr = wq_func->adma.aggr.tx;
 	int aggr_size = wq_sdio_adma_aggr_size(wq_func);
 	int max_pkts = wq_func->adma.info.tx_buffer_avail;
@@ -1753,34 +1653,18 @@ static int wq_sdio_adma_tx(struct wq_func *wq_func)
 	u32 align_len;
 	int ret;
 
-	if (wq_func == &wq_sdio->dtop) {
-		atomic_inc(&wq_sdio->dtop_stats.tx_total_cnt);
-	}
-
-	INIT_WQ_LIST_HEAD(&msg_aggr_done);
-	INIT_WQ_LIST_HEAD(&pkt_aggr_done);
-
 	skb_trim(aggr, 0);	/* reset it */
-
-	if (max_pkts < aggr_size) {
-		atomic_inc(&wq_sdio->wlan_stats.tx_buf_avail_zero_cnt);
-		atomic_inc(&wq_sdio->wlan_stats.tx_buf_avail_zero_cnt_sec);
-	} else {
-		atomic_inc(&wq_sdio->wlan_stats.tx_buf_avail_valid_cnt);
-		atomic_inc(&wq_sdio->wlan_stats.tx_buf_avail_valid_cnt_sec);
-	}
 
 	if (max_pkts > aggr_size) {
 		max_pkts = aggr_size;
 	}
 
-	pkts = wq_sdio_adma_aggr(wq_func, aggr, &msg_aggr_done,
-				 &pkt_aggr_done, max_pkts);
+	pkts = wq_sdio_adma_aggr(wq_func, aggr, &wq_func->q.aggrout_msg_done,
+				 &wq_func->q.aggrout_pkt_done, max_pkts);
 	if (!pkts) {
 		WQ_DBG(DM_TRBUS, DL_INF, "%s: pkts %d, max_pkts %d\n", __func__,
 		       pkts, max_pkts);
 		ret = -1;
-		atomic_inc(&wq_sdio->wlan_stats.tx_buf_avail_valid_no_pkt_cnt_sec);
 		goto done;
 	}
 
@@ -1792,15 +1676,6 @@ static int wq_sdio_adma_tx(struct wq_func *wq_func)
 
 	if (wq_func == &wq_sdio->wlan) {
 		atomic_add(pkts, &wq_sdio->wlan_stats.tx_pkt_total_num);
-		atomic_add(pkts, &wq_sdio->wlan_stats.tx_pkt_total_num_sec);
-		atomic_inc(&wq_sdio->wlan_stats.tx_total_cnt);
-		atomic_inc(&wq_sdio->wlan_stats.tx_total_cnt_sec);
-		atomic_add(addr, &wq_sdio->wlan_stats.tx_pkt_total_bytes);
-		atomic_add(addr, &wq_sdio->wlan_stats.tx_pkt_total_bytes_sec);
-
-		if (sdio_ut_mode) {
-			wq_sdio->ut_stat.tx_pkt_total_bytes += addr;
-		}
 	}
 
 	ret = wq_sdio_adma_write(wq_func, addr, aggr->data, align_len);
@@ -1813,7 +1688,10 @@ static int wq_sdio_adma_tx(struct wq_func *wq_func)
 		}
 	}
 
-	wq_sdio_adma_tx_done(wq_sdio, wq_func, &msg_aggr_done, &pkt_aggr_done, ret);
+	if ((!wq_list_is_empty(&wq_func->q.aggrout_msg_done))
+			|| (!wq_list_is_empty(&wq_func->q.aggrout_pkt_done))) {
+		wq_func_tx_trigger(wq_func);
+	}
 
 	if (wq_conf.wq_dbg_lv >= DL_INF)
 		printk_ratelimited(
@@ -1829,7 +1707,7 @@ done:
 static inline int wq_func_is_tx_empty(struct wq_func *wq_func)
 {
 	return wq_list_is_empty(&wq_func->q.msgout) &&
-	       wq_func_is_pktout_empty(wq_func);
+	       wq_list_is_empty(&wq_func->q.pktout);
 }
 #endif
 
@@ -1861,56 +1739,6 @@ static bool wq_sdio_is_remove(struct wq_func *wq_func)
 	return false;
 }
 
-#ifdef WQ_CPU_UNBIND
-static int wq_sdio_set_governor(const char *governor_name) {
-	struct file *filp;
-	int ret = 0;
-	int cpu_id;
-
-	char path[128];
-	char buf[32];
-
-	snprintf(buf, sizeof(buf), "%s", governor_name);
-
-	for_each_online_cpu(cpu_id) {
-#if LINUX_VERSION_CODE < KERNEL_VERSION(5, 10, 0)
-		mm_segment_t old_fs;
-#endif
-
-		snprintf(path, sizeof(path), "/sys/devices/system/cpu/cpu%d/cpufreq/scaling_governor", cpu_id);
-
-		filp = filp_open(path, O_WRONLY | O_LARGEFILE, 0644);
-		if (IS_ERR(filp)) {
-			WQ_DBG(DM_IPC, DL_ERR, "%s: failed to open %s\n", __func__, path);
-			ret = -EIO;
-			continue;
-		}
-
-#if LINUX_VERSION_CODE < KERNEL_VERSION(5, 10, 0)
-		old_fs = get_fs();
-		set_fs(KERNEL_DS);
-
-		if (filp->f_op && filp->f_op->write) {
-			ret = filp->f_op->write(filp, buf, strlen(buf), &filp->f_pos);
-		}
-
-		set_fs(old_fs);
-#else
-		ret = kernel_write(filp, buf, strlen(buf), &filp->f_pos);
-#endif
-
-		filp_close(filp, NULL);
-
-		if (ret < 0) {
-			WQ_DBG(DM_IPC, DL_ERR, "%s: failed to set governor '%s' for CPU%d\n", __func__, governor_name, cpu_id);
-		} else {
-			WQ_DBG(DM_IPC, DL_WRN, "%s: success to set governor '%s' for CPU%d\n", __func__, governor_name, cpu_id);
-		}
-	}
-	return ret;
-}
-#endif
-
 void __wq_sdio_adma_main_process(struct wq_func *wq_func)
 {
 	struct wq_sdio *wq_sdio;
@@ -1931,26 +1759,29 @@ void __wq_sdio_adma_main_process(struct wq_func *wq_func)
 
 	PROFILING_SET(SW_PROF_SDIO_MAIN_PROCESS);
 
-	time_start_us = (u64)ktime_to_us(ktime_get());
+	if (wq_sdio->wlan_stats.time_dump_enable) {
+		time_start_us = (u64)ktime_to_us(ktime_get());
+	}
 
 	if (wq_func == &wq_sdio->dtop) {
 		atomic_inc(&wq_sdio->dtop_stats.main_process_total_cnt);
-	} else if (wq_func == &wq_sdio->wlan) {
-		atomic_inc(&wq_sdio->wlan_stats.main_process_total_cnt);
-		atomic_inc(&wq_sdio->wlan_stats.main_process_total_cnt_sec);
 	}
 
 	wq_sdio_intr_en(wq_sdio, wq_func, false);
 
-	time_end_us = (u64)ktime_to_us(ktime_get());
+	if (wq_sdio->wlan_stats.time_dump_enable) {
+		time_end_us = (u64)ktime_to_us(ktime_get());
 
-	if (wq_func == &wq_sdio->wlan) {
-		atomic_add((u32)(time_end_us - time_start_us), &wq_sdio->wlan_stats.main_kthread_time);
+		if (wq_func == &wq_sdio->wlan) {
+			atomic_add((u32)(time_end_us - time_start_us), &wq_sdio->wlan_stats.main_kthread_time);
+		}
 	}
 
 	while (true)
 	{
-		time_start_us = (u64)ktime_to_us(ktime_get());
+		if (wq_sdio->wlan_stats.time_dump_enable) {
+			time_start_us = (u64)ktime_to_us(ktime_get());
+		}
 
 		if (wq_sdio_is_remove(wq_func)) {
 			WQ_DBG(DM_TRBUS, DL_ERR, "%s: sdio is not ready.\n", __func__);
@@ -1975,6 +1806,14 @@ void __wq_sdio_adma_main_process(struct wq_func *wq_func)
 			}
 		}
 
+		if (wq_func == &wq_sdio->wlan) {
+			if (wq_func->adma.info.tx_buffer_avail >= aggr_size) {
+				atomic_inc(&wq_sdio->wlan_stats.tx_buf_avail_valid_cnt);
+			} else {
+				atomic_inc(&wq_sdio->wlan_stats.tx_buf_avail_zero_cnt);
+			}
+		}
+
 		if (sdio_ut_mode && (wq_func == &wq_sdio->wlan)) {
 			wq_ut_stat_t *ut_stat = &wq_sdio->ut_stat;
 			wq_ut_config_t *ut_config = &wq_sdio->ut_config;
@@ -1983,11 +1822,7 @@ void __wq_sdio_adma_main_process(struct wq_func *wq_func)
 			}
 		}
 
-		if ((wq_func == &wq_sdio->wlan) && (wq_func->adma.info.tx_buffer_avail == 0)) {
-			atomic_inc(&wq_sdio->wlan_stats.tx_buf_avail_zero_cnt);
-		}
-
-		while (wq_func->adma.info.tx_buffer_avail) {
+		while (wq_func->adma.info.tx_buffer_avail > 0) {
 			ret = wq_sdio_adma_tx(wq_func);
 			if (ret) {
 				break;
@@ -2008,37 +1843,19 @@ void __wq_sdio_adma_main_process(struct wq_func *wq_func)
 #endif
 		}
 
-		time_end_us = (u64)ktime_to_us(ktime_get());
+		if (wq_sdio->wlan_stats.time_dump_enable) {
+			time_end_us = (u64)ktime_to_us(ktime_get());
 
-		if (wq_func == &wq_sdio->wlan) {
-			atomic_add((u32)(time_end_us - time_start_us), &wq_sdio->wlan_stats.main_kthread_time);
+			if (wq_func == &wq_sdio->wlan) {
+				atomic_add((u32)(time_end_us - time_start_us), &wq_sdio->wlan_stats.main_kthread_time);
+			}
 		}
 
 		rwnx_hw = wq_sdio->core.hw;
 		if (rwnx_hw && (wq_func == &wq_sdio->wlan)) {
-#ifdef WQ_CPU_UNBIND
-			if ((rwnx_hw->tx_throughput > SDIO_TP_THRESHOLD) || (rwnx_hw->rx_throughput > SDIO_TP_THRESHOLD)) {
-				if (atomic_cmpxchg(&wq_sdio->cpu_perf_mode, 0, 1) == 0) {
-					wq_sdio_set_governor("performance");
-				}
-			} else {
-				if (atomic_cmpxchg(&wq_sdio->cpu_perf_mode, 1, 0) == 1) {
-					wq_sdio_set_governor("schedutil");
-				}
-			}
-#endif
-
 #ifdef SDIO_TX_POLLING_MODE
-			if (rwnx_hw->tx_throughput > SDIO_TP_THRESHOLD) {
-#ifdef SDIO_TX_AGGR_MODE
-				if (!wq_list_is_empty(&wq_func->q.aggrout)) {
-					continue;
-				}
-#else
-				if (!wq_func_is_tx_empty(wq_func)) {
-					continue;
-				}
-#endif
+			if ((rwnx_hw->tx_throughput > SDIO_TP_THRESHOLD) && (!wq_func_is_tx_empty(wq_func))) {
+				continue;
 			}
 #endif
 
@@ -2070,48 +1887,26 @@ void __wq_sdio_adma_main_process(struct wq_func *wq_func)
 		}
 	}
 
-	time_start_us = (u64)ktime_to_us(ktime_get());
+	if (wq_sdio->wlan_stats.time_dump_enable) {
+		time_start_us = (u64)ktime_to_us(ktime_get());
+	}
 
 	/* enable TX interrupt, if more TX is queued. otherwise, disable it */
 	wq_sdio_intr_buf_avail_en(wq_sdio, wq_func, !wq_func_is_tx_empty(wq_func));
 
 	wq_sdio_intr_en(wq_sdio, wq_func, true);
 
-	time_end_us = (u64)ktime_to_us(ktime_get());
+	if (wq_sdio->wlan_stats.time_dump_enable) {
+		time_end_us = (u64)ktime_to_us(ktime_get());
 
-	if (wq_func == &wq_sdio->wlan) {
-		atomic_add((u32)(time_end_us - time_start_us), &wq_sdio->wlan_stats.main_kthread_time);
+		if (wq_func == &wq_sdio->wlan) {
+			atomic_add((u32)(time_end_us - time_start_us), &wq_sdio->wlan_stats.main_kthread_time);
+		}
 	}
 
 	PROFILING_CLR(SW_PROF_SDIO_MAIN_PROCESS);
 
 	WQ_DBG(WQ_LOG_DM, WQ_LOG_LEVEL, "<-- %s(%d)\n", __func__, wq_func_is_tx_empty(wq_func));
-}
-
-void __wq_sdio_adma_main_process_intr(struct wq_func *wq_func)
-{
-	int ret = 0;
-
-	if (wq_func->adma.info.rx_len <= 0) {
-		ret = wq_sdio_adma_info_update(wq_func, NULL);
-		if (ret) {
-			return;
-		}
-	}
-
-	if (wq_func->adma.info.rx_len > 0) {
-		ret = wq_sdio_adma_rx(wq_func);
-		if (ret) {
-			return;
-		}
-	}
-
-	if (wq_func->adma.info.tx_buffer_avail > 0) {
-		ret = wq_sdio_adma_tx(wq_func);
-		if (ret) {
-			return;
-		}
-	}
 }
 
 #ifdef SDIO_MAIN_KTHREAD
@@ -2122,25 +1917,7 @@ int wq_sdio_adma_process(void *data)
 		container_of(wq_thread, struct wq_func, adma.maink);
 	unsigned long flags;
 
-	if (wq_func->func_num == SDIO_FUNC_WIFI_MSG) {
-#if LINUX_VERSION_CODE <= KERNEL_VERSION(5, 8, 0)
-		const struct sched_param param = { .sched_priority = (MAX_RT_PRIO / 2) };
-		WARN_ON_ONCE(sched_setscheduler(current, SCHED_FIFO, &param) != 0);
-#else
-		sched_set_fifo(current);
-#endif
-	} else {
-#ifdef SDIO_MAIN_KTHREAD_FIFO
-#if LINUX_VERSION_CODE <= KERNEL_VERSION(5, 8, 0)
-		const struct sched_param param = { .sched_priority = SDIO_MAIN_KTHREAD_PRIO };
-		WARN_ON_ONCE(sched_setscheduler(current, SCHED_FIFO, &param) != 0);
-#else
-		sched_set_fifo_low(current);
-#endif
-#else
-		set_user_nice(current, SDIO_MAIN_KTHREAD_NICE);
-#endif
-	}
+	set_user_nice(current, SDIO_MAIN_KTHREAD_NICE);
 
 	WQ_DBG(DM_TRBUS, DL_ERR, "%s: %s enter\n", __func__, wq_func->name);
 
@@ -2159,10 +1936,7 @@ int wq_sdio_adma_process(void *data)
 			goto exit;
 		}
 
-		if (mutex_trylock(&wq_func->adma.mutex)) {
-			__wq_sdio_adma_main_process(wq_func);
-			mutex_unlock(&wq_func->adma.mutex);
-		}
+		__wq_sdio_adma_main_process(wq_func);
 	}
 
 exit:
@@ -2175,10 +1949,7 @@ void wq_sdio_adma_process(struct work_struct *work)
 	struct wq_func *wq_func =
 		container_of(work, struct wq_func, adma.mainq.work);
 
-	if (mutex_trylock(&wq_func->adma.mutex)) {
-		__wq_sdio_adma_main_process(wq_func);
-		mutex_unlock(&wq_func->adma.mutex);
-	}
+	__wq_sdio_adma_main_process(wq_func);
 }
 #endif
 
@@ -2236,7 +2007,9 @@ void __wq_sdio_adma_rx_process(struct wq_func *wq_func)
 	}
 
 	while (!wq_list_is_empty(&wq_func->q.aggrin)) {
-		time_start_us = (u64)ktime_to_us(ktime_get());
+		if (wq_sdio->wlan_stats.time_dump_enable) {
+			time_start_us = (u64)ktime_to_us(ktime_get());
+		}
 
 		rxq = &wq_sdio->core.htc.rxq.pkt;
 		if (skb_queue_len(&rxq->head) >= RX_PKT_QUEUE_MAX) {
@@ -2245,16 +2018,47 @@ void __wq_sdio_adma_rx_process(struct wq_func *wq_func)
 			wq_sdio_adma_rx_process_one(wq_func);
 		}
 
-		time_end_us = (u64)ktime_to_us(ktime_get());
+		if (wq_sdio->wlan_stats.time_dump_enable) {
+			time_end_us = (u64)ktime_to_us(ktime_get());
 
-		if (wq_func == &wq_sdio->wlan) {
-			atomic_add((u32)(time_end_us - time_start_us), &wq_sdio->wlan_stats.rx_workq_time);
+			if (wq_func == &wq_sdio->wlan) {
+				atomic_add((u32)(time_end_us - time_start_us), &wq_sdio->wlan_stats.rx_workq_time);
+			}
 		}
 	}
 }
 #else
 void __wq_sdio_adma_rx_process(struct wq_func *wq_func)
 {
+	struct wq_sdio *wq_sdio;
+	struct sk_buff *skb;
+	u64 time_start_us = 0, time_end_us = 0;
+
+	WQ_DBG(WQ_LOG_DM, WQ_LOG_LEVEL, "--> %s(%d)\n", __func__,
+	       wq_func->func_num);
+
+	WQ_DBG(WQ_LOG_DM, DL_VRB, "--> %s(%d)\n", __func__, wq_func->func_num);
+	if (!(wq_sdio = wq_func->wq_sdio)) {
+		WQ_DBG(DM_TRBUS, DL_ERR, "%s: wq_sdio %p or func is NULL!\n",
+		       __func__, wq_sdio);
+		return;
+	}
+
+	while ((skb = skb_dequeue(&wq_func->q.rx_deaggr_skbq))) {
+		if (wq_sdio->wlan_stats.time_dump_enable) {
+			time_start_us = (u64)ktime_to_us(ktime_get());
+		}
+
+		htc_rx(&wq_sdio->core, WQ_QID_AC_BE, skb);
+
+		if (wq_sdio->wlan_stats.time_dump_enable) {
+			time_end_us = (u64)ktime_to_us(ktime_get());
+
+			if (wq_func == &wq_sdio->wlan) {
+				atomic_add((u32)(time_end_us - time_start_us), &wq_sdio->wlan_stats.rx_workq_time);
+			}
+		}
+	}
 }
 #endif
 
@@ -2266,25 +2070,7 @@ int wq_sdio_adma_rx_process(void *data)
 		container_of(wq_thread, struct wq_func, adma.rxk);
 	unsigned long flags;
 
-	if (wq_func->func_num == SDIO_FUNC_WIFI_MSG) {
-#if LINUX_VERSION_CODE <= KERNEL_VERSION(5, 8, 0)
-		const struct sched_param param = { .sched_priority = (MAX_RT_PRIO / 2) };
-		WARN_ON_ONCE(sched_setscheduler(current, SCHED_FIFO, &param) != 0);
-#else
-		sched_set_fifo(current);
-#endif
-	} else {
-#ifdef SDIO_RX_KTHREAD_FIFO
-#if LINUX_VERSION_CODE <= KERNEL_VERSION(5, 8, 0)
-		const struct sched_param param = { .sched_priority = SDIO_RX_KTHREAD_PRIO };
-		WARN_ON_ONCE(sched_setscheduler(current, SCHED_FIFO, &param) != 0);
-#else
-		sched_set_fifo_low(current);
-#endif
-#else
-		set_user_nice(current, SDIO_RX_KTHREAD_NICE);
-#endif
-	}
+	set_user_nice(current, SDIO_RX_KTHREAD_NICE);
 
 	WQ_DBG(DM_TRBUS, DL_ERR, "%s: %s enter\n", __func__, wq_func->name);
 
@@ -2354,18 +2140,22 @@ void wq_func_rx_trigger(struct wq_func *wq_func)
 }
 #endif
 
-#ifdef SDIO_TX_AGGR_MODE
 void __wq_sdio_adma_tx_process(struct wq_func *wq_func)
 {
 	struct wq_sdio *wq_sdio = wq_func->wq_sdio;
+#ifdef SDIO_TX_AGGR_MODE
 	int aggr_size = wq_sdio_adma_aggr_size(wq_func);
 	int pkts = 0;
+#endif
 	u64 time_start_us = 0, time_end_us = 0;
 
 	while (true)
 	{
-		time_start_us = (u64)ktime_to_us(ktime_get());
+		if (wq_sdio->wlan_stats.time_dump_enable) {
+			time_start_us = (u64)ktime_to_us(ktime_get());
+		}
 
+#ifdef SDIO_TX_AGGR_MODE
 		if (wq_list_is_empty(&wq_sdio->pools.aggrout.list)) {
 			break;
 		}
@@ -2382,19 +2172,23 @@ void __wq_sdio_adma_tx_process(struct wq_func *wq_func)
 		if (wq_func->q.pktout.num < aggr_size) {
 			break;
 		}
+#else
+		if ((!wq_list_is_empty(&wq_func->q.aggrout_msg_done)) || (!wq_list_is_empty(&wq_func->q.aggrout_pkt_done))) {
+			wq_sdio_adma_tx_done(wq_sdio, wq_func, &wq_func->q.aggrout_msg_done, &wq_func->q.aggrout_pkt_done, 0);
+		} else {
+			break;
+		}
+#endif
 
-		time_end_us = (u64)ktime_to_us(ktime_get());
+		if (wq_sdio->wlan_stats.time_dump_enable) {
+			time_end_us = (u64)ktime_to_us(ktime_get());
 
-		if (wq_func == &wq_sdio->wlan) {
-			atomic_add((u32)(time_end_us - time_start_us), &wq_sdio->wlan_stats.tx_workq_time);
+			if (wq_func == &wq_sdio->wlan) {
+				atomic_add((u32)(time_end_us - time_start_us), &wq_sdio->wlan_stats.tx_workq_time);
+			}
 		}
 	}
 }
-#else
-void __wq_sdio_adma_tx_process(struct wq_func *wq_func)
-{
-}
-#endif
 
 #ifdef SDIO_TX_KTHREAD
 int wq_sdio_adma_tx_process(void *data)
@@ -2496,18 +2290,10 @@ void wq_sdio_interrupt(struct sdio_func *func)
 		wq_func = &wq_sdio->wlan_msg;
 	} else {
 		wq_func = &wq_sdio->wlan;
-		atomic_inc(&wq_sdio->wlan_stats.irq_total_cnt);
-		atomic_inc(&wq_sdio->wlan_stats.irq_total_cnt_sec);
 	}
 
 	if (wq_func) {
 		wq_sdio_intr_en(wq_sdio, wq_func, false);
-
-		if (mutex_trylock(&wq_func->adma.mutex)) {
-			__wq_sdio_adma_main_process_intr(wq_func);
-			mutex_unlock(&wq_func->adma.mutex);
-		}
-
 		wq_func_main_trigger(wq_func);
 	}
 

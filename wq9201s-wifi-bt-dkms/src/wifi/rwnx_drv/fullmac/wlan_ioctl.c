@@ -55,7 +55,7 @@ static int wq_cfg80211_vendor_set_country_code(struct wiphy *wiphy,
 					       struct wireless_dev *wdev,
 					       const void *data, int data_len)
 {
-	int ret = 0;
+	int ret;
 	struct nlattr *attr;
 	uint8_t country_code[2] = { '\0' };
 	struct rwnx_hw *hw = wiphy_priv(wiphy);
@@ -81,7 +81,7 @@ static int wq_cfg80211_vendor_set_country_code(struct wiphy *wiphy,
 	       country_code[0], country_code[1]);
 
 exit:
-	return ret;
+	return 0;
 }
 #endif
 
@@ -312,7 +312,7 @@ static int wq_priv_set_suspendmode(struct net_device *netdev, uint8_t *command,
 		ret = rwnx_send_me_set_ps_mode(hw, ps_mode);
 		mutex_unlock(&hw->mutex);
 	}
-	return ret;
+	return 0;
 }
 
 static int wq_priv_set_wps_p2p_ie(struct net_device *netdev, uint8_t *command,
@@ -519,41 +519,58 @@ void wq_subsystem_restart_evt(struct wiphy *wiphy, struct wireless_dev *wdev,
 }
 
 #ifdef INCLUDE_WQ_IWPRIVE
+#include <linux/fs.h>
+#include <linux/tty.h>
+#include <linux/sched/signal.h>
+
 enum {
-	WQ_IWPRIV_CMD_CCA = 0,
+	WQ_IWPRIV_CMD_CCA_SET = 0,
+	WQ_IWPRIV_CMD_CCA_GET = 1,
 	/// Should less than SIOCIWLASTPRIV - SIOCIWFIRSTPRIV = 35839 - 35808 + 1
 	WQ_IWPRIV_CMD_MAX,
 };
 
-#define DEF_WQ_IWPRIV_FUNC_FMT(func_name) func_name(struct net_device *dev, struct iw_request_info *info,\
-		union iwreq_data *wrqu, char *cmd_string)
+#define wq_2_iwpriv(wq)	(SIOCIWFIRSTPRIV + (wq))
 
-#define DEF_WQ_IWPRIV_FUNC_NAME(name) wq_iwpriv_##name
-#define DEF_WQ_IWPRIV_FUNC(name) DEF_WQ_IWPRIV_FUNC_FMT(DEF_WQ_IWPRIV_FUNC_NAME(name))
+#define WQ_IWPRIV_MAX_STR_LEN	128
 
-static int DEF_WQ_IWPRIV_FUNC(cca) {
+static void wq_iwpriv_console(union iwreq_data *wrqu, char *extra, char *string) {
+	u32 buf_len = strlen(string) + 1;
+
+	snprintf(extra, WQ_IWPRIV_MAX_STR_LEN - 1, "%s", string);
+	wrqu->data.length = buf_len;
+}
+
+static int wq_iwpriv_cca(struct net_device *dev, struct iw_request_info *info,
+		union iwreq_data *wrqu, char *extra) {
 	struct rwnx_vif *rwnx_vif = netdev_priv(dev);
 	struct rwnx_hw *hw = rwnx_vif->rwnx_hw;
 	unsigned int period;
 	struct mm_get_cca_cfm get_cfm;
-	char p_buf[64];
+	char p_csl[WQ_IWPRIV_MAX_STR_LEN];
 
-	if (!cmd_string) {
-		goto inv_arg;
-	}
-
-	memcpy(p_buf, cmd_string, sizeof(p_buf));
-
-	if (strncmp(p_buf, "enable", 6) == 0) {
-		if (kstrtouint(&p_buf[7], 10, &period)) {
-			goto inv_arg;
+	if (wq_2_iwpriv(WQ_IWPRIV_CMD_CCA_GET) == info->cmd) {
+		if (rwnx_send_cca_data_get(hw, rwnx_vif->vif_index, &get_cfm) || !get_cfm.valid) {
+			WQ_DBG(DM_GENERIC, DL_ERR, "%s: Get faled.\n", __func__);
+			goto cmd_err;
+		} else {
+			sprintf(p_csl, "tk:%u,cca:%u%%,ns:%d,nw:%d,tt:%d.",
+				get_cfm.token, (get_cfm.busy_time / (get_cfm.period * 10)),
+				get_cfm.rssi_noise, get_cfm.rssi_nowifi, get_cfm.rssi_total);
+			wq_iwpriv_console(wrqu, extra, p_csl);
 		}
-		rwnx_send_cca_config_set(hw, rwnx_vif->vif_index, 1, (u16)period);
-	} else if (strncmp(p_buf, "disable", 7) == 0) {
-		rwnx_send_cca_config_set(hw, rwnx_vif->vif_index, 0, 0);
-	} else if (strncmp(p_buf, "capture", 7) == 0) {
-		rwnx_send_cca_data_get(hw, rwnx_vif->vif_index, &get_cfm);
-		(void)get_cfm;
+	}else if (!kstrtouint(extra, 10, &period)) {
+		if (0 == period) {
+			if (rwnx_send_cca_config_set(hw, rwnx_vif->vif_index, 0, 0)) {
+				WQ_DBG(DM_GENERIC, DL_ERR, "%s: Disable failed.\n", __func__);
+				goto cmd_err;
+			}
+		} else {
+			if (rwnx_send_cca_config_set(hw, rwnx_vif->vif_index, 1, (u16)period)) {
+				WQ_DBG(DM_GENERIC, DL_ERR, "%s: Enable failed.\n", __func__);
+				goto cmd_err;
+			}
+		}
 	} else {
 		goto inv_arg;
 	}
@@ -562,22 +579,30 @@ static int DEF_WQ_IWPRIV_FUNC(cca) {
 
 inv_arg:
 
-	WQ_DBG(DM_GENERIC, DL_ERR, "%s invalid command, should be like:\n  iwpriv wlan0 cca enable:1000\n  iwpriv wlan0 cca disable\n  iwpriv wlan0 cca capture\n", __func__);
 	return -EINVAL;
+
+cmd_err:
+	return -EIO;
 }
 
-#define wq_2_iwpriv(wq)	(SIOCIWFIRSTPRIV + (wq))
 static const struct iw_priv_args wq_iwpriv_args[] = {
     {
-        .cmd = wq_2_iwpriv(WQ_IWPRIV_CMD_CCA),
-        .set_args = IW_PRIV_TYPE_CHAR | 128,
-        .get_args = IW_PRIV_TYPE_CHAR | 128,
-        .name = "cca"
+        .cmd = wq_2_iwpriv(WQ_IWPRIV_CMD_CCA_SET),
+        .set_args = IW_PRIV_TYPE_CHAR | WQ_IWPRIV_MAX_STR_LEN,
+        .get_args = 0,
+        .name = "cca_set"
+    },
+    {
+        .cmd = wq_2_iwpriv(WQ_IWPRIV_CMD_CCA_GET),
+        .set_args = 0,
+        .get_args = IW_PRIV_TYPE_CHAR | WQ_IWPRIV_MAX_STR_LEN,
+        .name = "cca_get"
     }
 };
 
 static const iw_handler wq_iwpriv_handler_table[] = {
-    [WQ_IWPRIV_CMD_CCA] = DEF_WQ_IWPRIV_FUNC_NAME(cca),
+    [WQ_IWPRIV_CMD_CCA_SET] = wq_iwpriv_cca,
+    [WQ_IWPRIV_CMD_CCA_GET] = wq_iwpriv_cca
 };
 
 struct iw_handler_def wq_iwpriv_handler_def = {

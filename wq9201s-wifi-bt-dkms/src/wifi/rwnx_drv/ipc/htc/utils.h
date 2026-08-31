@@ -154,18 +154,13 @@ static inline void INIT_WQ_LIST_HEAD(struct wq_list_head *list)
 	WQ_STATS_RESET(list->del);
 }
 
-static inline int __wq_list_is_empty(struct wq_list_head *list)
-{
-	return list_empty(&list->head);
-}
-
 static inline int wq_list_is_empty(struct wq_list_head *list)
 {
 	int empty;
 	unsigned long flags;
 
 	spin_lock_irqsave(&list->lock, flags);
-	empty = __wq_list_is_empty(list);
+	empty = list_empty(&list->head);
 	spin_unlock_irqrestore(&list->lock, flags);
 
 	return empty;
@@ -370,21 +365,21 @@ static inline int wq_list_is_empty(struct wq_list_head *list)
 		INIT_WQ_LIST_HEAD(&pool->list);                                \
 		pool->entries = entry;                                         \
 		pool->size = size;                                             \
+		pool->num = num;                                               \
 		if (!entry) {                                                  \
 			pool->num = 0;                                         \
 			return -1;                                             \
 		}                                                              \
+                                                                               \
 		for (i = 0; i < num; i++) {                                    \
 			INIT_LIST_HEAD(&entry->_list_member);                  \
-			if (_init(entry, ctx) != 0) {                            \
-				continue;                                            \
-			}                                                     \
-			++ok;                                                   \
+			if (_init(entry, ctx) == 0)                            \
+				++ok;                                          \
 			WQ_LIST_PUSH(&pool->list, _struct, _list_member,       \
-				     entry);                                       \
+				     entry);                                   \
 			entry++;                                               \
 		}                                                              \
-		pool->num = ok;                                               \
+                                                                               \
 		return ok;                                                     \
 	}
 
@@ -427,6 +422,8 @@ static inline int wq_workq_init(struct wq_workq *workq, unsigned int flags,
 	snprintf(name, sizeof(name), fmt, sub);
 
 	spin_lock_init(&workq->lock);
+
+	WQ_DBG(DM_GENERIC, DL_ERR, "INIT_WORK(%px) %s(%px)\n", (&workq->work), name, (void *)(handler));
 	INIT_WORK(&workq->work, handler);
 	workq->workqueue = alloc_workqueue("%s", flags, 1, name);
 	if (workq->workqueue)

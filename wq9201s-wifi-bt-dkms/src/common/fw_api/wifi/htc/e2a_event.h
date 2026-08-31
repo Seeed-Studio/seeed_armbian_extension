@@ -3,7 +3,9 @@
 
 #include "fw_api/wifi/htc/api.h"
 
-#define NUM_EVENT_OF_TRACER_DUMP 32
+// define the number of tracebuf event total cnt for a single dump
+#define NUM_EVENT_OF_TRACER_DUMP 64
+#define NUM_EVENT_OF_TRACER_DUMP_32 32
 
 enum e2a_event_id {
 	/* FIXME: MAC_E2A_xxx ==> E2A_EVENT_xxx */
@@ -35,8 +37,8 @@ enum e2a_event_id {
 	MAC_E2A_FW_LOG,
 	MAC_E2A_PEER_INFO,
 	MAC_E2A_TRACER_DUMP,
+	MAC_E2A_TRACER_DUMP_32,
 	MAC_E2A_FW_STATS_INFO,
-	MAC_E2A_SCAN_MONITOR_REPORT,
 
 	MAC_E2A_LAST,
 };

@@ -7,8 +7,6 @@
 #include "rwnx_msg_tx.h"
 #include "fw_api/wifi/mac/wq_pktdump.h"
 
-// #define  WQ_DBG_DUMP_RECOVERY_ENABLE
-
 typedef enum { WIFI_DBG_PKT_TX = 0, WIFI_DBG_PKT_RX = 1 } WIFI_DBG_PKT_DIR;
 //extern int (*wifi_dbg_insert_func_ptr)(WIFI_DBG_PKT_DIR , void *, struct mbuf *, uint8_t cindex, uint8_t is_ampdu);
 
@@ -662,8 +660,6 @@ int wq_get_chan_util_info(struct rwnx_vif *vif, uint32_t time_ms,
 			  struct wq_dbg_chan_util_info *busy_info);
 int wq_get_chan_noise_info(struct rwnx_vif *vif, uint32_t time_ms,
 			   struct wq_dbg_chan_noise_info *busy_info);
-int wq_get_chan_stats(struct rwnx_vif *vif,
-		      struct dbg_chan_stats_result *result);
 int wq_get_ampdu_stats(struct rwnx_hw *rwnx_hw, struct rwnx_stats *stats);
 int wq_get_ac_delay_time(struct rwnx_hw *rwnx_hw, uint8_t mac_id,
 			 struct wq_dbg_dfx_ac_delay *ac_delay);
@@ -689,5 +685,6 @@ int wq_set_edca_params(struct rwnx_vif *vif, u8 ac, u8 aifs, u16 cwmin,
 int wq_send_fw_cmd(struct rwnx_vif *vif, u8 cmd, u8 info);
 
 void print_fw_hw_feature(struct wq_conf *mod_params);
+noinline void wq_dbg_dump_mem_status(void);
 
 #endif //_WQ_WIFI_DBG_H

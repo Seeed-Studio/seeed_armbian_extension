@@ -2,8 +2,6 @@
 
 #include "wq_log.h"
 
-extern int gv_usb_mtu_pkt_bundle_i;
-
 static inline int wq_urb_ctx_init(struct wq_urb_ctx *req, struct wq_usb *wq_usb)
 {
 	req->wq_usb = wq_usb;
@@ -91,11 +89,11 @@ int wq_usb_pools_init(struct wq_usb *wq_usb)
 	}
 
 	ret = wq_urb_ctx_skb_alloc(&wq_usb->pools.pktin,
-				   gv_usb_mtu_pkt_bundle_i);
+				   WQ_USB_MTU_PKT_BUNDLE_I);
 	if (ret < 0) {
 		WQ_DBG(DM_TRBUS, DL_ERR,
 		       "[auto]msg:%s: pool pktin alloc skb failed (%d)\n",
-		       __func__, gv_usb_mtu_pkt_bundle_i);
+		       __func__, WQ_USB_MTU_PKT_BUNDLE_I);
 		return ret;
 	}
 

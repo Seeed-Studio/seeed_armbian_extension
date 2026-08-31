@@ -17,7 +17,6 @@
 #include <linux/string.h>
 #include <linux/sort.h>
 #include <linux/rtc.h>
-#include <linux/workqueue.h>
 
 #include "rwnx_debugfs.h"
 #include "rwnx_msg_tx.h"
@@ -63,6 +62,7 @@ static ssize_t rwnx_dbgfs_stats_read(struct file *file, char __user *user_buf,
 		} else if (priv->stats.amsdus_rx[i]) {
 			per = 0;
 		} else {
+			per = 0;
 			skipped = 1;
 			continue;
 		}
@@ -258,7 +258,7 @@ static int rwnx_dbgfs_txq(char *buf, size_t size, struct rwnx_txq *txq,
 
 	res = scnprintf(&buf[idx], size, "\n");
 	idx += res;
-	//size -= res;
+	size -= res;
 
 	return idx;
 }
@@ -366,7 +366,7 @@ static int rwnx_dbgfs_txq_vif(char *buf, size_t size, struct rwnx_vif *rwnx_vif,
 			res = rwnx_dbgfs_txq_sta(&buf[idx], size,
 						 rwnx_vif->sta.ap, rwnx_hw);
 			idx += res;
-			//size -= res;
+			size -= res;
 		}
 	}
 
@@ -610,7 +610,7 @@ static int rwnx_dbgfs_reg_dump_open(struct inode *inode, struct file *file)
 	if (status)
 		goto fail_reg_read;
 
-	scnprintf(buf + len, reg_len - len, "0x%06x 0x%08x\n", addr,
+	len += scnprintf(buf + len, reg_len - len, "0x%06x 0x%08x\n", addr,
 			 le32_to_cpu(reg_val));
 	file->private_data = buf;
 	return 0;
@@ -895,9 +895,6 @@ static ssize_t rwnx_dbgfs_hml_dfx_edca_read(struct file *file,
 		return 0;
 
 	if ((error = wq_get_edca_param(priv, debugfs->mac_id, &dfx_edca))) {
-        printk("wq_get_edca_param failed, err=%d (mac_id=%d)\n",
-               error, debugfs->mac_id);
-
 		goto done;
 	} else {
 		bufsz = 1024;
@@ -1202,13 +1199,11 @@ static int rwnx_dbgfs_fw_trace_open(struct inode *inode, struct file *file)
 
 	if (rwnx_fw_trace_alloc_local(&ltrace->lbuf, 5120)) {
 		kfree(ltrace);
-        return -ENOMEM;
 	}
-    else {
-        ltrace->trace = &priv->debugfs.fw_trace;
-        ltrace->rwnx_hw = priv;
-        file->private_data = ltrace;
-    }
+
+	ltrace->trace = &priv->debugfs.fw_trace;
+	ltrace->rwnx_hw = priv;
+	file->private_data = ltrace;
 	return 0;
 }
 
@@ -1634,8 +1629,8 @@ static ssize_t rwnx_dbgfs_enable_read(struct file *file, char __user *user_buf,
 	ssize_t read;
 
 	ret = scnprintf(buf, min_t(size_t, sizeof(buf) - 1, count),
-			"RIU=%d(reg:%d) FCU=%d\n",
-			priv->radar.dpd[RWNX_RADAR_RIU]->enabled, priv->radar.dpd[RWNX_RADAR_RIU]->region,
+			"RIU=%d FCU=%d\n",
+			priv->radar.dpd[RWNX_RADAR_RIU]->enabled,
 			priv->radar.dpd[RWNX_RADAR_FCU]->enabled);
 
 	read = simple_read_from_buffer(user_buf, count, ppos, buf, ret);
@@ -2427,7 +2422,7 @@ static ssize_t rwnx_dbgfs_rc_stats_read(struct file *file,
 		eprob = ((me_rc_stats_cfm.rate_stats[i].probability * 1000) >>
 			 16) +
 			1;
-		       scnprintf(&st[i].line[len], LINE_MAX_SZ - len,
+		len += scnprintf(&st[i].line[len], LINE_MAX_SZ - len,
 				 "  %4u.%1u %5u(%6u)  %6u", eprob / 10,
 				 eprob % 10,
 				 me_rc_stats_cfm.rate_stats[i].success,
@@ -2591,7 +2586,7 @@ static ssize_t rwnx_dbgfs_last_rx_read(struct file *file, char __user *user_buf,
 			union rwnx_rate_ctrl_info rate_config;
 			int percent;
 			int p;
-			int ru_size = 0;
+			int ru_size;
 
 			u64 tmp = rate_stats->table[i];
 			tmp *= 1000;
@@ -3054,19 +3049,17 @@ static void _rwnx_dbgfs_unregister_sta(struct rwnx_debugfs *rwnx_debugfs,
 	sta->stats.rx_rate.cpt = 0;
 	sta->stats.rx_rate.rate_cnt = 0;
 
-	if (rwnx_debugfs->rc_config != NULL) {
-		/* If fix rate was set for this station, save the configuration in case
-		we reconnect to this station within RC_CONFIG_DUR msec */
-		if (rwnx_debugfs->rc_config[sta->sta_idx] >= 0) {
-			struct rwnx_rc_config_save *rc_cfg;
-			rc_cfg = kmalloc(sizeof(*rc_cfg), GFP_KERNEL);
-			if (rc_cfg) {
-				rc_cfg->rate = rwnx_debugfs->rc_config[sta->sta_idx];
-				rc_cfg->timestamp = jiffies;
-				memcpy(rc_cfg->mac_addr, sta->mac_addr, ETH_ALEN);
-				list_add_tail(&rc_cfg->list,
-					&rwnx_debugfs->rc_config_save);
-			}
+	/* If fix rate was set for this station, save the configuration in case
+       we reconnect to this station within RC_CONFIG_DUR msec */
+	if (rwnx_debugfs->rc_config[sta->sta_idx] >= 0) {
+		struct rwnx_rc_config_save *rc_cfg;
+		rc_cfg = kmalloc(sizeof(*rc_cfg), GFP_KERNEL);
+		if (rc_cfg) {
+			rc_cfg->rate = rwnx_debugfs->rc_config[sta->sta_idx];
+			rc_cfg->timestamp = jiffies;
+			memcpy(rc_cfg->mac_addr, sta->mac_addr, ETH_ALEN);
+			list_add_tail(&rc_cfg->list,
+				      &rwnx_debugfs->rc_config_save);
 		}
 	}
 
@@ -3074,6 +3067,12 @@ static void _rwnx_dbgfs_unregister_sta(struct rwnx_debugfs *rwnx_debugfs,
 	rwnx_debugfs->dir_rc_sta[sta->sta_idx] = NULL;
 	rwnx_debugfs->dir_twt_sta[sta->sta_idx] = NULL;
 	sta->twt_ind.sta_idx = RWNX_INVALID_STA;
+}
+
+static void rwnx_sta_ws_release(struct kref *kref)
+{
+	struct rwnx_sta_ws *sta_ws = container_of(kref, struct rwnx_sta_ws, kref);
+	kfree(sta_ws);
 }
 
 static void rwnx_sta_work(struct work_struct *ws)
@@ -3088,7 +3087,7 @@ static void rwnx_sta_work(struct work_struct *ws)
 
 	sta_idx = sta_ws->sta_idx;
 
-	WQ_DBG(DM_GENERIC, DL_WRN, "rwnx_sta_work enter: sta_idx=%d\n", sta_idx);
+	WQ_DBG(DM_GENERIC, DL_WRN, "rwnx_sta_work enter: sta_idx=%d, %px-%px, %px\n", sta_idx, sta_ws, ws, rwnx_debugfs->dir_sta[sta_idx]);
 
 	mutex_lock(&rwnx_debugfs->sta_works_lock);
 
@@ -3103,22 +3102,23 @@ static void rwnx_sta_work(struct work_struct *ws)
 		goto end;
 	}
 
-	if (rwnx_debugfs->dir_sta[sta_idx] == NULL)
+	if (rwnx_debugfs->dir_sta[sta_idx] == NULL) {
+		WQ_DBG(DM_GENERIC, DL_WRN, "rwnx_sta_work() call _rwnx_dbgfs_register_sta()\n");
 		_rwnx_dbgfs_register_sta(rwnx_debugfs, sta);
-	else
+	} else {
+		WQ_DBG(DM_GENERIC, DL_WRN, "rwnx_sta_work() call _rwnx_dbgfs_unregister_sta()\n");
 		_rwnx_dbgfs_unregister_sta(rwnx_debugfs, sta);
-
+	}
 end:
 	list_for_each_entry_safe (ws_entry, next, &rwnx_debugfs->sta_works, list) {
 		if (&ws_entry->sta_work == ws) {
-			WQ_DBG(DM_GENERIC, DL_WRN, "rwnx_sta_work: del sta_ws from list, sta_idx=%d, ws_entry:%p, next:%p\n", sta_idx, ws_entry, next);
+			WQ_DBG(DM_GENERIC, DL_WRN, "rwnx_sta_work: del sta_ws from list, sta_idx=%d\n", sta_idx);
 			list_del(&ws_entry->list);
 			break;
 		}
 	}
 
-    WQ_DBG(DM_GENERIC, DL_WRN, "rwnx_sta_work: kfree sta_ws:0x%p\n", sta_ws);
-	kfree(sta_ws);
+	kref_put(&sta_ws->kref, rwnx_sta_ws_release);
 	mutex_unlock(&rwnx_debugfs->sta_works_lock);
 
 	WQ_DBG(DM_GENERIC, DL_WRN, "rwnx_sta_work exit\n");
@@ -3132,27 +3132,22 @@ void _rwnx_dbgfs_sta_write(struct rwnx_debugfs *rwnx_debugfs, uint8_t sta_idx)
 	if (rwnx_debugfs->unregistering)
 		return;
 
-	if (!rwnx_debugfs->sta_wq) {
-		WQ_DBG(DM_GENERIC, DL_WRN, "_rwnx_dbgfs_sta_write sta_wq not available sta_idx:%d\n", sta_idx);
-		return;
-	}
-
 	ws = kmalloc(sizeof(struct rwnx_sta_ws), GFP_ATOMIC);
 
 	if (!ws) {
-		WQ_DBG(DM_GENERIC, DL_WRN, "_rwnx_dbgfs_sta_write ws alloc failed sta_idx:%d\n", sta_idx);
+		WQ_DBG(DM_GENERIC, DL_WRN, "rwnx_dbgfs_sta_write ws alloc failed sta_idx:%d\n", sta_idx);
 		return;
 	}
 
-    WQ_DBG(DM_GENERIC, DL_WRN, "_rwnx_dbgfs_sta_write: kmalloc ws:0x%p sta_idx:%d\n", ws, sta_idx);
-	INIT_WORK(&ws->sta_work, rwnx_sta_work);
+	WQ_INIT_WORK(&ws->sta_work, rwnx_sta_work);
+	kref_init(&ws->kref);
 	ws->debugfs = rwnx_debugfs;
 	ws->sta_idx = sta_idx;
 
-	WQ_DBG(DM_GENERIC, DL_WRN, "_rwnx_dbgfs_sta_write: add sta_ws to list, sta_idx=%d\n, &rwnx_debugfs->sta_works:0x%p", sta_idx, &rwnx_debugfs->sta_works);
+	WQ_DBG(DM_GENERIC, DL_WRN, "_rwnx_dbgfs_sta_write: add sta_ws to list, sta_idx=%d, %px-%px\n", sta_idx, ws, &ws->sta_work);
 	list_add_tail(&ws->list, &rwnx_debugfs->sta_works);
 
-	queue_work(rwnx_debugfs->sta_wq, &ws->sta_work);
+	schedule_work(&ws->sta_work);
 }
 
 void rwnx_dbgfs_unregister_sta(struct rwnx_hw *rwnx_hw, struct rwnx_sta *sta)
@@ -3238,10 +3233,6 @@ void rwnx_debugfs_deinit(struct rwnx_debugfs *rwnx_debugfs)
         kfree(rwnx_debugfs->dir_twt_sta);
         rwnx_debugfs->dir_twt_sta = NULL;
     }
-    if (rwnx_debugfs->sta_wq) {
-        destroy_workqueue(rwnx_debugfs->sta_wq);
-        rwnx_debugfs->sta_wq = NULL;
-    }
 }
 
 int rwnx_dbgfs_register(struct rwnx_hw *rwnx_hw, const char *name)
@@ -3261,15 +3252,14 @@ int rwnx_dbgfs_register(struct rwnx_hw *rwnx_hw, const char *name)
 
 	rwnx_debugfs->dir_stas = dir_stas;
 	rwnx_debugfs->unregistering = false;
-	rwnx_debugfs->sta_wq = create_singlethread_workqueue("rwnx_dbgfs");
-	if (!rwnx_debugfs->sta_wq)
-		goto err;
 
 	if (!(dir_diags = debugfs_create_dir("diags", dir_drv)))
 		goto err;
 
 	//INIT_WORK(&rwnx_debugfs->sta_work, rwnx_sta_work);
 	INIT_LIST_HEAD(&rwnx_debugfs->sta_works);
+	WQ_DBG(DM_GENERIC, DL_WRN, "rwnx_dbgfs_register: dbgfs=%px, list=%px\n", rwnx_debugfs, &rwnx_debugfs->sta_works);
+
 	mutex_init(&rwnx_debugfs->sta_works_lock);
 	INIT_LIST_HEAD(&rwnx_debugfs->rc_config_save);
 	rwnx_debugfs->sta_idx = RWNX_INVALID_STA;
@@ -3373,6 +3363,8 @@ err:
 void rwnx_dbgfs_unregister(struct rwnx_hw *rwnx_hw)
 {
 	struct rwnx_debugfs *rwnx_debugfs = &rwnx_hw->debugfs;
+	struct rwnx_sta_ws *ws_entry, *ws_next;
+
 	struct rwnx_rc_config_save *cfg, *next;
 	list_for_each_entry_safe (cfg, next, &rwnx_debugfs->rc_config_save,
 				  list) {
@@ -3388,13 +3380,9 @@ void rwnx_dbgfs_unregister(struct rwnx_hw *rwnx_hw)
 	spin_unlock_bh(&rwnx_debugfs->umh_lock);
 	rwnx_wait_um_helper(rwnx_hw);
 	rwnx_fw_trace_deinit(&rwnx_hw->debugfs.fw_trace);
-
-	if (rwnx_debugfs->sta_wq){
-		WQ_DBG(DM_GENERIC, DL_WRN,
-			"%s: now flush dedicated sta workqueue\n",__func__);
-		flush_workqueue(rwnx_debugfs->sta_wq);
-		WQ_DBG(DM_GENERIC, DL_WRN,
-			"%s: dedicated sta workqueue flushed.\n",__func__);
+	//flush_work(&rwnx_debugfs->sta_work);
+	list_for_each_entry_safe (ws_entry, ws_next, &rwnx_debugfs->sta_works, list) {
+		flush_work(&ws_entry->sta_work);
 	}
 	flush_work(&rwnx_debugfs->helper_work);
 	rwnx_debugfs_deinit(rwnx_debugfs);
@@ -3405,12 +3393,24 @@ void rwnx_dbgfs_unregister(struct rwnx_hw *rwnx_hw)
 void rwnx_dbgfs_flush_sta_work(struct rwnx_hw *rwnx_hw)
 {
 	struct rwnx_debugfs *rwnx_debugfs = &rwnx_hw->debugfs;
+	struct rwnx_sta_ws *ws_entry;
 
-	if (rwnx_debugfs->sta_wq) {
-		WQ_DBG(DM_GENERIC, DL_WRN,
-			"%s: now flush dedicated sta workqueue\n",__func__);
-		flush_workqueue(rwnx_debugfs->sta_wq);
-		WQ_DBG(DM_GENERIC, DL_WRN,
-			"%s: dedicated sta workqueue flushed.\n",__func__);
+	WQ_DBG(DM_GENERIC, DL_WRN, "rwnx_dbgfs_flush_sta_work start.\n");
+
+	while (1) {
+		mutex_lock(&rwnx_debugfs->sta_works_lock);
+		if (list_empty(&rwnx_debugfs->sta_works)) {
+			mutex_unlock(&rwnx_debugfs->sta_works_lock);
+			break;
+		}
+		ws_entry = list_first_entry(&rwnx_debugfs->sta_works, struct rwnx_sta_ws, list);
+		kref_get(&ws_entry->kref);
+		mutex_unlock(&rwnx_debugfs->sta_works_lock);
+
+		WQ_DBG(DM_GENERIC, DL_WRN, "flush sta_idx %d\n", ws_entry->sta_idx);
+		flush_work(&ws_entry->sta_work);
+		kref_put(&ws_entry->kref, rwnx_sta_ws_release);
 	}
+
+	WQ_DBG(DM_GENERIC, DL_WRN, "rwnx_dbgfs_flush_sta_work end.\n");
 }

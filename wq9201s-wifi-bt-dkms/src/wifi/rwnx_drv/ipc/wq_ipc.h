@@ -3,9 +3,11 @@
 
 #include "fw_api/wifi/htc/htc_v0.h"
 #include "fw_api/wifi/mac/dp_tx.h"
-#include "rwnx_defs.h"
-
 #include <linux/skbuff.h>
+
+// 前向声明，避免循环包含
+struct rwnx_hw;
+struct htc_q;
 
 #define HEADROOM_HIF_HTC                                                       \
 	(u32)(hif_get_hdr_sz(wq_core_get()) + sizeof(struct wq_htc_v0))
@@ -69,7 +71,8 @@ static inline int wq_ipc_tx_pkt(struct wq_core *core, u8 hw_txq,
 	return wq_ipc_tx_pkt_bundle(core, hw_txq, &skbq);
 }
 
-int wq_ipc_tx_pkt_done_pre(struct wq_core *core, struct sk_buff *skb, int status);
+int wq_ipc_tx_pkt_done_pre(struct wq_core *core, struct sk_buff *skb,
+			   int status);
 int wq_ipc_tx_msg_done(struct htc_q *q, struct sk_buff *skb);
 int wq_ipc_tx_pkt_done(struct htc_q *q, struct sk_buff *skb);
 

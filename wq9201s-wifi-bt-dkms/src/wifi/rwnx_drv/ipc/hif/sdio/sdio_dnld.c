@@ -170,8 +170,7 @@ static int __wq_sdio_bmi_cmd(struct wq_func *dtop, u16 msg_id,
 					  wq_sdio->bmi.woken, tout);
 #endif
 	if (!timeout_left || timeout_left < 0) {
-		WQ_DBG(DM_TRBUS, DL_ERR,
-		       "[auto]ASSERT : dnld cmd ERR %d id: 0x%x\n",
+		WQ_DBG(DM_TRBUS, DL_ERR, "bmi dnld cmd ERR %d id: 0x%x\n",
 		       timeout_left, msg_id);
 		hif_dump_info(&wq_sdio->core);
 		return -ETIMEDOUT;
@@ -210,9 +209,6 @@ int wq_sdio_bmi_cmd(struct wq_core *core, u8 cmd, const void *param, u16 p_size,
 		{ .data = (void *)param, .len = p_size },
 		{ /* terminator */ },
 	};
-
-    /* Suppress static analysis false positive: reqs may appear unused */
-    (void)reqs;
 
 	switch (cmd) {
 	case WQ_BMI_CMD_GET_ROM_VER:
@@ -253,21 +249,19 @@ int wq_sdio_bmi_cmd(struct wq_core *core, u8 cmd, const void *param, u16 p_size,
 		if (boot_cccr & SDIO_BIT_WIFI_FW_STATUS)
 			*(u8 *)resp |= BIT(WQ_FW_WIFI);
 		return ret;
-
 	case WQ_BMI_CMD_UNLOAD_DTOP:
-		/* The BootROM provides no reset command over SDIO. This command
-		 * is only issued while the dtop FW is running (the caller checks
-		 * the sys state first), so ask the running dtop FW to reset the
-		 * chip through the dtop message channel, the same way
-		 * wq_dev_restart() does. Returning 0 here would silently skip
-		 * the reset.
-		 *
-		 * The card enumerated before the reset dies with it; having it
-		 * re-enumerated is left to the caller (__wq_sdio_probe()), once
-		 * the driver has torn its state down.
-		 */
+	/* The BootROM provides no reset command over SDIO. This command
+	 * is only issued while the dtop FW is running (the caller checks
+	 * the sys state first), so ask the running dtop FW to reset the
+	 * chip through the dtop message channel, the same way
+	 * wq_dev_restart() does. Returning 0 here would silently skip
+	 * the reset.
+	 *
+	 * The card enumerated before the reset dies with it; having it
+	 * re-enumerated is left to the caller (__wq_sdio_probe()), once
+	 * the driver has torn its state down.
+	 */
 		return bmi_unload_dtop(core);
-
 	case WQ_BMI_CMD_SET_FW_INFO:
 	case WQ_BMI_CMD_VERIFY_FW:
 		return 0;
@@ -312,6 +306,7 @@ int wq_sdio_read_data_sync_rom(struct wq_sdio *wq_sdio, u8 *pmbuf, u32 count,
 	return status;
 }
 
+extern bool wsys_shutdown_debug;
 static int wq_sdio_write_data_sync_rom(struct wq_sdio *wq_sdio, u8 *pmbuf,
 				       u32 addr, u32 count)
 {
@@ -323,6 +318,7 @@ static int wq_sdio_write_data_sync_rom(struct wq_sdio *wq_sdio, u8 *pmbuf,
 	       "cmd53 write: func num=%d, cur_blksize = %d, max_blk_count = %d, count = %d\n",
 	       dtop_func->func_num, func->cur_blksize, func->card->host->max_blk_count,
 	       count);
+	WARN_ON(wsys_shutdown_debug);
 	sdio_claim_host(func);
 	status = sdio_writesb(func, addr, pmbuf, count);
 	sdio_release_host(func);
@@ -526,8 +522,7 @@ int wq_sdio_bmi_exchange(struct wq_core *core, void *req, u32 req_len,
 					  wq_sdio->bmi.woken, tout);
 #endif
 	if (!timeout_left || timeout_left < 0) {
-		WQ_DBG(DM_TRBUS, DL_ERR, "[auto]ASSERT : dnld cmd ERR %d\n",
-		       timeout_left);
+		WQ_DBG(DM_TRBUS, DL_ERR, "bmi dnld cmd ERR %d\n", timeout_left);
 		hif_dump_info(&wq_sdio->core);
 		return -ETIMEDOUT;
 	}

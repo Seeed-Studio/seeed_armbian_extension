@@ -106,7 +106,7 @@ struct ieee80211_rx_ampdu *alloc_rx_ampdu(struct rwnx_hw *rwnx_hw,
 					  uint8_t sta_idx, uint8_t tid)
 {
 	struct rwnx_sta *sta = &rwnx_hw->sta_table[sta_idx];
-	struct ieee80211_rx_ampdu *rx_ampdu = &sta->rx_ampdu[tid];
+	struct ieee80211_rx_ampdu *rx_ampdu = sta->rx_ampdu[tid];
 
 	WQ_DBG_MAC(DM_IEEE80211, DL_INF, sta,
 		   "alloc_rx_ampdu, sta_idx:%d, tid:%d\n", sta_idx, tid);
@@ -173,7 +173,7 @@ static int ampdu_rx_add_slot(struct ieee80211_rx_ampdu *rap, int off, int tid,
 	struct rwnx_sta *sta = &rwnx_hw->sta_table[sta_idx];
 	struct sk_buff *m_ptr = NULL;
 	uint8_t msdu_seq_check = 0;
-	uint8_t old_off = rap->rxa_off;
+	uint16_t old_off = rap->rxa_off;
 	struct sk_buff *m_drop_ptr = NULL, *m_drop_next_ptr = NULL;
 
 	if (rap->rxa_off == RXA_OFF_INVALID) {
@@ -204,12 +204,12 @@ static int ampdu_rx_add_slot(struct ieee80211_rx_ampdu *rap, int off, int tid,
 			m_drop_ptr = m_drop_next_ptr;
 		}
 		rap->rxa_m[rap->rxa_off] = NULL;
-		WQ_ASSERT((rap->rxa_m_msdu_seq[rap->rxa_off] & AMSDU_SEQ_END) ==
+		WQ_ASSERT(rap->rxa_off < rap->rxa_wnd && (rap->rxa_m_msdu_seq[rap->rxa_off] & AMSDU_SEQ_END) ==
 				  0,
-			  "%s: seq=0x%x", __func__,
-			  rap->rxa_m_msdu_seq[rap->rxa_off]);
+			  "%s: off=%u, seq=0x%x", __func__, rap->rxa_off,
+			  rap->rxa_off < rap->rxa_wnd ? rap->rxa_m_msdu_seq[rap->rxa_off] : 0);
 		rap->rxa_m_msdu_seq[rap->rxa_off] = 0;
-		old_off = 0xFF;
+		old_off = RXA_OFF_INVALID;
 	}
 	if (rap->rxa_off != off) {
 		rap->rxa_off = off;
@@ -823,7 +823,7 @@ void ieee80211_ampdu_reorder_dump_info(struct rwnx_hw *rwnx_hw,
 				sta = &rwnx_hw->sta_table[i];
 				if (sta->valid) {
 					for (j = 0; j < 8; j++) {
-						rap_tmp = &sta->rx_ampdu[j];
+						rap_tmp = sta->rx_ampdu[j];
 						if ((rap_tmp->rxa_flags &
 						     IEEE80211_AGGR_XCHGPEND) !=
 						    0) {
@@ -952,7 +952,7 @@ int ieee80211_ampdu_reorder(struct rwnx_hw *rwnx_hw, uint16_t sta_idx,
         return PROCESS;
 #endif
 	struct rwnx_sta *sta = &rwnx_hw->sta_table[sta_idx];
-	struct ieee80211_rx_ampdu *rap = &sta->rx_ampdu[tid];
+	struct ieee80211_rx_ampdu *rap = sta->rx_ampdu[tid];
 
 	spin_lock_bh(&rap->rxa_qframes_lock);
 
@@ -1156,7 +1156,18 @@ again:
 			IEEE80211_SEQ_ADD(rap->rxa_start, rap->rxa_wnd - 1),
 			rap->rxa_qframes, rxseq, tid, msdu_seq, msdu_seq_end);
 
-		dev_kfree_skb(m);
+		/* chase the received seq if out of window/range
+		 * and no frame queued
+		 */
+		if ((rap->rxa_qframes == 0) && (rap->rxa_nframes == 0) && (rap->rxa_off == RXA_OFF_INVALID)
+				&& (off < IEEE80211_SEQ_RANGE - rap->rxa_wnd)) {
+			rap->rxa_start = IEEE80211_SEQ_ADD(rxseq, 1);
+			del_timer(&rap->rx_reorder_timer);
+			ampdu_dispatch(rwnx_hw, sta, m);
+		} else {
+			dev_kfree_skb(m);
+		}
+
 		rap->out_range_cnt++;
 		spin_unlock_bh(&rap->rxa_qframes_lock);
 		return CONSUMED;
@@ -1174,7 +1185,7 @@ void ieee80211_recv_bar(struct rwnx_hw *rwnx_hw, uint8_t sta_idx, uint8_t tid,
 			uint16_t rxseq, uint8_t fctrl_retry)
 {
 	struct rwnx_sta *sta = &rwnx_hw->sta_table[sta_idx];
-	struct ieee80211_rx_ampdu *rap = &sta->rx_ampdu[tid];
+	struct ieee80211_rx_ampdu *rap = sta->rx_ampdu[tid];
 	uint16_t off;
 
 	spin_lock_bh(&rap->rxa_qframes_lock);
@@ -1278,7 +1289,7 @@ static int ht_recv_action_ba_delba(struct rwnx_hw *rwnx_hw, uint8_t sta_idx,
 	struct rwnx_sta *sta = &rwnx_hw->sta_table[sta_idx];
 	struct ieee80211_rx_ampdu *rap;
 
-	rap = &sta->rx_ampdu[tid];
+	rap = sta->rx_ampdu[tid];
 	if (rap != NULL) {
 		spin_lock_bh(&rap->rxa_qframes_lock);
 		ieee80211_ampdu_reorder_dump_info(rwnx_hw, NULL, false, false,

@@ -68,11 +68,9 @@ enum wq_rx_ctrl {
 
 #define WQ_FN_ENTRY_STR "--> %s()\n", __func__
 #define WQ_FN_LEAVE_STR "<-- %s()\n", __func__
-#if defined(MULTI_CHIP) && (MULTI_CHIP == 1)
-#define WQ_LOG_PREFIX "[WQ_WLAN_1]"
-#else
+
 #define WQ_LOG_PREFIX "[WQ_WLAN]"
-#endif
+
 /*
  * set KERN_ERR here. because console_loglevel of most android is 4
  *      (please refer to `cat /proc/sys/kernel/printk`),

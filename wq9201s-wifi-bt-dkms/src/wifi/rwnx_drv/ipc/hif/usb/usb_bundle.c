@@ -15,8 +15,6 @@
 #include "fw_api/non_wifi/hif/usb/api.h"
 #include "hif_api.h"
 
-extern int gv_usb_max_bundle_i;
-
 extern enum wq_hif_ver hif_htc_decap(struct sk_buff *skb, enum wq_hif_qid qid);
 
 int wq_usb_rx_get_pktnum(struct sk_buff *skb, u32 utf_len)
@@ -26,12 +24,11 @@ int wq_usb_rx_get_pktnum(struct sk_buff *skb, u32 utf_len)
 	struct wq_hif_hdr hif_hdr;
 	u32 flags, i, pkt_num = 0, subpkt_len = 0, pkt_accu_len = 0;
 	u8 *data = skb->data;
-	u32 raw;
+
 	// sanity check
 	do {
 		hif_hdr_ptr = (struct wq_hif_hdr *)(data);
-		raw = le32_to_cpu(*(u32 *)hif_hdr_ptr);
-		memcpy(&hif_hdr, &raw, sizeof(raw));
+		*(u32 *)&hif_hdr = le32_to_cpu(*(u32 *)hif_hdr_ptr);
 
 		if (hif_hdr.ver == WQ_HIF_HDR_VER_0) {
 			subpkt_len = hif_hdr.dw_len << 2;
@@ -46,14 +43,14 @@ int wq_usb_rx_get_pktnum(struct sk_buff *skb, u32 utf_len)
 			return -1;
 		}
 
-		if (pkt_num > gv_usb_max_bundle_i) {
+		if (pkt_num > WQ_USB_MAX_BUNDLE_I) {
 			data = skb->data;
 
 			WQ_DBG(DM_TRBUS, DL_WRN,
 			       "[auto]msg:%s:fatal error, skb=0x%p, utf_len:%d, pkt_alen:%d, pkt_num=%u\n",
 			       __func__, skb, utf_len, pkt_accu_len, pkt_num);
 
-			for (i = 0; i < gv_usb_max_bundle_i; i++) {
+			for (i = 0; i < WQ_USB_MAX_BUNDLE_I; i++) {
 				hif_hdr_ptr = (struct wq_hif_hdr *)(data);
 				*(u32 *)&hif_hdr =
 					le32_to_cpu(*(u32 *)hif_hdr_ptr);
@@ -106,16 +103,13 @@ void wq_usb_rx_debundle(struct wq_core *core, enum wq_hif_qid qid,
 	u32 last_seq;
 	u8 *data = skb->data;
 	struct sk_buff *skb_rxpkt = NULL;
-	u32 raw;
 
 	BUG_ON(qid != WQ_QID_AC_BK);
 
 	// de-bundle rx pkt
 	for (i = 0; i < pkt_num; i++) {
 		hif_hdr_ptr = (struct wq_hif_hdr *)(data);
-		raw = le32_to_cpu(*(u32 *)hif_hdr_ptr);
-		memcpy(&hif_hdr, &raw, sizeof(raw));
-
+		*(u32 *)&hif_hdr = le32_to_cpu(*(u32 *)hif_hdr_ptr);
 		subpkt_len = hif_hdr.dw_len << 2;
 
 		skb_rxpkt = dev_alloc_skb(subpkt_len);

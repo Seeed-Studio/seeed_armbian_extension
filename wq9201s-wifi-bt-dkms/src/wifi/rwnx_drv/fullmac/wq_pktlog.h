@@ -29,10 +29,9 @@ struct pktlog {
 #define MAC_FATCL_REASSOCREQ_ST 0x2
 #define MAC_FATCL_REASSOCRSP_ST 0x3
 
-#ifdef WQ_WLAN_ALL_IN_ONE
 int wq_pktlog_init(struct pktlog *pktlog);
 void wq_pktlog_deinit(struct pktlog *pktlog);
-#endif
+
 int wq_pktlog_save(struct pktlog *pktlog, void *pkt, int size);
 
 #endif

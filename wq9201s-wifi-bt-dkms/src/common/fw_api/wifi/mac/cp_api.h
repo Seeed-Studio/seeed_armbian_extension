@@ -31,9 +31,6 @@ typedef u16 ke_task_id_t;
 
 #define PRIV_TEST_PARAM_COUNT 3
 
-#define MM_CUST_CMD_PARAM_MAX 64
-#define MM_CUST_EVT_PARAM_MAX 64
-
 enum
 {
 	FORCE_PCIE_LINK_SPEED_ADAPTIVE,
@@ -379,8 +376,6 @@ enum mm_msg_ext_tag
 	MM_CHAN_PWR_INFO_REQ,
 	///set reg domain country req
 	MM_REG_DM_CODE_REQ,
-	/// Set mmode req
-	MM_SET_MMODE_REQ,
 	///CCA set enable/disable
 	MM_SET_CCA_CAP_REQ,
 	///CCA set confirmation
@@ -389,20 +384,6 @@ enum mm_msg_ext_tag
 	MM_GET_CCA_CAP_REQ,
 	///CCA get confirmation
 	MM_GET_CCA_CAP_CFM,
-	/// SDR_CTRL_CMD req
-	MM_SDR_CTRL_CMD_REQ,
-	/// SDR CTRL CMD Confirmation
-	MM_SDR_CTRL_CMD_CFM,
-	/// request trx stat result
-	MM_GET_TRX_STAT_REQ,
-	/// MM_GET_TRX_STAT_REQ Confirmation
-	MM_GET_TRX_STAT_CFM,
-	/// Custom event indication
-	MM_CUST_EVT_IND,
-	///SMPS req
-	MM_SET_SMPS_REQ,
-	///SMPS cfm
-	MM_SET_SMPS_CFM,
 	/// MAX number of messages
 	MM_EXT_MAX,
 };
@@ -603,37 +584,38 @@ struct mm_set_power_cfm
 
 struct mm_pwr_info_req
 {
-    u8 tx_pwr_force_ena;
-    u8 tx_pwr_force_dbm;
+	u8 tx_pwr_force_ena;
+	u8 tx_pwr_force_dbm;
 };
 
 struct mm_ini_conf_req
 {
-    u8 tx_pwr_force_dbm;
-    u8 tx_pwr_force_ena:1;
-    u8 tx_ampdu_disable:1;
-    u8 force_edca_vo:1;
-    u8 force_ignore_nav:1;
-    u8 underrun_adapt_tx_rate : 1;
-    u8 dynbw_enable:1;
-    u8 mmode:2;
-    u16 max_support_ba_bitmap;
-    u16 nss:2; // start from 1, the same with conf file
-    u16 noise_thr:8;
-    u16 usb_max_bundle_in:4; //usb max in bundle num
-    u16 ht_only_ofdm:1; //only ofdm rate in ht mode
-    u16 update_agc_by_rssi :1;
-    u16 default_txrate_6m:1; //default tx rate 6Mbps for 2.4G
-    u16 retry_more:1;
-    u16 mcc_sta_bias_level:2; /* 0=50/50, 1=60/40, 2=70/30, 3=80/20 */
-    u16 skip_dtim:4;
-    u16 rsvd:8;
-    u16 extension[14]; //reserved for future use, to avoid to patch in ini conf handler in fw
+	u8 tx_pwr_force_dbm;
+	u8 tx_pwr_force_ena : 1;
+	u8 tx_ampdu_disable : 1;
+	u8 force_edca_vo : 1;
+	u8 force_ignore_nav : 1;
+	u8 underrun_adapt_tx_rate : 1;
+	u8 dynbw_enable : 1;
+	u8 mmode : 2;
+	u16 max_support_ba_bitmap;
+	u16 nss : 2; // start from 1, the same with conf file
+	u16 disable_mcs_0_4 : 1;
+	u16 force_enable_11n_sgi : 1;
+	u16 force_2g_max_amsdu_2 : 1;
+	u16 ip_sleep_en : 1;
+	u16 wsys_sleep_en : 1;
+	u16 skip_dtim : 4;
+	u16 retry_more : 1;
+	u16 reserve : 4;
+	u16 noise_thr: 8;
+	u16 reserve2: 8;
+	u16 extension[14]; //reserved for future use, to avoid to patch in ini conf handler in fw
 };
 
 struct mm_reg_dm_code_req
 {
-    u8 reg_dm_code;
+	u8 reg_dm_code;
 };
 
 /// Structure containing the parameters of the @ref MM_SET_BEACON_INT_REQ message
@@ -1327,8 +1309,6 @@ struct mm_csa_finish_ind
 	u8 status;
 	/// New channel ctx index
 	u8 chan_idx;
-	/// channel info
-	struct mac_chan_op chan;
 };
 
 /// Structure containing the parameters of the @ref MM_CSA_TRAFFIC_IND message
@@ -1395,13 +1375,10 @@ enum info_set_msg_type {
 	MSG_TYPE_CONCURRENT_ENDING,
 	MSG_TYPE_SET_COEX_INFO,
 	MSG_TYPE_ENABLE_PEER_TX_INFO,
-	MSG_TYPE_BEACON_INTERVAL,
-	MSG_TYPE_ENABLE_FW_STATS,
 	MSG_TYPE_SET_RSSI_ANT_INFO,
-	MSG_TYPE_GET_TEMP_NSS_INFO,
-	MSG_TYPE_SET_NSS,
-	MSG_TYPE_SET_SCAN_MONITOR_INFO,
-	MSG_TYPE_CHAN_STATS,
+	MSG_TYPE_ENABLE_FW_STATS,
+	MSG_TYPE_SET_DUTY_CYCLE_INFO,
+	MSG_TYPE_GET_TX_POWER,
 };
 
 struct mm_info_notify_req {
@@ -1430,15 +1407,6 @@ struct mm_info_notify_get_cfm {
 
 struct mm_set_ant_req {
 	u8 ant;
-};
-
-struct mm_set_smps_req {
-	u8 nss;
-};
-
-struct mm_get_temp_nss_info {
-	int32_t temp;
-	u8 nss;
 };
 
 enum mm_reg_cfm_result {
@@ -1477,13 +1445,6 @@ struct mm_nss_update_ind
 	u8 nss;
 	u8 mode;
 };
-
-struct mm_cust_evt_ind
-{
-	u8 len;
-	u8 buff[MM_CUST_EVT_PARAM_MAX];
-};
-
 
 struct ipv6_info
 {
@@ -1529,337 +1490,15 @@ struct mm_get_cca_cfm {
 
 	///Amount of period the primary channel was sensed busy, unit in Us.
 	u32 busy_time;
-	/// Period ofcapture timer, unit in Us.
-	u32 period;
+	/// Period ofcapture timer, unit in Ms.
+	u16 period;
+	///Realtime noise, dbm.
+	s16 rssi_noise;
+	///Realtime non-wifi signal, dbm.
+	s16 rssi_nowifi;
+	///Realtime valid signal, dbm.
+	s16 rssi_total;
 };
-
-enum MM_STD_WIFI_SDR_HOST_REQ_e {
-    /***********************************************************************
-     *               WIFI SDR Control Command Definition                   *
-     ***********************************************************************/
-    SDR_SAP_SET_SDR_CFG = 0x00,     /* sdr_sap_set_sdr_cfg_t */
-    SDR_SAP_GET_SDR_CFG,            /* sdr_sap_get_sdr_cfg_t */
-
-    SDR_SAP_ADD_STA_CFG,            /* sdr_sap_add_sta_cfg_t */
-    SDR_SAP_GET_STA_CFG,            /* sdr_sap_get_sta_cfg_t */
-    SDR_SAP_UPDATE_STA_CFG,         /* sdr_sap_update_sta_cfg_t */
-    SDR_SAP_SET_EX_SLOT_STA_CFG,    /* sdr_sap_set_exslot_sta_cfg_t */
-    SDR_SAP_SET_ACK_TIMEOUT_CFG,    /* sdr_sap_set_ack_timeout_cfg_t */
-    SDR_SAP_SET_SW_RETRY_CFG,       /* sdr_sap_set_sw_retry_cfg_t */
-
-    SDR_SAP_RST_STA_CACHE,          /* no data */
-    SDR_SAP_COMMIT_STA_CFG,         /* sdr_sap_commit_cfg_t */
-
-    SDR_SAP_SET_SAP_CFG,            /* sdr_sap_set_sap_cfg_t */
-    SDR_SAP_GET_SAP_CFG,            /* sdr_sap_get_sap_cfg_t */
-
-
-    SDR_STA_GET_SDR_CFG = 0x80,     /* sdr_sta_get_sdr_cfg_t */
-
-    SDR_STA_GET_SAP_CFG,            /* sdr_sta_get_sap_cfg_t */
-    SDR_STA_GET_STA_CFG,            /* sdr_sta_get_sta_cfg_t */
-    SDR_SAP_SET_SDRGI_CFG,          /* sdr_sap_set_sdrgi_t */
-
-    SDR_SDK_CUST_CMD_ID = 0xF0,		/* sdr_sdk_cust_cmd_id_t */
-
-    /***********************************************************************
-     *               STD SDR Control Command Definition                    *
-     ***********************************************************************/
-    STD_SDR_SET_CCO_MODE = 0xC0,    /* std_sdr_set_cco_mode_t */
-    STD_SDR_SET_STA_MODE,           /* std_sdr_set_sta_mode_t */
-    STD_SDR_SET_MONITOR_MODE,       /* no data */
-    STD_SDR_CCO_RST_CFG_CACHE,      /* no data */
-    STD_SDR_CCO_ADD_STA_CFG,        /* std_sdr_cco_add_sta_cfg_t */
-    STD_SDR_CCO_COMMIT_STA_CFG,     /* std_sdr_cco_commit_cfg_t */
-    STD_SDR_GET_WORK_MODE,          /* std_sdr_get_work_mode_t */
-    STD_SDR_CCO_GET_STA_CFG,        /* std_sdr_cco_get_sta_cfg_t */
-    STD_SDR_STA_GET_CFG,            /* std_sdr_sta_get_cfg_t */
-};
-
-/// Structure containing the parameters of the @ref SDR_SAP_SET_SDR_CFG message
-struct sdr_sap_set_sdr_cfg_t {
-    /* sdr enable(non-zero) or disable(zero) */
-    uint8_t sdr_en;
-};
-
-/// Structure containing the parameters of the @ref SDR_SAP_GET_SDR_CFG message
-struct sdr_sap_get_sdr_cfg_t {
-    /* sdr enable(non-zero) or disable(zero) */
-    uint8_t sdr_en;
-};
-
-/// Structure containing the parameters of the @ref SDR_STA_GET_SDR_CFG message
-struct sdr_sta_get_sdr_cfg_t {
-    /* sdr enable(non-zero) or disable(zero) */
-    uint8_t sdr_en;
-};
-
-/// Structure containing the parameters of the @ref SDR_SAP_ADD_STA_CFG message
-struct sdr_sap_add_sta_cfg_t {
-    /* mac address of sta */
-    uint8_t mac[MAC_ADDR_LEN];
-    /* sta fixed power in dBm, 0xFF means do not fix */
-    uint8_t sta_pwr_dbm;
-    /* sta tx time slot in TU */
-    uint8_t sta_slot_tu;
-    /* sap tx fixed rate to this sta, 0xFFFF means do not fix */
-    uint16_t sap_rate;
-    /* sta tx fixed rate to sap, 0xFFFF means do not fix */
-    uint16_t sta_rate;
-};
-
-/// Structure containing the parameters of the @ref SDR_SAP_GET_STA_CFG message
-struct sdr_sap_get_sta_cfg_t {
-    /* sta index of current sta */
-    uint8_t curr_sta_index;
-    /* indicates whether the sta info is valid */
-    uint8_t sta_info_valid;
-    /* sta mac address */
-    uint8_t mac[MAC_ADDR_LEN];
-    /* fixed power of sta tx in dBm */
-    uint8_t sta_pwr_dbm;
-    /* sta tx time slot in TU */
-    uint8_t sta_slot_tu;
-    /* sap tx fixed rate to this sta, 0xFFFF means do not fix */
-    uint16_t sap_rate;
-    /* sta tx fixed rate to sap, 0xFFFF means do not fix */
-    uint16_t sta_rate;
-};
-
-// Structure containing the parameters of the @ref SDR_SAP_UPDATE_STA_CFG message
-struct sdr_sap_update_sta_cfg_t {	
-    /* mac address of sta */
-    uint8_t update_mac[MAC_ADDR_LEN];
-    /* sta fixed power in dBm, 0xFF means do not fix */
-    uint8_t update_sta_pwr_dbm;
-    /* sap tx fixed rate to this sta, 0xFFFF means do not fix */
-    uint16_t update_sap_rate;
-    /* sta tx fixed rate to sap, 0xFFFF means do not fix */
-    uint16_t update_sta_rate;
-};
-
-/// Structure containing the parameters of the @ref SDR_SAP_SET_SAP_CFG message
-struct sdr_sap_set_sap_cfg_t {
-    /* sap control flags */
-    uint32_t ctrl_flg;
-    /* sap tx fixed power in dBm, 0xFF means not set pwr */
-    uint8_t  pwr_dbm;
-    /* sap tx time slot in TU */
-    uint8_t  slot_tu;
-    /* bcn period number of beacon extend(or repeat) when beacon lost in sta */
-    uint8_t  bcn_extend_num;
-};
-
-/// Structure containing the parameters of the @ref SDR_SAP_GET_SAP_CFG message
-struct sdr_sap_get_sap_cfg_t {
-    /* sap control flags, bitmap */
-    uint32_t ctrl_flg;
-    /* sap tx fixed power in dBm, 0xFF means */
-    uint8_t  pwr_dbm;
-    /* sap tx time slot in TU */
-    uint8_t  slot_tu;
-    /* number sta extend(repeat) beacon time slot allocation when bcn slot */
-    uint8_t  bcn_extend_num;
-    /* beacon period in TU */
-    uint8_t  bcn_period_tu;
-    /* tdma period in TU */
-    uint16_t tdma_period_tu;
-};
-
-/// Structure containing the parameters of the @ref SDR_SAP_SET_SDR_CFG message
-struct sdr_sap_commit_cfg_t {
-    /* Indicates whether config should be commit immediately */
-    uint8_t refresh_immediate;
-};
-
-/// Structure containing the parameters of the @ref SDR_STA_GET_SAP_CFG message
-struct sdr_sta_get_sap_cfg_t {
-    /* sap sdr control flag parsed from sdr ie */
-    uint32_t ctrl_flg;
-    /* sap tx time slot in TU, parsed from sdr ie */
-    uint8_t  slot_tu;
-    /* sap beacon extend number, parsed from sdr ie */
-    uint8_t  bcn_extend_num;
-};
-
-/// Structure containing the parameters of the @ref SDR_STA_GET_STA_CFG message
-struct sdr_sta_get_sta_cfg_t {
-    /* indicates whether the sta info is valid */
-    uint8_t sta_info_valid;
-    /* sta power config in dBm, 0xFF means do not set */
-    uint8_t sta_pwr_dbm;
-    /* sta tx time slot in TU */
-    uint8_t sta_slot_tu;
-    /* sta rate index config, 0xFFFF means do not fix rate */
-    uint16_t sta_rate;
-};
-
-/// Structure containing the parameters of the @ref STD_SDR_SET_CCO_MODE message
-struct std_sdr_set_cco_mode_t {
-    /* cco tx time slot in TU */
-    uint8_t cco_tx_slot_time_tu;
-    /* cco beacon extend number by sta when beacon lost */
-    uint8_t cco_bcn_extend_num;
-};
-
-/// Structure containing the parameters of the @ref STD_SDR_SET_STA_MODE message
-struct std_sdr_set_sta_mode_t {
-    /* cco bssid which sta will connect with */
-    uint8_t cco_bssid[MAC_ADDR_LEN];
-};
-
-/// Structure containing the parameters of the @ref STD_SDR_CCO_ADD_STA_CFG message
-struct std_sdr_cco_add_sta_t {
-    /* sta mac address to add */
-    uint8_t  sta_mac[MAC_ADDR_LEN];
-    /* sta tx power in dBm, 0xFF means do not set */
-    uint8_t  sta_pwr;
-    /* sta tx time slot in TU */
-    uint8_t  sta_slot_tu;
-    /* sta tx fixed rate, 0xFFFF means do not fix */
-    uint16_t sta_rate;
-};
-
-/// Structure containing the parameters of the @ref STD_SDR_CCO_COMMIT_STA_CFG message
-struct std_sdr_cco_commit_cfg_t {
-    /* indicates whether commit config immediately */
-    uint8_t refresh_immediate;
-};
-
-/// Structure containing the parameters of the @ref STD_SDR_GET_WORK_MODE message
-struct std_sdr_get_work_mode_t {
-#define STD_SDR_WORK_MODE_MTR   0
-#define STD_SDR_WORK_MODE_CCO   1
-#define STD_SDR_WORK_MODE_STA   2
-    /* work mode of monitor, ref @STD_SDR_WORK_MODE_xxx */
-    uint8_t work_mode;
-    union {
-        /* cco config if work_mode is STD_SDR_WORK_MODE_CCO */
-        struct std_sdr_set_cco_mode_t cco_cfg;
-        /* sta config if work mode is STD_SDR_WORK_MODE_STA */
-        struct std_sdr_set_sta_mode_t sta_cfg;
-    };
-};
-
-/// Structure containing the parameters of the @ref STD_SDR_CCO_GET_STA_CFG message
-struct std_sdr_cco_get_sta_cfg_t {
-    /* sta index */
-    uint8_t curr_sta_index;
-    /* indicates whether sta info is valid */
-    uint8_t sta_info_valid;
-    /* sta config info */
-    struct std_sdr_cco_add_sta_t sta_cfg;
-};
-
-/// Structure containing the parameters of the @ref STD_SDR_STA_GET_CFG message
-struct std_sdr_sta_get_cfg_t {
-    /* indicates whether sta is connected with cco */
-    uint8_t  cco_connected;
-    /* cco tx time slot in TU */
-    uint8_t  cco_tx_slot_tu;
-    /* sta tx time slot in TU */
-    uint8_t  sta_tx_slot_tu;
-    /* sta tx power in dBm, 0xFF means do not set */
-    uint8_t  sta_tx_pwr_dbm;
-    /* sta tx fixed rate */
-    uint16_t sta_tx_rate_cfg;
-    /* tdma period in TU */
-    uint16_t tdma_period_tu;
-};
-
-struct sdr_sap_set_sdrgi_t {
-	/* sap sdr guard interval in us*/
-	uint8_t sap_sdrgi_ten_us;
-};
-
-struct sdr_sap_set_exslot_sta_cfg_t {
-	/* sap tx time slot in TU */
-	uint8_t ext_slot_tu;
-	/* number sta  ext_slot_tu */
-	uint8_t ext_slot_num;
-};
-
-struct sdr_sap_set_ack_timeout_cfg_t {
-	/* ack timeout in us */
-	uint8_t ack_timeout;
-};
-
-struct sdr_sap_set_sw_retry_cfg_t {
-	/* sw retry */
-	uint8_t sw_retry;
-};
-
-/// Structure containing the parameters of the @ref MM_SDR_CTRL_CMD_REQ message
-/// Structure containing the parameters of the @ref MM_SDR_CTRL_CMD_CFM message
-struct mm_std_wifi_sdr_param_t {
-    uint8_t req_id;
-    uint8_t vif_idx;
-    union {
-        /* WIFI SDR Data Definition */
-        struct sdr_sap_set_sdr_cfg_t    sap_set_sdr_cfg;
-        struct sdr_sap_get_sdr_cfg_t    sap_get_sdr_cfg;
-        struct sdr_sta_get_sdr_cfg_t    sta_get_sdr_cfg;
-        struct sdr_sap_add_sta_cfg_t    sap_add_sta_cfg;
-        struct sdr_sap_get_sta_cfg_t    sap_get_sta_cfg;
-        struct sdr_sap_set_sap_cfg_t    sap_set_sap_cfg;
-        struct sdr_sap_get_sap_cfg_t    sap_get_sap_cfg;
-        struct sdr_sap_commit_cfg_t     sap_commit_cfg;
-        struct sdr_sta_get_sap_cfg_t    sta_get_sap_cfg;
-        struct sdr_sta_get_sta_cfg_t    sta_get_sta_cfg;
-        struct sdr_sap_set_sdrgi_t      sap_set_sdrgi;
-        struct sdr_sap_update_sta_cfg_t sap_update_sta_cfg;
-        struct sdr_sap_set_exslot_sta_cfg_t sap_set_exslot_sta_cfg;
-        struct sdr_sap_set_ack_timeout_cfg_t sap_set_ack_timeout_cfg;
-        struct sdr_sap_set_sw_retry_cfg_t sap_set_sw_retry_cfg;
-        /* STD SDR Data Definition */
-        struct std_sdr_set_cco_mode_t   std_set_cco_mode;
-        struct std_sdr_set_sta_mode_t   std_set_sta_mode;
-        struct std_sdr_cco_add_sta_t    std_cco_add_sta;
-        struct std_sdr_cco_commit_cfg_t std_cco_commit_cfg;
-        struct std_sdr_get_work_mode_t  std_get_work_mode;
-        struct std_sdr_cco_get_sta_cfg_t std_cco_get_sta_cfg;
-        struct std_sdr_sta_get_cfg_t    std_sta_get_cfg;
-        uint8_t req_param[MM_CUST_CMD_PARAM_MAX];
-        
-    };
-};
-
-/// Structure containing the parameters of the @ref MM_GET_TRX_STAT_REQ message
-struct mm_trx_stat_req_param_t {
-    /* sta index */
-    uint8_t  sta_idx;
-    /* indicates whether statistics is needed to clear */
-    uint8_t  clear_stat;
-    /* request tx statistics or not */
-    uint8_t  req_tx_stat;
-    /* reserved field */
-    uint8_t  reserved;
-};
-
-/// Structure containing the parameters of the @ref MM_GET_TRX_STAT_CFM message
-struct mm_trx_stat_cfm_param_t {
-    /* mac address of sta */
-    uint8_t  mac[MAC_ADDR_LEN];
-    /* total number of rx packets for each tid */
-    uint32_t rx_pkt_total[TID_MAX];
-    /* number of missed packets for each tid */
-    uint32_t rx_pkt_miss[TID_MAX];
-    /* number of rx packets with retry flag for each tid */
-    uint32_t rx_pkt_retry[TID_MAX];
-    /* number of expect rx packets for each tid */
-    uint32_t rx_pkt_expect[TID_MAX];
-    /* number of rx duplicated packets for each tid */
-    uint32_t rx_pkt_duplicate[TID_MAX];
-    /* number of rx stat buffer overflow for each tid */
-    uint32_t rx_rec_overflow[TID_MAX];
-    /* number of tx ok */
-    uint32_t tx_ok_cnt;
-    /* number of tx retry */
-    uint32_t tx_retry_cnt;
-    /* number of tx collide */
-    uint32_t tx_ppdu_collide;
-};
-
 
 //* **************** MM task end ****************** *//
 
@@ -2418,7 +2057,9 @@ struct me_config_monitor_req
 	/// Channel to configure
 	struct mac_chan_op chan;
 	/// Is channel data valid
-	bool chan_set;
+	u8 chan_set:1;
+	u8 rsv:3;
+	u8 vif_idx:4;
 	/// Enable report of unsupported HT frames
 	bool uf;
 };
@@ -2799,8 +2440,7 @@ enum apm_msg_tag
 	APM_PROBE_CLIENT_CFM,
 	/// Indication of Probe Client status
 	APM_PROBE_CLIENT_IND,
-	/// Indication of radar pulse
-	APM_RADAR_PULSE_IND,
+
 	/// MAX number of messages
 	APM_MAX,
 };
@@ -3274,40 +2914,6 @@ struct dbg_chan_util_info_req
 {
 	u8 vif_idx;
 	u32 time_ms;
-};
-
-struct dbg_chan_stats_req
-{
-	u8 vif_idx;
-	u8 reserved[3];
-};
-
-#define DBG_CHAN_STATS_SNAPSHOT_COUNT		10
-
-struct dbg_chan_stats_snapshot
-{
-	u32 index;
-	int32_t rssi_nonwifi;
-	u32 nonwifi_busy_time;
-	int32_t ground_noise_pri20;
-	int32_t ground_noise_sec20;
-	int32_t ground_noise_sec40;
-	u32 tx_time_total;
-	u32 rx_time_self;
-	u32 rx_time_other;
-	u32 total_busy_time;
-	u32 total_busy_time_sec_20;
-	u32 total_busy_time_sec_40;
-	u32 cca_idle_pri_20;
-	u32 cca_idle_pri_40;
-	u32 cca_idle_pri_80;
-};
-
-struct dbg_chan_stats_result
-{
-	u8 count;
-	u8 reserved[3];
-	struct dbg_chan_stats_snapshot snapshots[DBG_CHAN_STATS_SNAPSHOT_COUNT];
 };
 
 struct dbg_crc_stats_req

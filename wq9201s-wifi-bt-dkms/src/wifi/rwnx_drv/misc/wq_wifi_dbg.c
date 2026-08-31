@@ -116,6 +116,33 @@ const char *frame_type_to_str(uint8_t *frame_ctrl, int is_ampdu)
 	return "RESERVED";
 }
 
+const char *eth_hdr_frame_type_to_str(uint8_t *data)
+{
+	struct ethhdr *eth;
+	eth = (struct ethhdr *)data;
+	switch(htons(eth->h_proto)) {
+        case ETH_P_ARP:
+            return "ETH_P_ARP";
+        case ETH_P_IP:
+            return "ETH_P_IP";
+        case ETH_P_PAE:
+            return "ETH_P_PAE";
+        case ETH_P_IPV6:
+            return "ETH_P_IPV6";
+        default:
+            break;
+	}
+	return "RESERVED";
+}
+
+
+/*
+ * The pktdump payload has two formats, distinguished by dpkt->eth_hdr_flag:
+ *  1: payload starts with eth hdr, which is tx data pkt,
+ *    (because it's conversion from eth hdr to mac hdr is completed by HW)
+ *  0: payload starts with mac hdr
+ * Currently, only under the USB interface, the fw will upload pktdump evt that start with eth hdr.
+*/
 void wq_packet_dump_evt_handler(WIFI_DBG_PKTDUMP *dpkt)
 {
 	WIFI_DBG_PKTDUMP *pkt = dpkt;
@@ -129,15 +156,13 @@ void wq_packet_dump_evt_handler(WIFI_DBG_PKTDUMP *dpkt)
 	struct rx_ht_vect rx_ht_vec;
 	struct rx_he_vect *rx_he_mu_vec = NULL;
 	union rwnx_rate_ctrl_info ratecntrl;
-	union rwnx_hw_txstatus_um txstatus;
+	union rwnx_hw_txstatus_um txstatus = {{0}};
+	uint8_t mac_hdr_frame_ctrl = 0;
 
 	uint8_t bw = 0, rate = 0, txstatusbw = 0;
-	char *str_format = NULL, *str_l_rssi __maybe_unused = NULL;
-	char *str_pregitype __maybe_unused = NULL;
+	char *str_format = NULL, *str_l_rssi = NULL, *str_pregitype = NULL;
 	uint8_t l_length_l = 0, l_length_h = 0;
-	uint8_t mcs = 0;
-	uint8_t nss __maybe_unused = 0;
-	uint8_t sgi __maybe_unused = 0;
+	uint8_t mcs = 0, nss = 0, sgi = 0;
 
 	uint8_t non_ht_rate_tx[] = { 2,	 4,  11, 22, 12,  18, 24,
 				     36, 48, 72, 96, 108, 0 };
@@ -152,28 +177,34 @@ void wq_packet_dump_evt_handler(WIFI_DBG_PKTDUMP *dpkt)
 	struct timespec64 now = { .tv_sec = 0, .tv_nsec = 0 };
 #endif
 
-	hdr = (struct ieee80211_hdr_3addr *)pkt->pkt_data;
-	//dump_bytes("pkt_dump", pkt->pkt_data, PKT_COPY_LEN);
-
-	if (ieee80211_is_data(hdr->frame_control) &&
-	    (pkt->len > ether_offset)) {
-		if (ieee80211_is_data_qos(hdr->frame_control))
-			ether_offset += IEEE80211_QOS_CTL_LEN;
-		if (ieee80211_has_order(hdr->frame_control))
-			ether_offset += IEEE80211_HTC_LEN;
-		if (ieee80211_has_protected(hdr->frame_control)) {
-			ether_offset +=
-				IEEE80211_WEP_IVLEN + IEEE80211_WEP_KIDLEN;
-			if (pkt->pkt_data[ether_offset - 1] &
-			    IEEE80211_WEP_EXTIV)
-				ether_offset += IEEE80211_WEP_EXTIVLEN;
+	if (dpkt->dir == WIFI_DBG_PKT_TX && dpkt->eth_hdr_flag) {
+		snprintf(eth_str, 12, "eth: %02x%02x",
+				 dpkt->pkt_data[12], dpkt->pkt_data[13]);
+	} else {
+		mac_hdr_frame_ctrl = pkt->pkt_data[0];
+		hdr = (struct ieee80211_hdr_3addr *)pkt->pkt_data;
+		//dump_bytes("pkt_dump", pkt->pkt_data, PKT_COPY_LEN);
+		if (ieee80211_is_data(hdr->frame_control) &&
+		    (pkt->len > ether_offset)) {
+			if (ieee80211_is_data_qos(hdr->frame_control))
+				ether_offset += IEEE80211_QOS_CTL_LEN;
+			if (ieee80211_has_order(hdr->frame_control))
+				ether_offset += IEEE80211_HTC_LEN;
+			if (ieee80211_has_protected(hdr->frame_control)) {
+				ether_offset +=
+					IEEE80211_WEP_IVLEN + IEEE80211_WEP_KIDLEN;
+				if (pkt->pkt_data[ether_offset - 1] &
+				    IEEE80211_WEP_EXTIV)
+					ether_offset += IEEE80211_WEP_EXTIVLEN;
+			}
+			ether_offset += 6; /* Ignore SNAP/LLC header */
+			if (pkt->len >= ether_offset)
+				snprintf(eth_str, 12, "eth: %02x%02x",
+					 pkt->pkt_data[ether_offset],
+					 pkt->pkt_data[ether_offset + 1]);
 		}
-		ether_offset += 6; /* Ignore SNAP/LLC header */
-		if (pkt->len >= ether_offset)
-			snprintf(eth_str, 12, "eth: %02x%02x",
-				 pkt->pkt_data[ether_offset],
-				 pkt->pkt_data[ether_offset + 1]);
 	}
+
 	//rx vec1 status show
 	if (pkt->dir == WIFI_DBG_PKT_RX) {
 		rxvect = (struct rx_vec_detail_1 *)&(pkt->rx_vec[0]);
@@ -401,7 +432,7 @@ void wq_packet_dump_evt_handler(WIFI_DBG_PKTDUMP *dpkt)
 			nss = rxvect->he.nss;
 			sgi = rxvect->he.gi_type;
 		} else if (rx_vec_1.format_mod == FORMATMOD_HE_MU) {
-			rx_he_mu_vec = (struct rx_he_vect *)&rxvect->he_mu;
+			rx_he_mu_vec = (struct rx_he_vect *)&rxvect;
 			mcs = rx_he_mu_vec->mcs;
 			nss = rx_he_mu_vec->nss;
 			sgi = rx_he_mu_vec->gi_type;
@@ -433,7 +464,7 @@ void wq_packet_dump_evt_handler(WIFI_DBG_PKTDUMP *dpkt)
 				if (nRetry == 0 && i == 0)
 					break;
 
-				if (total_retries < nRetry)
+				if (total_retries <= nRetry)
 					break;
 
 				total_retries -= nRetry;
@@ -630,52 +661,91 @@ void wq_packet_dump_evt_handler(WIFI_DBG_PKTDUMP *dpkt)
 	}
 
 	gv_pktdump_sn = pkt->sn;
-
-	WQ_DBG(DM_PKTDUMP, DL_WRN,
+	if (dpkt->dir == WIFI_DBG_PKT_TX && dpkt->eth_hdr_flag) {
+		WQ_DBG(DM_PKTDUMP, DL_WRN,
+	       "[auto]%s%d %d:%x(%d:%d) %s%d%s BW%u(%u) %ddBm %ddB (%s) %02x%02x%02x%02x%02x%02x %02x%02x%02x%02x%02x%02x .. %s\n",
+	       pkt->dir == WIFI_DBG_PKT_TX ? "T" : "R", 
+	       pkt->len,
+	       pkt->mac_id,
+	       pkt->tx_status,
+	       txstatus.frm_successful_tx,
+	       txstatus.num_mpdu_retries,
+	       str_format,
+	       rate ? rate : mcs,
+	       rate ? "Mbps" : "",
+	       bw,
+	       pkt->dir == WIFI_DBG_PKT_TX ? txstatusbw : bw,
+	       rxrssi,
+	       snr,
+	       eth_hdr_frame_type_to_str(pkt->pkt_data),
+	       pkt->pkt_data[0], pkt->pkt_data[1], pkt->pkt_data[2], pkt->pkt_data[3], pkt->pkt_data[4], pkt->pkt_data[5], // dst addr: 6 bytes
+	       pkt->pkt_data[6], pkt->pkt_data[7], pkt->pkt_data[8], pkt->pkt_data[9], pkt->pkt_data[10], pkt->pkt_data[11], // src addr: 6 bytes
+	       eth_str);
+	} else {
+		WQ_DBG(DM_PKTDUMP, DL_WRN,
 	       "[auto]%s%d %d:%x %s%d%s BW%u(%u) %ddBm %ddB %02x%02x(%s%c%c%c%c) %02x%02x %02x%02x%02x%02x%02x%02x %02x%02x%02x%02x%02x%02x .. %02x%02x %02x%02x %s\n",
-	       pkt->dir == WIFI_DBG_PKT_TX ? "T" : "R", pkt->len, pkt->mac_id,
-	       pkt->tx_status, str_format, rate ? rate : mcs,
-	       rate ? "Mbps" : "", bw,
-	       pkt->dir == WIFI_DBG_PKT_TX ? txstatusbw : bw, rxrssi, snr,
-	       pkt->pkt_data[0], pkt->pkt_data[1],
+	       pkt->dir == WIFI_DBG_PKT_TX ? "T" : "R", 
+	       pkt->len,
+	       pkt->mac_id,
+	       pkt->tx_status,
+	       str_format,
+	       rate ? rate : mcs,
+	       rate ? "Mbps" : "",
+	       bw,
+	       pkt->dir == WIFI_DBG_PKT_TX ? txstatusbw : bw,
+	       rxrssi,
+	       snr,
+	       pkt->pkt_data[0], pkt->pkt_data[1], // frame_control: 2 bytes
 	       frame_type_to_str(pkt->pkt_data, pkt->is_ampdu),
-	       pkt->pkt_data[1] & 0x8 ? '+' : ' ',
-	       pkt->pkt_data[1] & 0x10 ? 'P' : ' ',
-	       pkt->pkt_data[1] & 0x20 ? 'M' : ' ',
-	       pkt->pkt_data[1] & 0x40 ? 'W' : ' ', pkt->pkt_data[2],
-	       pkt->pkt_data[3], pkt->pkt_data[4], pkt->pkt_data[5],
-	       pkt->pkt_data[6], pkt->pkt_data[7], pkt->pkt_data[8],
-	       pkt->pkt_data[9], pkt->pkt_data[10], pkt->pkt_data[11],
-	       pkt->pkt_data[12], pkt->pkt_data[13], pkt->pkt_data[14],
-	       pkt->pkt_data[15], pkt->pkt_data[22], pkt->pkt_data[23],
-	       pkt->pkt_data[24], pkt->pkt_data[25], eth_str);
+	       pkt->pkt_data[1] & 0x8 ? '+' : ' ', // retry bit
+	       pkt->pkt_data[1] & 0x10 ? 'P' : ' ', // pwr bit
+	       pkt->pkt_data[1] & 0x20 ? 'M' : ' ', // more data bit
+	       pkt->pkt_data[1] & 0x40 ? 'W' : ' ',  // protected flag bit
+	       pkt->pkt_data[2], pkt->pkt_data[3], // duration: 2 bytes
+	       pkt->pkt_data[4], pkt->pkt_data[5], pkt->pkt_data[6], pkt->pkt_data[7], pkt->pkt_data[8], pkt->pkt_data[9], // dst addr: 6 bytes
+	       pkt->pkt_data[10], pkt->pkt_data[11], pkt->pkt_data[12], pkt->pkt_data[13], pkt->pkt_data[14], pkt->pkt_data[15], // src addr: 6 bytes
+	       pkt->pkt_data[22], pkt->pkt_data[23], // seq_ctrl: 2 bytes
+	       pkt->pkt_data[24], pkt->pkt_data[25], 
+	       eth_str);
 
-	//only mgmt frame
-	mgmt = (struct ieee80211_mgmt *)pkt->pkt_data;
-	if (dump_idx < HIST_CNT && (pkt->pkt_data[0] & 0xc) == 0) {
+		
+		if ((mac_hdr_frame_ctrl & MAC_FATCL_MGT_ST) == 0) {
+			if (mac_hdr_frame_ctrl >> 4 == MAC_FATCL_AUTH_ST ||
+			    mac_hdr_frame_ctrl >> 4 == MAC_FATCL_ASSOCREQ_ST ||
+			    mac_hdr_frame_ctrl >> 4 == MAC_FATCL_ASSOCRSP_ST ||
+			    mac_hdr_frame_ctrl >> 4 == MAC_FATCL_REASSOCREQ_ST ||
+			    mac_hdr_frame_ctrl >> 4 == MAC_FATCL_REASSOCRSP_ST) 
+			{
+				//only mgmt frame
+				mgmt = (struct ieee80211_mgmt *)pkt->pkt_data;
+				if (dump_idx < HIST_CNT && (pkt->pkt_data[0] & 0xc) == 0) {
 #if LINUX_VERSION_CODE < KERNEL_VERSION(4, 20, 0)
-		do_gettimeofday(&now);
+					do_gettimeofday(&now);
 #else
-		ktime_get_real_ts64(&now);
+					ktime_get_real_ts64(&now);
 #endif
-		pktdump_hist[dump_idx].ts = now.tv_sec;
-		pktdump_hist[dump_idx].sn = pkt->sn;
-		pktdump_hist[dump_idx].dir = pkt->dir;
-		pktdump_hist[dump_idx].mac_id = pkt->mac_id;
-		pktdump_hist[dump_idx].tx_status = pkt->tx_status;
-		pktdump_hist[dump_idx].frame_ctrl = mgmt->frame_control;
-		pktdump_hist[dump_idx].category = mgmt->u.action.category;
-		pktdump_hist[dump_idx].action_type =
-			mgmt->u.action.u.wme_action.action_code;
-		pktdump_hist[dump_idx].p2p =
-			*((uint8_t *)&mgmt->u.action.category +
-			  MGMT_ACTION_OUI_SUBTYPE_OFFSET);
-		memcpy(pktdump_hist[dump_idx].da, mgmt->da, ETH_ALEN);
-		memcpy(pktdump_hist[dump_idx].sa, mgmt->sa, ETH_ALEN);
-		dump_idx++;
-		if (dump_idx == HIST_CNT)
-			dump_idx = 0;
+					pktdump_hist[dump_idx].ts = now.tv_sec;
+					pktdump_hist[dump_idx].sn = pkt->sn;
+					pktdump_hist[dump_idx].dir = pkt->dir;
+					pktdump_hist[dump_idx].mac_id = pkt->mac_id;
+					pktdump_hist[dump_idx].tx_status = pkt->tx_status;
+					pktdump_hist[dump_idx].frame_ctrl = mgmt->frame_control;
+					pktdump_hist[dump_idx].category = mgmt->u.action.category;
+					pktdump_hist[dump_idx].action_type =
+						mgmt->u.action.u.wme_action.action_code;
+					pktdump_hist[dump_idx].p2p =
+						*((uint8_t *)&mgmt->u.action.category +
+						  MGMT_ACTION_OUI_SUBTYPE_OFFSET);
+					memcpy(pktdump_hist[dump_idx].da, mgmt->da, ETH_ALEN);
+					memcpy(pktdump_hist[dump_idx].sa, mgmt->sa, ETH_ALEN);
+					dump_idx++;
+					if (dump_idx == HIST_CNT)
+						dump_idx = 0;
+				}
+			}
+		}
 	}
+
 }
 
 #define PRINT_FW_HW_FEATURE(feature)                                           \
@@ -729,6 +799,30 @@ void print_fw_hw_feature(struct wq_conf *mod_params)
 	PRINT_FW_HW_FEATURE(tx_to_vo);
 	PRINT_FW_HW_FEATURE(ant_div);
 }
+
+noinline void wq_dbg_dump_mem_status(void)
+{
+	struct sysinfo si;
+	unsigned long long available_pages;
+	unsigned long long free_kb, avail_kb;
+
+	if (!net_ratelimit())
+		return;
+
+	si_meminfo(&si);
+	available_pages = si_mem_available();
+
+#if PAGE_SHIFT > 10
+	free_kb = (si.freeram << (PAGE_SHIFT - 10));
+	avail_kb = (available_pages << (PAGE_SHIFT - 10));
+#else
+	free_kb = si.freeram >> (10 - PAGE_SHIFT);
+	avail_kb = available_pages >> (10 - PAGE_SHIFT);
+#endif
+
+	WQ_DBG(DM_GENERIC, DL_ERR, "%pS Free:%lluKB, Avail:%lluKB\n", (void *)_RET_IP_, free_kb, avail_kb);
+}
+EXPORT_SYMBOL(wq_dbg_dump_mem_status);
 
 void print_mgmt_frame_info(char *note, struct ieee80211_mgmt *mgmt,
 			   u16 mgmt_tx_len)
@@ -916,7 +1010,6 @@ void print_mgmt_frame_info(char *note, struct ieee80211_mgmt *mgmt,
 
 void inline wq_dbg_dump_recovery_stats(struct wq_dbg_recovery_stats *stats)
 {
-#ifdef WQ_DBG_DUMP_RECOVERY_ENABLE
 	if (stats) {
 		WQ_DBG(DM_PKTDUMP, DL_WRN, "mac recovery stats:\n");
 		WQ_DBG(DM_PKTDUMP, DL_WRN, "mac_not_idle_cnt     : %hu\n",
@@ -972,7 +1065,6 @@ void inline wq_dbg_dump_recovery_stats(struct wq_dbg_recovery_stats *stats)
 		WQ_DBG(DM_PKTDUMP, DL_WRN, "tx_beacon_mac_idle_cnt: %hu\n",
 		       stats->tx_beacon_mac_idle_cnt);
 	}
-#endif
 }
 
 void wq_dbg_update_security_info(struct wq_security_info *security,
@@ -1304,38 +1396,6 @@ int wq_get_chan_util_info(struct rwnx_vif *vif, uint32_t time_ms,
 	};
 	return RWNX_INFO_NOTIFY_GET(vif->rwnx_hw, MSG_TYPE_CHAN_UTIL_INFO, req,
 				    util_info);
-}
-
-/**
-* @brief           query recent cumulative channel statistics snapshots from FW
-* @param[in]       vif: active VIF used for the MAC0 statistics request
-* @param[out]      result: recent FW cumulative snapshots
-* @return          returns 0 on success or negative error code
-*/
-int wq_get_chan_stats(struct rwnx_vif *vif,
-		      struct dbg_chan_stats_result *result)
-{
-	struct rwnx_hw *rwnx_hw;
-	struct dbg_chan_stats_req req = {
-		.reserved = {0},
-	};
-	bool vif_valid = false;
-
-	if (!vif || !result)
-		return -EINVAL;
-
-	rwnx_hw = vif->rwnx_hw;
-	spin_lock_bh(&rwnx_hw->cb_lock);
-	if (vif->up && rwnx_chanctx_valid(rwnx_hw, vif->ch_index)) {
-		req.vif_idx = vif->vif_index;
-		vif_valid = true;
-	}
-	spin_unlock_bh(&rwnx_hw->cb_lock);
-	if (!vif_valid)
-		return -ENODEV;
-
-	return RWNX_INFO_NOTIFY_GET(rwnx_hw, MSG_TYPE_CHAN_STATS, req,
-				    result);
 }
 
 /**

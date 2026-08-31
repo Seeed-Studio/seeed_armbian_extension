@@ -20,28 +20,45 @@
 
 #ifdef WQ_WLAN_ALL_IN_ONE
 #define WQ_CORE_API(x)
-#define WQ_TDLS_API(x)
-#define WQ_DTOP_API(x)
-#define WQ_HTC_API(x)
-#define WQ_MP_API(x)
 #define WQ_BMI_API(x)
 #define WQ_TX_CREDIT_API(x)
 #define WQ_PCIE_API(x)
 #define WQ_PLAT_RK3588_API(x)
 #define WQ_PLAT_SPACEMIT_K1_API(x)
-#define WQ_TX_MSG_API(x)
 #else
 #define WQ_CORE_API(x) EXPORT_SYMBOL(x)
-#define WQ_TDLS_API(x) EXPORT_SYMBOL(x)
-#define WQ_DTOP_API(x) EXPORT_SYMBOL(x)
-#define WQ_HTC_API(x) EXPORT_SYMBOL(x)
-#define WQ_MP_API(x) EXPORT_SYMBOL(x)
 #define WQ_BMI_API(x) EXPORT_SYMBOL(x)
 #define WQ_TX_CREDIT_API(x) EXPORT_SYMBOL(x)
 #define WQ_PCIE_API(x) EXPORT_SYMBOL(x)
 #define WQ_PLAT_RK3588_API(x) EXPORT_SYMBOL(x)
 #define WQ_PLAT_SPACEMIT_K1_API(x) EXPORT_SYMBOL(x)
-#define WQ_TX_MSG_API(x) EXPORT_SYMBOL(x)
+#endif
+
+#if 1
+#define WQ_INIT_WORK(_work, _func)                        \
+	do {                                                  \
+		static bool _printed = false;                     \
+		if (!_printed) {                                  \
+			_printed = true;                              \
+			WQ_DBG(DM_GENERIC, DL_ERR, "INIT_WORK(%px) %s(%px)\n", \
+					(_work), #_func, (void *)(_func));    \
+		}                                                 \
+		INIT_WORK((_work), (_func));                      \
+	} while (0)
+
+#define WQ_INIT_DELAYED_WORK(_work, _func)                        \
+	do {                                                          \
+		static bool _printed = false;                             \
+		if (!_printed) {                                          \
+			_printed = true;                                      \
+			WQ_DBG(DM_GENERIC, DL_ERR, "INIT_DELAYED_WORK(%px) %s(%px)\n", \
+					(_work), #_func, (void *)(_func));            \
+		}                                                         \
+		INIT_DELAYED_WORK((_work), (_func));                      \
+	} while (0)
+#else
+#define WQ_INIT_WORK(_work, _func)             INIT_WORK((_work), (_func))
+#define WQ_INIT_DELAYED_WORK(_work, _func)     INIT_DELAYED_WORK((_work), (_func))
 #endif
 
 enum wq_hif_type {
@@ -78,12 +95,6 @@ enum wq_core_state {
 	WQ_CORE_STATE_MAX,
 };
 
-enum wq_band_mode { 
-	WQ_BAND_DUAL=0, 
-	WQ_BAND_2G=1, 
-	WQ_BAND_5G=2 
-};
-
 struct driver_common {
 	wait_queue_head_t main_waitQ;
 	struct sk_buff_head main_rx_Q;
@@ -96,7 +107,6 @@ struct wq_hif_ops;
 
 struct wq_core {
 	const char *hif_name;
-	const char bus_name[128];
 	int dev_mod_id;
 	const struct wq_hif_ops *hif_ops;
 	enum wq_wphy_profile wphy_profile;
@@ -110,6 +120,7 @@ struct wq_core {
 	struct {
 		uint32_t suspend : 1;
 		uint32_t mp_test_proc_init : 1;
+		uint32_t is_shutdown : 1;
 	} flags;
 
 	volatile uint32_t
@@ -140,8 +151,6 @@ struct wq_core {
 	u32 dtop_fwver;
 	/* wifi fw version */
 	u32 wifi_fwver;
-	/* wifi operation band */
-	uint8_t band;
 #ifdef CONFIG_RK3588_ENABLE_WAKEUP_OOB
 	/* wlan wakeup and reg on oob */
 	u32 oob_irq_num;
@@ -223,6 +232,7 @@ enum wq_pkt_cls {
 	WQ_PKT_CLS_DHCP,
 	WQ_PKT_CLS_TCP_ACK,
 	WQ_PKT_CLS_IPERF_UDP_SETUP,
+	WQ_PKT_CLS_FORCE_TX_HIGH,
 
 	WQ_PKT_CLS_80211, /* 802.11 (management) frame */
 };
