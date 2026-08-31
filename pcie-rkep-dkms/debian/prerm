@@ -1,0 +1,28 @@
+#!/bin/sh
+
+NAME=pcie-rkep
+VERSION=1.0.4
+
+set -e
+
+case "$1" in
+	remove)
+		rm -f /etc/modules-load.d/pcie-rkep.conf
+		if [ "$(dkms status -m $NAME 2>/dev/null)" ]; then
+			dkms remove -m $NAME -v $VERSION --all
+		fi
+		;;
+	upgrade|deconfigure)
+		if [ "$(dkms status -m $NAME 2>/dev/null)" ]; then
+			dkms remove -m $NAME -v $VERSION --all
+		fi
+		;;
+	failed-upgrade)
+	;;
+	*)
+		echo "prerm called with unknown argument \`$1'" >&2
+		exit 1
+		;;
+esac
+
+exit 0

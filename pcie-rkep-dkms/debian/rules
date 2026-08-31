@@ -1,0 +1,25 @@
+#!/usr/bin/make -f
+
+VERSION := $(shell dpkg-parsechangelog -S Version | sed 's/-.*//')
+
+%:
+	dh $@ --with dkms
+
+override_dh_install:
+	dh_install dkms.conf usr/src/pcie-rkep-$(VERSION)
+	dh_install src/pcie-rkep usr/src/pcie-rkep-$(VERSION)/src
+
+override_dh_dkms:
+	dh_dkms -V $(VERSION)
+
+override_dh_fixperms:
+	dh_fixperms
+	find debian/pcie-rkep-dkms/usr/src -type f -exec chmod -x {} \;
+
+override_dh_builddeb:
+	dh_builddeb -- -Zxz
+
+# Nothing to configure, build or auto-install
+override_dh_auto_configure:
+override_dh_auto_build:
+override_dh_auto_test:
