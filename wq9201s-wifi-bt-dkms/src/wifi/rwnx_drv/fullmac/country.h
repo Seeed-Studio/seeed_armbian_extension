@@ -491,6 +491,9 @@
 /* World Wide */
 #define COUNTRY_CODE_WW (((uint16_t)'0' << 8) | (uint16_t)'0')
 
+/* test: Full Channel */
+#define COUNTRY_CODE_FC (((uint16_t)'F' << 8) | (uint16_t)'C')
+
 #define COUNTRY_CODE_STR_2_CODE(str) (((uint16_t)str[0] << 8) | (uint16_t)str[1])
 #define COUNTRY_CODE_CODE_2_STR(str, code) do {str[0] = (code >> 8) & 0xFF; str[1] = code & 0xFF;} while(0)
 
@@ -583,13 +586,6 @@ struct wq_reg_domain {
 uint16_t wq_get_country_code(void);
 int wq_regd_set_country(struct rwnx_hw *rwnx_hw, char *country);
 void wq_set_regd_wiphy(struct rwnx_hw *rwnx_hw, struct wiphy *wiphy);
-void wq_set_default_country_code(struct rwnx_hw *rwnx_hw);
-u8 wq_get_country_code_and_bin_path(struct rwnx_hw *rwnx_hw, char *country);
-int rwnx_send_reg_dm_code_req(struct rwnx_hw *rwnx_hw, u8 country_code);
 extern bool gv_get_pwr_from_bin_flag;
 extern char *reg_data_file;
-#if LINUX_VERSION_CODE >= KERNEL_VERSION(4, 0, 0)
-extern struct ieee80211_regdomain rwnx_regdom;
-#endif
-
 #endif

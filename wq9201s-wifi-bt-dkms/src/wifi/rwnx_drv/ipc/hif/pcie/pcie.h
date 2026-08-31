@@ -155,7 +155,7 @@ struct wq_pcie {
 
 	spinlock_t intc_lock;
 	enum pcie_intr_mode intr_mode;
-	enum pcie_pm_status pm_status;
+	atomic_t pm_status;
 
 #if PCIE_NUM_MSIX_VECTORS
 	struct {
@@ -171,6 +171,7 @@ struct wq_pcie {
 	struct ce_state ce_states[WQ_PCIE_CE_CH_LAST];
 
 	struct completion bmi_recv_done;
+	struct completion wq_dnld_down;
 
 #ifdef CONFIG_PCIE_UNIT_TEST
 	struct completion test_ce_desc_done;
@@ -198,6 +199,8 @@ struct wq_pcie {
 
 	/** ce tx/rx Task */
 	struct tasklet_struct ce_txrx_tasklet;
+	struct tasklet_struct tx_data_tasklet;
+	struct tasklet_struct rx_data_tasklet;
 
 	/* ce tx/rx timer to wait for short time(defalt: 1ms) to decrease ce interrupt count for performance improvement */
 	struct hrtimer ce_tx_timer;
@@ -213,17 +216,31 @@ struct wq_pcie {
 
 	/* self dev */
 	struct pci_dev *pdev;
+
+	/* save bar address for rwecovery */
+	u32 pcie_bar0;
+	u32 pcie_bar1;
+	bool bus_dead;
+	bool aspm_enabled;
+	u16 alloc_fail_count[CE_CHN_MAX];
+	u16 pending_refill_count[CE_CHN_MAX];
 };
 
 /** Function to read/write register */
 static inline u32 wq_pcie_read32(struct wq_pcie *wq_pcie, u32 reg)
 {
+	if(wq_pcie->bus_dead) {
+		return -ENXIO;
+	}
 	BUG_ON(reg >= wq_pcie->mem_len);
 	return ioread32(wq_pcie->mem + reg);
 }
 
 static inline void wq_pcie_write32(struct wq_pcie *wq_pcie, u32 reg, u32 data)
 {
+	if(wq_pcie->bus_dead) {
+		return;
+	}
 	BUG_ON(reg >= wq_pcie->mem_len);
 	iowrite32(data, wq_pcie->mem + reg);
 }
@@ -248,6 +265,7 @@ int wq_pcie_notify_fw_use_msg(struct wq_pcie *wq_pcie,
 			      enum pcie_fw_dnld_msg msg);
 
 int wq_pcie_show_bus_info(struct wq_pcie *wq_pcie);
+int wq_pcie_recovery_device(struct wq_pcie *wq_pcie);
 void wq_pcie_irq_mask_set(struct wq_pcie *wq_pcie, u8 group, u8 bit, int set);
 bool wq_pcie_irq_mask_get(struct wq_pcie *wq_pcie, u8 group, u8 bit);
 

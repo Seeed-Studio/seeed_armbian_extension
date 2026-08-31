@@ -250,8 +250,6 @@ void rwnx_fw_trace_free_local(struct rwnx_fw_trace_local_buf *local_buf)
  */
 static inline int rwnx_fw_trace_strlen(uint16_t *entry)
 {
-	BUG_ON(entry == NULL);
-
 	return (RWNX_FW_TRACE_HEADER_ASCII_LEN +
 		(RWNX_FW_TRACE_NB_PARAM(entry) *
 		 RWNX_FW_TRACE_PARAM_ASCII_LEN) +
@@ -475,7 +473,6 @@ rwnx_fw_trace_read_local(struct rwnx_fw_trace_local_buf *local_buf,
 		if (remain < rwnx_fw_trace_strlen(ptr))
 			break;
 
-		BUG_ON(ptr == NULL);
 		entry_size = RWNX_FW_TRACE_ENTRY_SIZE(ptr);
 		str_size = sizeof(str);
 		ptr = rwnx_fw_trace_to_str(ptr, str, &str_size);

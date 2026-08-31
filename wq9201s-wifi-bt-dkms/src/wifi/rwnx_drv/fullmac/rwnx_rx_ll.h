@@ -15,8 +15,13 @@
 #define HOST_DATA_RING_WRAP_FLAG_CLEAR_MASK 0xFFFFFF
 
 // Host data ring size
+#ifdef COMPAT_MODE_ENABLE
+#define HOST_RX_RING_SIZE (1 << 18) // 256K Bytes
+#define HOST_RX_RING_SUB_STEP_SIZE_1_M (1 << 17) // 128K Bytes
+#else
 #define HOST_RX_RING_SIZE (4 << 20) // 4M Bytes
 #define HOST_RX_RING_SUB_STEP_SIZE_1_M (1 << 20) // 1M Bytes
+#endif
 #define HOST_RX_RING_SUB_STEP_SIZE_100_K (102400) // 100K Bytes
 
 //Checksum offload

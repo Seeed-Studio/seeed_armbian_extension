@@ -182,7 +182,7 @@ static void rwnx_txq_init(struct rwnx_txq *txq, int idx, u8 status,
 	txq->nb_ready_mac80211 = 0;
 #endif
 	txq->ps_id = LEGACY_PS_ID;
-	if (sta && (idx < NX_FIRST_VIF_TXQ_IDX)) {
+	if (idx < NX_FIRST_VIF_TXQ_IDX) {
 		int sta_idx = sta->sta_idx;
 		int tid = idx - (sta_idx * NX_NB_TXQ_PER_STA);
 		if (tid < NX_NB_TID_PER_STA)
@@ -511,18 +511,12 @@ static void rwnx_txq_subqueue_try_to_wake(struct rwnx_hw *rwnx_hw,
 	/* restart netdev queue if number no more queued buffer */
 	if (unlikely(txq->status & RWNX_TXQ_NDEV_FLOW_CTRL) &&
 		atomic_read(&txq->sending) < rwnx_hw->txq_restart_threshlod) {
-
-		if (!rwnx_hw->feature.is_over_high_watermark && !rwnx_hw->feature.is_suspend) {
-			txq->status &= ~RWNX_TXQ_NDEV_FLOW_CTRL;
-			netif_wake_subqueue(txq->ndev, txq->ndev_idx);
-			trace_txq_flowctrl_restart(txq);
-			printk_ratelimited(KERN_INFO "%s: netif_wake_subqueue(%d) txq sending %d\n",
-					__func__, txq->idx, atomic_read(&txq->sending));
-			PROFILING_CLR(SW_PROF_FLOW_CTRL);
-		} else {
-			printk_ratelimited(KERN_INFO "%s: netif_wake_subqueue(%d) not call for over_high_watermark %d or suspend %d\n",
-					__func__, txq->idx, rwnx_hw->feature.is_over_high_watermark, rwnx_hw->feature.is_suspend);
-		}
+		txq->status &= ~RWNX_TXQ_NDEV_FLOW_CTRL;
+		netif_wake_subqueue(txq->ndev, txq->ndev_idx);
+		trace_txq_flowctrl_restart(txq);
+		printk_ratelimited(KERN_INFO "%s: netif_wake_subqueue(%d)\n",
+				   __func__, txq->idx);
+		PROFILING_CLR(SW_PROF_FLOW_CTRL);
 	}
 }
 
@@ -1202,9 +1196,9 @@ int rwnx_txq_queue_skb(struct rwnx_hw *rwnx_hw, struct rwnx_txq *txq,
 {
 	u32 expires_ns = rwnx_hw->core->config.tx_bundle_expire_ns;
 	u32 ack_expires_ns = rwnx_hw->core->config.tx_tcpack_expire_ns;
+	int sending = atomic_inc_return(&txq->sending);
 	int wait = 0;
 
-	atomic_inc(&txq->sending);
 	atomic_inc(&rwnx_hw->sending);
 	q_stats_tx(&txq->stats, 1);
 	q_stats_tx(&rwnx_hw->tx_stats, 1);
@@ -1250,14 +1244,14 @@ int rwnx_txq_queue_skb(struct rwnx_hw *rwnx_hw, struct rwnx_txq *txq,
 
 	/* If too many buffer are queued for this TXQ stop netdev queue */
 	if ((txq->ndev_idx != NDEV_NO_TXQ) &&
-	    atomic_read(&txq->sending) > rwnx_hw->txq_stop_threshlod) {
+	    sending > rwnx_hw->txq_stop_threshlod) {
 		PROFILING_SET(SW_PROF_FLOW_CTRL);
 		wq_ipc_txq_ring_2task(rwnx_hw->core);
 		txq->status |= RWNX_TXQ_NDEV_FLOW_CTRL;
 		netif_stop_subqueue(txq->ndev, txq->ndev_idx);
 		trace_txq_flowctrl_stop(txq);
-		printk_ratelimited(KERN_INFO "%s: netif_stop_subqueue(%d) txq sending %d\n",
-				   __func__, txq->idx, atomic_read(&txq->sending));
+		printk_ratelimited(KERN_INFO "%s: netif_stop_subqueue(%d)\n",
+				   __func__, txq->idx);
 	}
 
 	/* add it in the hwq list if not stopped and not yet present */
@@ -1469,6 +1463,8 @@ static bool rwnx_txq_get_skb_to_push(struct rwnx_hw *rwnx_hw,
 
 			rwnx_vif = rwnx_hw->vif_table[host->vif_idx];
 			type_id = crdt_mgmt->credit_grp[rwnx_vif->crdt_gid].type[hwq->id];
+			limit = crdt_mgmt->credit_grp[0].size[type_id]
+				+ crdt_mgmt->credit_grp[1].size[type_id];
 
 			__skb_unlink(skb, &txq->sk_list);
 			__skb_queue_tail(sk_list_push, skb);
@@ -1517,12 +1513,17 @@ static bool rwnx_txq_get_skb_to_push(struct rwnx_hw *rwnx_hw,
 	return res;
 }
 
+#ifdef CONFIG_WQ_WLAN_USB
+extern u16 gv_threshold_usb_out_bundle_max;
+#endif
+
 static bool rwnx_txq_get_skb_to_push_usb(struct rwnx_hw *rwnx_hw,
 					 struct rwnx_hwq *hwq,
 					 struct rwnx_txq *txq, int user,
 					 struct sk_buff_head *sk_list_push)
 {
 	bool res = false;
+#ifdef CONFIG_WQ_WLAN_USB
 	struct wq_usb *wq_usb =
 		container_of(rwnx_hw->core, struct wq_usb, core);
 	bool usb_bus_congested = false;
@@ -1535,7 +1536,7 @@ static bool rwnx_txq_get_skb_to_push_usb(struct rwnx_hw *rwnx_hw,
 	    WQ_PKTOUT_CONGEST_THRESHOLD) {
 		usb_bus_congested = true;
 	}
-	if (skb_queue_len(&txq->sk_list) >= THRESHOLD_USB_OUT_BUNDLE_MAX) {
+	if (skb_queue_len(&txq->sk_list) >= gv_threshold_usb_out_bundle_max) {
 		txq_pkt_exceed_out_bundle = true;
 	}
 
@@ -1548,6 +1549,7 @@ static bool rwnx_txq_get_skb_to_push_usb(struct rwnx_hw *rwnx_hw,
 		res = rwnx_txq_get_skb_to_push(rwnx_hw, hwq, txq, user,
 					       sk_list_push);
 	}
+#endif
 
 	return res;
 }
@@ -1644,13 +1646,14 @@ static inline int rwnx_txq_bundle(struct rwnx_hw *rwnx_hw, struct rwnx_txq *txq,
 				     txq);
 		__skb_queue_tail(&txq->bundle.list, skb);
 
-		if ((!in_host &&
+		if ((!in_host && 
 			!(WQ_SKB_TXCB(skb)->pkt_cls & BIT(WQ_PKT_CLS_TCP_ACK))) ||
 			!max_amsdu_len ||
 			(in_host && skb_queue_len(&txq->bundle.list) >= tx_bundle_max) ||
 			((WQ_SKB_TXCB(skb)->pkt_cls & BIT(WQ_PKT_CLS_TCP_ACK)) &&
 			((tcpack_len + HEADROOM_TXDESC) >= rwnx_hw->amsdu_param.max_len ||
-			skb_queue_len(&txq->bundle.list) >= rwnx_hw->amsdu_param.max_packets_num))) {
+			skb_queue_len(&txq->bundle.list) >= rwnx_hw->amsdu_param.max_packets_num ||
+			!txq->amsdu_allow))) {
 			return 0;
 		}
 
@@ -1822,7 +1825,7 @@ static void rwnx_txq_ap_vif_stop(struct rwnx_vif *vif)
 	list_for_each_entry (sta, &vif->ap.sta_list, list) {
 		struct rwnx_txq *txq;
 		int tid;
-		if (sta->valid) {
+		if (sta && sta->valid) {
 			foreach_sta_txq(sta, txq, tid, vif->rwnx_hw) {
 				/* not care manager txq */
 				if (tid == 8) {
@@ -1939,7 +1942,7 @@ static void rwnx_txq_ap_vif_start(struct rwnx_vif *vif)
 	list_for_each_entry (sta, &vif->ap.sta_list, list) {
 		struct rwnx_txq *txq;
 		int tid;
-		if (sta->valid) {
+		if (sta && sta->valid) {
 			foreach_sta_txq(sta, txq, tid, vif->rwnx_hw) {
 				/* not care manager txq */
 				if (tid == 8) {
@@ -2179,7 +2182,7 @@ void rwnx_hwq_process(struct rwnx_hw *rwnx_hw, struct rwnx_hwq *hwq)
 		}
 
 		if (ret) {
-			WQ_DBG(DM_TX, DL_INF, "%s: break the loop (ret=%d)!\n",
+			WQ_DBG(DM_TX, DL_ERR, "%s: break the loop (ret=%d)!\n",
 			       __func__, ret);
 			break;
 		}
@@ -2232,7 +2235,9 @@ void rwnx_txq_tx_done_pre(struct rwnx_hw *rwnx_hw, uint16_t txq_idx)
 	atomic_dec(&rwnx_hw->sending);
 	atomic_dec(&txq->sending);
 
-	if (txq->idx != TXQ_INACTIVE)
+	if (txq->idx != TXQ_INACTIVE &&
+		!rwnx_hw->feature.is_over_high_watermark &&
+		!rwnx_hw->feature.is_suspend)
 		rwnx_txq_subqueue_try_to_wake(rwnx_hw, txq);
 }
 

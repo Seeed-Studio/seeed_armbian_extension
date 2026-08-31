@@ -20,11 +20,6 @@
 #define WUQI_DTOP_DEVICE_ID 0x5348
 #define WUQI_WIFI_DEVICE_ID 0x5349
 #define WUQI_WIFI_MSG_DEVICE_ID 0x534a
-#ifdef DUAL_SDIO_SUPPORT
-#define WUQI_WQ9201A_DTOP_DEVICE_ID     0x5358
-#define WUQI_WQ9201A_WIFI_DEVICE_ID     0x5359
-#define WUQI_WQ9201A_WIFI_MSG_DEVICE_ID 0x535A
-#endif
 
 /** define wuqi class id */
 #define WUQI_DTOP_CLASS_ID 0x0
@@ -160,41 +155,22 @@ struct wq_sdio_msg_head {
 	u8 data[0];
 } __attribute__((packed));
 
-#define SDIO_MAIN_KTHREAD
-#ifndef WQ_CPU_UNBIND
-#define SDIO_MAIN_KTHREAD_FIFO
-#endif
-#define SDIO_MAIN_KTHREAD_CPU 1
-
-#ifdef SDIO_MAIN_KTHREAD_FIFO
-#define SDIO_MAIN_KTHREAD_PRIO 1
-#else
 #define SDIO_MAIN_KTHREAD_NICE (-20)
-#endif
-
-
-#define SDIO_RX_KTHREAD
-#ifndef WQ_CPU_UNBIND
-#define SDIO_RX_KTHREAD_FIFO
-#endif
-#define SDIO_RX_KTHREAD_CPU 3
-
-#ifdef SDIO_RX_KTHREAD_FIFO
-#define SDIO_RX_KTHREAD_PRIO 1
-#else
+#define SDIO_MAIN_KTHREAD_CPU 1
 #define SDIO_RX_KTHREAD_NICE 0
-#endif
-
-
-#define SDIO_TX_KTHREAD
-#define SDIO_TX_KTHREAD_CPU 2
+#define SDIO_RX_KTHREAD_CPU 3
 #define SDIO_TX_KTHREAD_NICE 0
+#define SDIO_TX_KTHREAD_CPU 2
 
 #define SDIO_TX_AGGR_MODE
 #define SDIO_RX_AGGR_MODE
 #define SDIO_TX_POLLING_MODE
 #define SDIO_RX_POLLING_MODE
 #define SDIO_WLAN_MSG_MODE
+#define SDIO_DTOP_LOG_MODE
+#define SDIO_MAIN_KTHREAD
+#define SDIO_RX_KTHREAD
+#define SDIO_TX_KTHREAD
 
 /** ADMA Info REG */
 #define SDIO_ADMA_FUN0_INFO_REG (0x9000)
@@ -204,7 +180,7 @@ struct wq_sdio_msg_head {
 
 #define SDIO_ADMA_DTOP_TX_LEN_MAX (3U << 10) //3K
 #ifdef SDIO_TX_AGGR_MODE
-#define SDIO_ADMA_WLAN_TX_LEN_MAX (200U << 10) /* 200K */
+#define SDIO_ADMA_WLAN_TX_LEN_MAX (210U << 10) /* 210K */
 #else
 #define SDIO_ADMA_WLAN_TX_LEN_MAX (64U << 10) /* 64K */
 #endif
@@ -215,7 +191,6 @@ struct wq_sdio_msg_head {
 #define SDIO_ADMA_TX_WIFI_AGGR_SIZE (30)
 #define SDIO_ADMA_TX_WIFI_MSG_AGGR_SIZE (1)
 #define SDIO_ADMA_TX_MAX_AGGR_SIZE (120)
-#define SDIO_ADMA_TX_AGGR_NONE_MAX_CNT (10)
 
 #define SDIO_ADMA_TX_ACCU_LEN_MASK  (0x000000FF)
 #define SDIO_ADMA_TX_ACCU_SOFT_MODE  (0x01000000)
@@ -266,33 +241,19 @@ struct wq_sdio_adma_info {
 };
 
 struct wq_sdio_stats {
-	atomic_t irq_total_cnt;
-	atomic_t irq_total_cnt_sec;
-	atomic_t main_process_total_cnt;
-	atomic_t main_process_total_cnt_sec;
+	bool time_dump_enable;
 
 	atomic_t rx_total_cnt;
-	atomic_t rx_total_cnt_sec;
 	atomic_t rx_pkt_total_num;
-	atomic_t rx_pkt_total_num_sec;
 	atomic_t rx_pkt_total_bytes;
-	atomic_t rx_pkt_total_bytes_sec;
 	atomic_t rx_adma_total_cnt;
-	atomic_t rx_adma_total_cnt_sec;
 
 	atomic_t tx_total_cnt;
-	atomic_t tx_total_cnt_sec;
-	atomic_t tx_msg_total_num;
 	atomic_t tx_pkt_total_num;
-	atomic_t tx_pkt_total_num_sec;
 	atomic_t tx_pkt_total_bytes;
-	atomic_t tx_pkt_total_bytes_sec;
 	atomic_t tx_buf_avail_valid_cnt;
-	atomic_t tx_buf_avail_valid_cnt_sec;
-	atomic_t tx_buf_avail_valid_pkt_not_aggr_cnt_sec;
-	atomic_t tx_buf_avail_valid_no_pkt_cnt_sec;
 	atomic_t tx_buf_avail_zero_cnt;
-	atomic_t tx_buf_avail_zero_cnt_sec;
+	atomic_t tx_buf_avail_wr_cnt;
 	u32 tx_aggr_avg_cnt;
 
 	atomic_t main_kthread_time;
@@ -393,10 +354,6 @@ struct wq_func {
 		struct wq_workq txq;
 #endif
 
-		struct mutex mutex;
-
-		atomic_t tx_aggr_claimed;
-
 		struct wq_sdio_adma_info info;
 		struct wq_sdio_adma_info_all *all_info;
 
@@ -407,16 +364,20 @@ struct wq_func {
 	} adma;
 
 	struct {
-		struct wq_list_head pktout_vo;
 		struct wq_list_head pktout;
 		struct wq_list_head msgout;
 
 #ifdef SDIO_RX_AGGR_MODE
 		struct wq_list_head aggrin;
+#else
+		struct sk_buff_head rx_deaggr_skbq;
 #endif
 
 #ifdef SDIO_TX_AGGR_MODE
 		struct wq_list_head aggrout;
+#else
+		struct wq_list_head aggrout_msg_done;
+		struct wq_list_head aggrout_pkt_done;
 #endif
 	} q;
 };
@@ -465,8 +426,6 @@ struct wq_sdio {
 	atomic_t pm_status;
 	bool wlan_msg_en;
 
-	atomic_t cpu_perf_mode;
-
 	struct {
 		struct wq_list_pool pktout;
 		struct wq_list_pool msgout;
@@ -479,8 +438,6 @@ struct wq_sdio {
 		struct wq_list_pool aggrout;
 #endif
 	} pools;
-
-	u8 pktout_vo_qos_weight;
 
 	/* snap shot of device interrupt mask */
 	u8 intr;
@@ -665,7 +622,16 @@ static inline void __wq_skbreq_free(struct wq_list_pool *pool,
 
 static inline int wq_sdio_get_free_pkt_num(struct wq_sdio *wq_sdio)
 {
-	return wq_sdio->pools.pktout.list.num;
+	int tx_pkt_free_num = 0;
+	unsigned long flags;
+
+	spin_lock_irqsave(&(wq_sdio->wlan.q.pktout.lock), flags);
+
+	tx_pkt_free_num = (wq_sdio->pools.pktout.num - wq_sdio->wlan.q.pktout.num);
+
+	spin_unlock_irqrestore(&(wq_sdio->wlan.q.pktout.lock), flags);
+
+	return tx_pkt_free_num;
 }
 
 static inline int wq_sdio_adma_aggr_size(struct wq_func *wq_func)

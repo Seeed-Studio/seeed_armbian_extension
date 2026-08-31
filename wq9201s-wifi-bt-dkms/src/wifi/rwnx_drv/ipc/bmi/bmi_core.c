@@ -17,7 +17,7 @@ typedef struct {
 
 static bmi_state_t bmi_state;
 
-int bmi_cmd_exchange_frag(struct wq_core *core, uint8_t cmd, uint8_t frag, const void *req,
+int bmi_cmd_exchange(struct wq_core *core, uint8_t cmd, const void *req,
 		     size_t req_len, void *rsp, size_t rsp_len_max, int timeout)
 {
 	int ret;
@@ -36,7 +36,7 @@ int bmi_cmd_exchange_frag(struct wq_core *core, uint8_t cmd, uint8_t frag, const
 
 	tx_msg->magic = cpu_to_le32(BMI_MSG_MAGIC);
 	tx_msg->cmd = cmd;
-	tx_msg->fragment = frag;
+	tx_msg->fragment = 0;
 
 	if (req && req_len) {
 		(void)memcpy(tx_msg->data, req, req_len);
@@ -96,10 +96,4 @@ int bmi_cmd_exchange_frag(struct wq_core *core, uint8_t cmd, uint8_t frag, const
 	}
 
 	return 0;
-}
-
-int bmi_cmd_exchange(struct wq_core *core, uint8_t cmd, const void *req,
-		     size_t req_len, void *rsp, size_t rsp_len_max, int timeout)
-{
-	return bmi_cmd_exchange_frag(core, cmd, 0, req, req_len, rsp, rsp_len_max, timeout);
 }

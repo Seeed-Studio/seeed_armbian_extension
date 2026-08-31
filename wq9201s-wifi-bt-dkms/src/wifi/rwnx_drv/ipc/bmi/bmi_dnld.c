@@ -32,6 +32,7 @@
 #include "wq_log.h"
 #include "wq_wifi_dbg.h"
 #include "wq_fw.h"
+#include "config.h"
 
 static int wifi_module_id = -1;
 
@@ -62,15 +63,21 @@ static int wq_fw_start_load(struct wq_core *core)
 	do {
 		ret = bmi_start_load(core);
 		if (ret < 0) {
-			WQ_DBG(DM_GENERIC, DL_ERR, "%s: fw start load error %d\n", __func__, ret);
+			WQ_DBG(DM_GENERIC, DL_ERR,
+			       "%s: other fw is downloading, retry requesting again\n",
+			       __func__);
 		} else {
+			ret = 0;
 			break;
 		}
 
-		msleep(1);
+		msleep(500);
 		loop++;
-		if (loop > BMI_CMD_RETRY_TIMES) {
-			WQ_DBG(DM_GENERIC, DL_ERR, "%s: fw start load timeout\n", __func__);
+		if (loop > 10) {
+			WQ_DBG(DM_GENERIC, DL_WRN,
+			       "%s: wait for request download timeout\n",
+			       __func__);
+			ret = -1;
 			break;
 		}
 
@@ -99,10 +106,12 @@ static int wq_fw_info_dnld(struct wq_core *core, WQ_FW_TYPE fw_sys)
 
 	ret = bmi_set_fw_info(core, &fw_info);
 	if (ret < 0) {
-		WQ_DBG(DM_GENERIC, DL_ERR, "%s: fw %d info dnld error %d\n", __func__, fw_sys, ret);
+		WQ_DBG(DM_GENERIC, DL_WRN, "%s: fw:%d download error\n",
+		       __func__, fw_sys);
+		return ret;
 	}
 
-	return ret;
+	return 0;
 }
 
 static int wq_fw_data_dnld(struct wq_core *core)
@@ -189,7 +198,7 @@ static int wq_fw_bt_download(struct wq_core *core, const char *fw_name)
 
 	WQ_DBG(DM_GENERIC, DL_INF, "fw state:%x\n", run_state);
 	if ((run_state & BIT(WQ_FW_BT)) == 0) {
-		//ret = 0;
+		ret = 0;
 	} else {
 		WQ_DBG(DM_GENERIC, DL_INF,
 		       "%s: wlan fw existing (dev=%s),dont need to download again\n",
@@ -242,6 +251,21 @@ exit_dnld:
 	return ret;
 }
 
+static int wq_fw_sys_config_developer_mode(struct wq_core *core)
+{
+	int ret = 0;
+
+	if (wq_conf.developer_mode == false) {
+		return 0;
+	}
+
+	WQ_DBG(DM_GENERIC, DL_WRN, "enable fw developer_mode\n");
+	ret = bmi_load_sys_param_config(core, SYS_CFG_DEVELOPER_MODE, NULL, 0);
+	if (ret < 0)
+		WQ_DBG(DM_GENERIC, DL_ERR, "enable fw developer_mode faild\n");
+	return ret;
+}
+
 static int bt_param_load(struct wq_core *core)
 {
 	bt_param_t bt_param_info;
@@ -287,65 +311,27 @@ static int pcm_param_load(struct wq_core *core)
 	return ret;
 }
 
-static int wq_fw_sys_config_developer_mode(struct wq_core *core)
-{
-	int ret = 0;
-
-	if (wq_conf.developer_mode == false) {
-		return 0;
-	}
-
-	WQ_DBG(DM_GENERIC, DL_WRN, "enable fw developer_mode\n");
-	ret = bmi_load_sys_param_config(core, SYS_CFG_DEVELOPER_MODE, NULL, 0);
-	if (ret < 0)
-		WQ_DBG(DM_GENERIC, DL_ERR, "enable fw developer_mode faild\n");
-	return ret;
-}
-
 static int wq_fw_sys_param_config(struct wq_core *core)
 {
 	int ret = 0;
-	u8 msg_buf[64];
-	coex_msg_t *coex_msg = (coex_msg_t *)msg_buf;
-	coex_cfg_t *coex_cfg = (coex_cfg_t *)(coex_msg->data);
 
-	coex_msg->msg_id = COEX_ANTENNA_MODE;
-	coex_msg->data[0] = (u8)wq_conf.coex_ant_mode;
-	WQ_DBG(DM_GENERIC, DL_WRN, "load ant mode cfg:%d \n",
-	       wq_conf.coex_ant_mode);
-	ret = bmi_load_sys_param_config(core, SYS_CFG_COEX, msg_buf, 2);
+	ret = coex_param_load(core);
 	if (ret < 0)
-		WQ_DBG(DM_GENERIC, DL_ERR, "load ant mode cfg faild\n");
-
-	coex_msg->msg_id = COEX_CFG_UPD;
-	coex_cfg->bt_rx_abort_wifi_tx_en = (uint16_t)wq_conf.coex_abort_en;
-	coex_cfg->bt_rx_abort_wifi_tx_rssi_thre = (int16_t)wq_conf.coex_abort_rssi_thre;
-	coex_cfg->bt_tx_pwr_adj_by_tx_retry_en = (uint16_t)wq_conf.coex_bt_pwr_adj_en;
-	coex_cfg->bt_tx_pwr_adj_by_tx_retry_thre = (uint16_t)wq_conf.coex_bt_pwr_adj_thre;
-	coex_cfg->wifi_tx_pwr_adj_by_bt_mode_en = (uint16_t)wq_conf.coex_wifi_pwr_adj_en;
-	coex_cfg->wifi_tx_pwr_adj_pwr_val = (uint16_t)wq_conf.coex_wifi_pwr_adj_value;
-
-	WQ_DBG(DM_GENERIC, DL_ERR, "load coex cfg:%d %d %d %d %d %d\n",
-	    coex_cfg->bt_rx_abort_wifi_tx_en, coex_cfg->bt_rx_abort_wifi_tx_rssi_thre,
-	    coex_cfg->bt_tx_pwr_adj_by_tx_retry_en, coex_cfg->bt_tx_pwr_adj_by_tx_retry_thre,
-	    coex_cfg->wifi_tx_pwr_adj_by_bt_mode_en, coex_cfg->wifi_tx_pwr_adj_pwr_val);
-
-	ret = bmi_load_sys_param_config(core, SYS_CFG_COEX, msg_buf, 1 + sizeof(coex_cfg_t));
-	if (ret < 0)
-		WQ_DBG(DM_GENERIC, DL_ERR, "load coex cfg faild\n");
-
-	ret = wq_fw_sys_config_developer_mode(core);
-	if (ret < 0)
-		WQ_DBG(DM_GENERIC, DL_ERR, "load developer_mode param cfg faild\n");
+		goto exit_sys_config;
 
 	ret = pcm_param_load(core);
 	if (ret < 0)
-		WQ_DBG(DM_GENERIC, DL_ERR, "load pcm param cfg faild\n");
+		goto exit_sys_config;
+
+	ret = wq_fw_sys_config_developer_mode(core);
+	if (ret < 0)
+		goto exit_sys_config;
 
 	ret = bt_param_load(core);
 	if (ret < 0)
-		WQ_DBG(DM_GENERIC, DL_ERR, "load bt param cfg faild\n");
+		goto exit_sys_config;
 
+exit_sys_config:
 	return ret;
 }
 
@@ -367,7 +353,7 @@ static int wq_fw_oem_download(struct wq_core *core, const char *fw_name)
 
 	WQ_DBG(DM_GENERIC, DL_INF, "fw state:%x\n", run_state);
 	if ((run_state & BIT(WQ_FW_BOOT_CFG)) == 0) {
-		//ret = 0;
+		ret = 0;
 	} else {
 		WQ_DBG(DM_GENERIC, DL_INF,
 		       "%s: wlan fw existing (dev=%s),dont need to download again\n",
@@ -486,7 +472,7 @@ static int wq_fw_wifi_download(struct wq_core *core, const char *fw_name)
 
 	WQ_DBG(DM_GENERIC, DL_INF, "fw state:%x\n", run_state);
 	if ((run_state & BIT(WQ_FW_WIFI)) == 0) {
-		//ret = 0;
+		ret = 0;
 	} else {
 		WQ_DBG(DM_GENERIC, DL_WRN,
 		       "%s: wlan fw existing (dev=%s),dont need to download again\n",
@@ -626,6 +612,9 @@ static int __wq_fw_init(struct wq_core *core)
 	       info.wifi_mac[4], info.wifi_mac[5], info.bt_mac[0],
 	       info.bt_mac[1], info.bt_mac[2], info.bt_mac[3], info.bt_mac[4],
 	       info.bt_mac[5]);
+	WQ_DBG(DM_GENERIC, DL_WRN, "reserved:0x%02x 0x%02x 0x%02x 0x%02x 0x%02x 0x%02x 0x%02x 0x%02x\n",
+			info.reserved[0],info.reserved[1],info.reserved[2],info.reserved[3],
+			info.reserved[4],info.reserved[5],info.reserved[6],info.reserved[7]);
 
 	if (oem_name) {
 		memcpy(fw_oem_name, oem_name,
@@ -703,15 +692,17 @@ static int __wq_fw_init(struct wq_core *core)
 					}
 				}
 				memcpy(fw_phy_name, wifi_phy_name,
-				       strlen(wifi_phy_name) +
-					       1); /* +1 ：include the null terminator */
+				       strlen(wifi_phy_name) + 1);
 			} else {
 				if (info.module_id != 0) {
 					wq_fw_phy_name_get(&info, fw_phy_name);
 				} else {
 					WQ_DBG(DM_GENERIC, DL_ERR,
-					       "phy cfg name invaild, download faild! \n");
-					return -EINVAL; /* there is no valid chip info and no module parameter name */
+					       "no module id, use phy name of demo board! \n");
+					memcpy(fw_phy_name,
+					       wq_conf.phy_cfg_name,
+					       strlen(wq_conf.phy_cfg_name) +
+						       1);
 				}
 			}
 

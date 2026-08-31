@@ -904,7 +904,7 @@ static int chardev_open(struct inode *inode, struct file *filp)
 	int ret = 0;
 	struct cdev *cdev = NULL;
 	struct char_dev *dev = NULL;
-	struct driver_dtop_handle *handle __maybe_unused = NULL;
+	struct driver_dtop_handle *handle = NULL;
 
 	ENTER();
 

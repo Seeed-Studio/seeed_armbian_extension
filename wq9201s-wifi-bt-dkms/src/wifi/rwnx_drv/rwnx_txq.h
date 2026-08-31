@@ -270,8 +270,7 @@ struct rwnx_hw;
 static inline bool rwnx_txq_is_stopped(struct rwnx_txq *txq)
 {
 	/* FIXME: return (txq->status & RWNX_TXQ_STOP); */
-	return (txq->status & (RWNX_TXQ_STOP_STA_PS | RWNX_TXQ_STOP_VIF_PS |
-				RWNX_TXQ_STOP_CHAN));
+	return (txq->status & (RWNX_TXQ_STOP_STA_PS | RWNX_TXQ_STOP_VIF_PS));
 }
 
 static inline bool rwnx_txq_is_full(struct rwnx_txq *txq)

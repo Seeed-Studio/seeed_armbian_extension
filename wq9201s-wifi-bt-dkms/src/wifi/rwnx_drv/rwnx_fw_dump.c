@@ -453,7 +453,6 @@ DEBUGFS_READ_WRITE_FILE_OPS(um_helper);
  */
 int rwnx_um_helper(struct rwnx_debugfs *rwnx_debugfs, const char *cmd)
 {
-#ifndef CONFIG_WQ_GKI
 	struct rwnx_hw *rwnx_hw =
 		container_of(rwnx_debugfs, struct rwnx_hw, debugfs);
 	char *envp[] = { "PATH=/sbin:/usr/sbin:/bin:/usr/bin", NULL };
@@ -474,10 +473,6 @@ int rwnx_um_helper(struct rwnx_debugfs *rwnx_debugfs, const char *cmd)
 	argv_free(argv);
 
 	return ret;
-#else
-	return 0;
-#endif
-
 }
 
 /**
@@ -545,7 +540,7 @@ int rwnx_dbgfs_register_fw_dump(struct rwnx_hw *rwnx_hw, struct dentry *dir_drv,
 		     sizeof(rwnx_debugfs->helper_cmd));
 	strncpy(rwnx_debugfs->helper_cmd, CONFIG_RWNX_UM_HELPER_DFLT,
 		sizeof(rwnx_debugfs->helper_cmd));
-	INIT_WORK(&rwnx_debugfs->helper_work, rwnx_um_helper_work);
+	WQ_INIT_WORK(&rwnx_debugfs->helper_work, rwnx_um_helper_work);
 	DEBUGFS_ADD_FILE(um_helper, dir_drv, S_IWUSR | S_IRUSR);
 
 	rwnx_debugfs->trace_prst = rwnx_debugfs->helper_scheduled = false;

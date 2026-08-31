@@ -2,12 +2,10 @@
 #define _COUNTRY_C_
 
 #include <net/cfg80211.h>
-
 #include "wq_log.h"
 #include "country.h"
 #include "rwnx_msg_tx.h"
 #include "rwnx_mod_params.h"
-#include <linux/namei.h>
 
 /**
  * macro definition
@@ -213,6 +211,7 @@ REG_COUNTRY_GROUP(17, REG_COUNTRY_GROUP17);
 REG_COUNTRY_GROUP(18, REG_COUNTRY_GROUP18);
 REG_COUNTRY_GROUP(19, REG_COUNTRY_GROUP19);
 REG_COUNTRY_GROUP(20, REG_COUNTRY_GROUP20);
+REG_COUNTRY_GROUP(21, { COUNTRY_CODE_FC });
 
 /**
  * All country codes, number of channels defined by group
@@ -222,7 +221,7 @@ struct reg_info_entry reg_support_group[] = {
 		/* channel 2G4 1_13 */
 		REG_SUB_BAND_INF(81, BAND_2G4, CHN_SPAN_5, 1, 13, false)
 		/* channel 2G4 14_14 */
-		REG_SUB_BAND_INF(82, BAND_2G4, CHN_SPAN_5, 14, 1, false)
+		//REG_SUB_BAND_INF(82, BAND_2G4, CHN_SPAN_5, 14, 1, false)
 		/* channel 5G 36_48 */
 		REG_SUB_BAND_INF(115, BAND_5G, CHN_SPAN_20, 36, 4, false)
 		/* channel 5G 52_64 */
@@ -497,7 +496,20 @@ struct reg_info_entry reg_support_group[] = {
 		REG_SUB_BAND_INF(125, BAND_5G, CHN_SPAN_20, 149, 5, false)
 		/* not support NA */
 		REG_SUB_BAND_INF(0, BAND_NULL, CHN_SPAN_0, 0, 0, false) } },
-	{ REG_COUNTRY_GROUP_END(21){
+	{ REG_COUNTRY_GROUP_NUM(21){
+		/* channel 2G4 1_13 */
+		REG_SUB_BAND_INF(81, BAND_2G4, CHN_SPAN_5, 1, 13, false)
+		/* channel 5G 36_48 */
+		REG_SUB_BAND_INF(115, BAND_5G, CHN_SPAN_20, 36, 4, false)
+		/* channel 5G 52_64 */
+		REG_SUB_BAND_INF(118, BAND_5G, CHN_SPAN_20, 52, 4, false)
+		/* channel 5G 100_144 */
+		REG_SUB_BAND_INF(121, BAND_5G, CHN_SPAN_20, 100, 12, false)
+		/* channel  149_165*/
+		REG_SUB_BAND_INF(125, BAND_5G, CHN_SPAN_20, 149, 5, false)
+		/* not support NA */
+		REG_SUB_BAND_INF(0, BAND_NULL, CHN_SPAN_0, 0, 0, false) } },
+	{ REG_COUNTRY_GROUP_END(22){
 		/* channel 2G4 1_13 */
 		REG_SUB_BAND_INF(81, BAND_2G4, CHN_SPAN_5, 1, 13, false)
 		/* channel 5G 36_48 */
@@ -586,14 +598,14 @@ WQ_DOMAIN_80211_DEF(
 		     REG_RULE_LIGHT(5745 - 10, 5825 + 10, 80, 0) } };
 
 WQ_DOMAIN_80211_DEF(
-	JP){ .n_reg_rules = 5,
+	JP){ .n_reg_rules = 7,
 	     .alpha2 = "JP",
 	     .dfs_region = NL80211_DFS_JP,
 	     .reg_rules = {
 		     /* channels 1..13 */
 		     REG_RULE_LIGHT(2412 - 10, 2472 + 10, 40, 0),
 		     /* channels 14 */
-		     REG_RULE_LIGHT(2484 - 10, 2484 + 10, 20, NL80211_RRF_NO_OFDM),
+		     //REG_RULE_LIGHT(2484 - 10, 2484 + 10, 20, NL80211_RRF_NO_OFDM),
 		     /* channels 184..196 */
 		     //REG_RULE_LIGHT(4920 - 10, 4980 + 10, 40, 0),
 		     /* channels 8..16 */
@@ -608,7 +620,7 @@ WQ_DOMAIN_80211_DEF(
 				    NL80211_RRF_DFS) } };
 
 WQ_DOMAIN_80211_DEF(
-	CH){ .n_reg_rules = 4,
+	CH){ .n_reg_rules = 7,
 	     .alpha2 = "CH",
 	     .dfs_region = NL80211_DFS_JP,
 	     .reg_rules = {
@@ -624,9 +636,9 @@ WQ_DOMAIN_80211_DEF(
 				    NL80211_RRF_DFS) } };
 
 WQ_DOMAIN_80211_DEF(
-	TR){ .n_reg_rules = 4,
+	TR){ .n_reg_rules = 7,
 	     .alpha2 = "TR",
-	     .dfs_region = NL80211_DFS_ETSI,
+	     .dfs_region = NL80211_DFS_JP,
 	     .reg_rules = {
 		     /* channels 1..13 */
 		     REG_RULE_LIGHT(2412 - 10, 2472 + 10, 40, 0),
@@ -640,7 +652,7 @@ WQ_DOMAIN_80211_DEF(
 				    NL80211_RRF_DFS) } };
 
 WQ_DOMAIN_80211_DEF(
-	ZA){ .n_reg_rules = 4,
+	ZA){ .n_reg_rules = 7,
 	     .alpha2 = "ZA",
 	     .dfs_region = NL80211_DFS_JP,
 	     .reg_rules = {
@@ -721,6 +733,21 @@ WQ_DOMAIN_80211_DEF(
 		     REG_RULE_LIGHT(5260 - 10, 5320 + 10, 80,
 				    NL80211_RRF_DFS | WQ_RRF_AUTO_BW) } };
 
+WQ_DOMAIN_80211_DEF(
+	FC){ .n_reg_rules = 5,
+	     .alpha2 = "FC",
+	     .dfs_region = NL80211_DFS_UNSET,
+	     .reg_rules = {
+		     /* channels 1..13 */
+		     REG_RULE_LIGHT(2412 - 10, 2472 + 10, 40, 0),
+		     /* channels 36..48 */
+		     REG_RULE_LIGHT(5180 - 10, 5240 + 10, 80, WQ_RRF_AUTO_BW),
+		     /* channels 52..64 */
+		     REG_RULE_LIGHT(5260 - 10, 5320 + 10, 80, WQ_RRF_AUTO_BW),
+		     /* channels 100..140 */
+		     REG_RULE_LIGHT(5500 - 10, 5700 + 10, 160, WQ_RRF_AUTO_BW),
+		     /* channels 149..165 */
+		     REG_RULE_LIGHT(5745 - 10, 5825 + 10, 80, WQ_RRF_AUTO_BW) } };
 
 /**
  * The default Customize regulatory rules
@@ -751,6 +778,7 @@ WQ_DOMAIN_INIT(EU);
 WQ_DOMAIN_INIT(AU);
 WQ_DOMAIN_INIT(IL);
 WQ_DOMAIN_INIT(AT);
+WQ_DOMAIN_INIT(FC);
 
 const struct wq_reg_domain *wq_regrule_table[] = {
 	WQ_DOMAIN_INIT_RULE(CN),
@@ -765,6 +793,7 @@ const struct wq_reg_domain *wq_regrule_table[] = {
 	WQ_DOMAIN_INIT_RULE(AU),
 	WQ_DOMAIN_INIT_RULE(IL),
 	WQ_DOMAIN_INIT_RULE(AT),
+	WQ_DOMAIN_INIT_RULE(FC),
 	NULL,
 };
 
@@ -782,10 +811,19 @@ static char wq_country_bin_file[64] = {0};
 #define WQ_GET_TMP_REGD_CC() wq_regd_ctrl.tmp_countycode
 #define WQ_SET_TMP_REGD_CC(cc) wq_regd_ctrl.tmp_countycode = cc
 
+struct wq_reg_work {
+	struct work_struct work;
+	struct wiphy *wiphy;
+	struct regulatory_request request;
+};
+
+static u8 wq_get_country_code_and_bin_path(struct rwnx_hw *rwnx_hw, char *country);
+int rwnx_send_reg_dm_code_req(struct rwnx_hw *rwnx_hw, u8 country_code);
+
 /**
  * Drive regulation operation
 */
-const struct ieee80211_regdomain *wq_get_driver_regd(char *countrycode)
+static const struct ieee80211_regdomain *wq_get_driver_regd(char *countrycode)
 {
 	u_int8_t i = 0;
 	const struct wq_reg_domain *regd;
@@ -796,20 +834,19 @@ const struct ieee80211_regdomain *wq_get_driver_regd(char *countrycode)
 			return regd->regrules;
 		i++;
 	}
-	WQ_DBG(DM_GENERIC, DL_WRN, "%s set defualt regd\n", __func__);
+	WQ_DBG(DM_GENERIC, DL_WRN, "%s %s not found, set defualt regd.\n", __func__, countrycode);
 	return &wq_regd_ww; /*default world wide*/
 }
 
 /**
  * Update regd rule
 */
-void wq_apply_custom_regd(struct wiphy *wiphy,
+static void wq_apply_custom_regd(struct wiphy *wiphy,
 			  const struct ieee80211_regdomain *regd)
 {
 	u32 idx, ch;
 	struct ieee80211_supported_band *sband;
 	struct ieee80211_channel *chan;
-	struct rwnx_hw *rwnx_hw = wiphy_priv(wiphy);
 
 	/*reset cha->flags*/
 	for (idx = 0; idx < NUM_NL80211_BANDS; idx++) {
@@ -824,16 +861,12 @@ void wq_apply_custom_regd(struct wiphy *wiphy,
 			chan->flags = 0;
 		}
 	}
-#if LINUX_VERSION_CODE >= KERNEL_VERSION(4, 0, 0)
-	rwnx_custregd(rwnx_hw, wiphy, regd);
-#endif
-	/* update to kernel */
 
-	if (!rwnx_hw->mod_params.custregd)
-		wiphy_apply_custom_regulatory(wiphy, regd);
+	/* update to kernel */
+	wiphy_apply_custom_regulatory(wiphy, regd);
 }
 
-void wq_set_country_code(char *alpha2, u8 alpha2_size)
+static void wq_set_country_code(char *alpha2, u8 alpha2_size)
 {
 	uint16_t countrycode = 0;
 
@@ -852,7 +885,7 @@ uint16_t wq_get_country_code(void)
 /*
 *Update the support channel information based on the country code
 */
-void wq_reg_get_channel_list(struct reg_info_entry *rinfo, bool dfs,
+static void wq_reg_get_channel_list(struct reg_info_entry *rinfo, bool dfs,
 			     enum REG_CHN_BAND band,
 			     struct phy_channel_info *chnlist, u8 *chnmum)
 {
@@ -883,7 +916,7 @@ void wq_reg_get_channel_list(struct reg_info_entry *rinfo, bool dfs,
 	*chnmum = chn_num;
 }
 
-void wq_reg_get_channel_list_by_band(struct reg_info_entry *rinfo,
+static void wq_reg_get_channel_list_by_band(struct reg_info_entry *rinfo,
 				     enum REG_CHN_BAND band, struct rwnx_hw *hw)
 {
 	uint8_t num_chn, i, k;
@@ -905,8 +938,8 @@ void wq_reg_get_channel_list_by_band(struct reg_info_entry *rinfo,
 				break;
 			for (k = 0; band_24ghz && (k < band_24ghz->n_channels);
 			     k++) {
-				if ((band_24ghz->channels[k].hw_value == CH_TO_FREQ_24G(channel_list[i].chnnum)) ||
-				    (channel_list[i].chnnum == 14 && band_24ghz->channels[k].hw_value == 2484)) {
+				if (band_24ghz->channels[k].hw_value ==
+				    CH_TO_FREQ_24G(channel_list[i].chnnum)) {
 					band_24ghz->channels[k].flags &=
 						~IEEE80211_CHAN_DISABLED;
 					band_24ghz->channels[k].orig_flags &=
@@ -953,7 +986,7 @@ void wq_reg_get_channel_list_by_band(struct reg_info_entry *rinfo,
 	}
 }
 
-void wq_reg_update_channel_info(struct reg_info_entry *rinfo,
+static void wq_reg_update_channel_info(struct reg_info_entry *rinfo,
 				struct rwnx_hw *hw)
 {
 	int i = 0;
@@ -978,16 +1011,14 @@ void wq_reg_update_channel_info(struct reg_info_entry *rinfo,
 		band_5ghz->channels[i].orig_flags |= IEEE80211_CHAN_DISABLED;
 	}
 
-	for (band_id = BAND_2G4; band_id < BAND_NUM; band_id++) {
-		if (hw->core->band == WQ_BAND_DUAL || band_id == hw->core->band)
-			wq_reg_get_channel_list_by_band(rinfo, band_id, hw);
-	}
+	for (band_id = BAND_2G4; band_id < BAND_NUM; band_id++)
+		wq_reg_get_channel_list_by_band(rinfo, band_id, hw);
 }
 
 /*
 *Get channel information by country code
 */
-struct reg_info_entry *wq_get_reg_info(uint16_t country_code)
+static struct reg_info_entry *wq_get_reg_info(uint16_t country_code)
 {
 	struct reg_info_entry *groupinfo;
 	int i = 0, j = 0;
@@ -1021,19 +1052,12 @@ struct reg_info_entry *wq_get_reg_info(uint16_t country_code)
 	return groupinfo;
 }
 
-void wq_reg_notify(struct wiphy *wiphy, struct regulatory_request *request)
+static void wq_reg_notify(struct wiphy *wiphy, struct regulatory_request *request)
 {
 	struct rwnx_hw *hw = wiphy_priv(wiphy);
 	const struct ieee80211_regdomain *regd;
 	uint16_t countrycode;
-	char alpha2[4];
-
-	WQ_DBG(DM_GENERIC, DL_WRN, "%s-%d\n", __func__, __LINE__);
-
-	if(wq_get_country_code() == COUNTRY_CODE_STR_2_CODE(request->alpha2)) {
-		WQ_DBG(DM_GENERIC, DL_WRN, "%s: drop cc %s - repeat.\n", __func__, request->alpha2);
-		return;
-	}
+	char alpha2[4] = {0};
 
 	if (!wiphy || !wq_wiphy || !request) {
 		WQ_DBG(DM_GENERIC, DL_WRN, "wiphy or request is  NULL!\n");
@@ -1041,6 +1065,9 @@ void wq_reg_notify(struct wiphy *wiphy, struct regulatory_request *request)
 
 	if (wiphy != wq_wiphy)
 		wiphy = wq_wiphy;
+
+	WQ_DBG(DM_GENERIC, DL_WRN, "wq_reg_notify cc %s by %u.\n",
+		request->alpha2,request->initiator);
 
 	if (!hw->mod_params.driver_reg_enable) {
 		rwnx_radar_set_domain(&hw->radar, request->dfs_region);
@@ -1058,7 +1085,7 @@ void wq_reg_notify(struct wiphy *wiphy, struct regulatory_request *request)
 		if ((wiphy->flags & WIPHY_FLAG_CUSTOM_REGULATORY))
 			return;
 #else
-		if (wiphy && (wiphy->regulatory_flags & REGULATORY_CUSTOM_REG))
+		if ((wiphy->regulatory_flags & REGULATORY_CUSTOM_REG))
 			return;
 #endif
 	}
@@ -1090,30 +1117,14 @@ void wq_reg_notify(struct wiphy *wiphy, struct regulatory_request *request)
 		return;
 	}
 
-
 	/**update regd*/
 	wq_apply_custom_regd(wiphy, regd);
 	/**update channels*/
 	wq_reg_update_channel_info(wq_get_reg_info(countrycode), hw);
 
 	/**update to firmware*/
-	request->dfs_region = regd->dfs_region;
 	rwnx_radar_set_domain(&hw->radar, request->dfs_region);
 	rwnx_send_me_chan_config_req(hw);
-}
-
-void wq_reg_notify_fn(struct wiphy *wiphy, struct regulatory_request *request)
-{
-	u8 code;
-	struct rwnx_hw *rwnx_hw = wiphy_priv(wiphy);
-
-	WQ_DBG(DM_GENERIC, DL_WRN, "wq_reg_notify_fn cc %s by %u.\n",
-		request->alpha2,request->initiator);
-
-	wq_reg_notify(wiphy, request);
-
-	code = wq_get_country_code_and_bin_path(rwnx_hw, request->alpha2);
-	rwnx_send_reg_dm_code_req(rwnx_hw, code);
 }
 
 static u8 wq_alpha2_to_domain(char *alpha2)
@@ -1134,9 +1145,9 @@ static u8 wq_alpha2_to_domain(char *alpha2)
 		case COUNTRY_CODE_TR:
 		case COUNTRY_CODE_ZA:
 		case COUNTRY_CODE_JP:
-		case COUNTRY_CODE_AU:
 			return REG_DM_ETSI;
 
+		case COUNTRY_CODE_AU:
 		case COUNTRY_CODE_IL:
 		default:
 			WQ_DBG(DM_GENERIC, DL_WRN, "Unsupported alpha2: %s.\n", alpha2);
@@ -1145,20 +1156,65 @@ static u8 wq_alpha2_to_domain(char *alpha2)
 	return REG_DM_DFLT;
 }
 
-int is_file_exist(const char *filename) {
-    struct path path;
-    int ret;
-    ret = kern_path(filename, LOOKUP_FOLLOW, &path);
-    if (ret == 0) {
-        // exist
-        path_put(&path);
-        return 1;
-    }
-    // not exist
-    return 0;
+static void wq_reg_notify_work(struct work_struct *work)
+{
+	u8 code;
+	struct wq_reg_work *reg_data;
+	struct rwnx_hw *rwnx_hw;
+
+	reg_data = container_of(work, struct wq_reg_work, work);
+	rwnx_hw = wiphy_priv(reg_data->wiphy);
+
+	wq_reg_notify(reg_data->wiphy, &reg_data->request);
+
+	code = wq_get_country_code_and_bin_path(rwnx_hw, reg_data->request.alpha2);
+	rwnx_send_reg_dm_code_req(rwnx_hw, code);
+
+	kfree(reg_data);
+
+	return;
 }
 
-u8 wq_get_country_code_and_bin_path(struct rwnx_hw *rwnx_hw, char *country)
+static void wq_reg_notify_fn(struct wiphy *wiphy, struct regulatory_request *request)
+{
+	struct wq_reg_work *reg_data;
+
+	if(wq_get_country_code() == COUNTRY_CODE_STR_2_CODE(request->alpha2)) {
+		WQ_DBG(DM_GENERIC, DL_WRN, "%s: drop cc %s - repeat.\n", __func__, request->alpha2);
+		return;
+	}
+
+	if (REG_DM_DFLT == wq_alpha2_to_domain(request->alpha2)) {
+		WQ_DBG(DM_GENERIC, DL_WRN, "%s: drop cc %s - unknown.\n", __func__, request->alpha2);
+		return;
+	}
+
+	reg_data = kmalloc(sizeof(struct wq_reg_work), GFP_KERNEL);
+
+	if (!reg_data) {
+		WQ_DBG(DM_GENERIC, DL_WRN, "%s: drop cc %s - malloc.\n", __func__, request->alpha2);
+		return;
+	}
+
+	reg_data->wiphy = wiphy;
+	reg_data->request = *request;
+
+	WQ_INIT_WORK(&reg_data->work, wq_reg_notify_work);
+
+#if (LINUX_VERSION_CODE >= KERNEL_VERSION(5, 4, 0))
+	if (!schedule_work(&reg_data->work)) {
+		WQ_DBG(DM_GENERIC, DL_WRN, "%s: cc %s schedule_work failed.\n", __func__, request->alpha2);
+		kfree(reg_data);
+		return;
+	}
+#else
+	schedule_work(&reg_data->work);
+#endif
+
+	return;
+}
+
+static u8 wq_get_country_code_and_bin_path(struct rwnx_hw *rwnx_hw, char *country)
 {
 	u8 domain = REG_DM_MAX;
 
@@ -1171,15 +1227,8 @@ read_bin_again:
 			domain = wq_alpha2_to_domain(country);
 			WQ_DBG(DM_GENERIC, DL_WRN, "alpha2: %s -> %02d.\n", country, domain);
 		}
-
-		sprintf(wq_country_bin_file, "/lib/firmware/RegData_%02d_%04X.bin", domain, rwnx_hw->core->dev_mod_id);
-		if (is_file_exist(wq_country_bin_file)) {
-			reg_data_file = wq_country_bin_file;
-		} else {
-			sprintf(wq_country_bin_file, "/vendor/lib/modules/RegData_%02d_%04X.bin", domain, rwnx_hw->core->dev_mod_id);
-			reg_data_file = wq_country_bin_file;
-		}
-		WQ_DBG(DM_GENERIC, DL_WRN, "try to load %s\n", reg_data_file);
+		sprintf(wq_country_bin_file, "RegData_%02d_%04X.bin", domain, rwnx_hw->core->dev_mod_id);
+		reg_data_file = wq_country_bin_file;
 	}
 
 	if (get_pwr_data_from_bin_file(rwnx_hw->core, reg_data_file)) {
@@ -1204,7 +1253,7 @@ read_bin_again:
 
 int wq_regd_set_country(struct rwnx_hw *rwnx_hw, char *country)
 {
-	int ret __maybe_unused = 0;
+	int ret = 0;
 	uint16_t country_code;
 	u8 code = 0;
 	if (rwnx_hw->mod_params.driver_reg_enable) {
@@ -1213,7 +1262,7 @@ int wq_regd_set_country(struct rwnx_hw *rwnx_hw, char *country)
 		country_code = COUNTRY_CODE_STR_2_CODE(country);
 		WQ_SET_TMP_REGD_CC(country_code);
 		request.initiator = NL80211_REGDOM_SET_BY_DRIVER;
-		COUNTRY_CODE_CODE_2_STR(request.alpha2, country_code);
+		strncpy(request.alpha2, country, 2);
 		wq_reg_notify(rwnx_hw->wiphy, &request);
 	} else {
 		ret = regulatory_hint(rwnx_hw->wiphy, country);
@@ -1223,7 +1272,7 @@ int wq_regd_set_country(struct rwnx_hw *rwnx_hw, char *country)
 	return 0;
 }
 
-void wq_set_default_country_code(struct rwnx_hw *rwnx_hw)
+static void wq_set_default_country_code(struct rwnx_hw *rwnx_hw)
 {
 	char f_code[4] = { 0 };
 	uint16_t country = 0;
@@ -1241,6 +1290,7 @@ void wq_set_default_country_code(struct rwnx_hw *rwnx_hw)
 		//default value
 		strncpy(f_code, "CN", 2);
 	}
+
 	country = COUNTRY_CODE_STR_2_CODE(f_code);
 	rwnx_hw->priv_ioctl.country_code = country;
 	wq_regd_set_country(rwnx_hw, f_code);
@@ -1249,16 +1299,10 @@ void wq_set_default_country_code(struct rwnx_hw *rwnx_hw)
 
 void wq_set_regd_wiphy(struct rwnx_hw *rwnx_hw, struct wiphy *wiphy)
 {
-	wiphy->reg_notifier = wq_reg_notify_fn;
-
 	if (!rwnx_hw->mod_params.driver_reg_enable) {
-		wq_set_default_country_code(rwnx_hw);
-		return;
+		rwnx_custregd(rwnx_hw, wiphy);
+		goto out;
 	}
-	
-#if LINUX_VERSION_CODE >= KERNEL_VERSION(4, 0, 0)
-	rwnx_custregd(rwnx_hw, wiphy, &rwnx_regdom);
-#endif
 
 	/*clear REGULATORY_CUSTOM_REG flag and  set REGULATORY_CUSTOM_REG flag*/
 #if (LINUX_VERSION_CODE >= KERNEL_VERSION(3, 14, 0))
@@ -1272,16 +1316,12 @@ void wq_set_regd_wiphy(struct rwnx_hw *rwnx_hw, struct wiphy *wiphy)
 #endif
 
 	wq_wiphy = wiphy;
-
 	/**Initialize reg ctrl */
 	memset(&wq_regd_ctrl, 0x0, sizeof(struct wq_regd_control));
 
-	/*assigbed a default one*/
-	if (!rwnx_hw->mod_params.custregd)
-		wiphy_apply_custom_regulatory(wiphy, &wq_regd_ww);
-
+out:
 	/*set default country code*/
 	wq_set_default_country_code(rwnx_hw);
-	WQ_DBG(DM_GENERIC, DL_WRN, "%s-%d\n", __func__, __LINE__);
+	wiphy->reg_notifier = wq_reg_notify_fn;
 }
 #endif

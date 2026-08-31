@@ -25,6 +25,7 @@
 #include "wq_profiling.h"
 #include "wq_log.h"
 #include "wq_wifi_dbg.h"
+#include "rwnx_main.h"
 
 // LL TODO: header file for these common stuff?
 struct vendor_radiotap_hdr {
@@ -747,7 +748,7 @@ u8 rwnx_rxdataind_ll(struct rwnx_hw *rwnx_hw, struct sk_buff *skb)
 	struct wq_rx_hdr *sw_rxhdr;
 	struct hw_rxhdr *hw_rxhdr;
 	struct rxdesc_tag_wq *rxdesc;
-	struct rwnx_vif *rwnx_vif;
+	struct rwnx_vif *rwnx_vif = NULL;
 	int msdu_offset = sizeof(struct hw_rxhdr);
 	u16 status;
 	struct rx_ll_payload *rx_ll_pld;
@@ -853,25 +854,34 @@ u8 rwnx_rxdataind_ll(struct rwnx_hw *rwnx_hw, struct sk_buff *skb)
 		if (status & RX_STAT_MONITOR) {
 			struct sk_buff *skb_monitor;
 			struct hw_rxhdr hw_rxhdr_copy;
+			struct rwnx_monitor_cfg *p_cfg;
 			u8 rtap_len;
 			u16 frm_len;
 
-			WQ_DBG(DM_RX, DL_INF, "%s, RX_STAT_MONITOR !!\n",
-			       __func__);
+			WQ_DBG(DM_RX, DL_INF, "%s, RX_STAT_MONITOR !!\n", __func__);
 
-			// Check if monitor interface exists and is open
-			rwnx_vif =
-				rwnx_rx_get_vif(rwnx_hw, rwnx_hw->monitor_vif);
+			if (rwnx_monitor_check_valid(rwnx_hw, hw_rxhdr->flags_vif_idx)) {
+				rwnx_vif = rwnx_rx_get_vif(rwnx_hw, hw_rxhdr->flags_vif_idx);
+			} else if (RWNX_INVALID_VIF == hw_rxhdr->flags_vif_idx) {
+				/* vif = 255, forward to 5G or 2G port. */
+				if (NULL != (p_cfg = rwnx_monitor_get_cfg_by_band(rwnx_hw, hw_rxhdr->phy_info.phy_band))) {
+					rwnx_vif = rwnx_rx_get_vif(rwnx_hw, p_cfg->vif_idx);
+				} else {
+					/* Do nothing. pakage will be dropped. */
+				}
+			} else {
+				/* Invalid vif for monitor. */
+			}
+
+			//Check if monitor interface exists and is open
 			if (!rwnx_vif) {
-				dev_err(rwnx_hw->dev,
-					"Received monitor frame but there is no monitor interface open\n");
+				WQ_DBG(DM_RX, DL_WRN,"%s: vif %u is not monitor, pakage dropped.\n", __func__, hw_rxhdr->flags_vif_idx);
+				dev_kfree_skb(skb);
 				goto check_len_update;
 			}
 
 			hw_rxhdr = (struct hw_rxhdr *)skb->data;
-			rwnx_rx_vector_convert(rwnx_hw->machw_type,
-					       &hw_rxhdr->hwvect.rx_vec_1,
-					       &hw_rxhdr->hwvect.rx_vec_2);
+
 			rtap_len = rwnx_rx_rtap_hdrlen(
 				&hw_rxhdr->hwvect.rx_vec_1, false);
 

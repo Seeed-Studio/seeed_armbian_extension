@@ -28,7 +28,6 @@
 
 #include "wq_fw.h"
 #include "fw_log.h"
-#include "core.h"
 
 struct dtop_proc_data dtop_config_data = { 0x0, { 0 }, { 0 }, { 0 },
 					   { 0 }, { 0 } };
@@ -282,24 +281,21 @@ void dtop_init(struct wq_core *core)
 		os_sched_timeout(10);
 	}
 
-	// /** create char device */
-	// if (dtop_register_mdev(core) != 0) {
-	// 	WQ_DBG(DM_TRBUS, DL_ERR, "Register Mdev Failed\n");
-	// 	goto err_mdev;
-	// }
+	/** create char device */
+	if (dtop_register_mdev(core) != 0) {
+		WQ_DBG(DM_TRBUS, DL_ERR, "Register Mdev Failed\n");
+		goto err_mdev;
+	}
 
 	/* Init */
 	dtop_proc_init(core);
 
-	/*TODO: coex bus api need adjust */
-	// coex_init(core);
-
 	return;
 
-//err_mdev:
-//	return;
+err_mdev:
+	return;
 }
-WQ_DTOP_API(dtop_init);
+EXPORT_SYMBOL(dtop_init);
 
 void dtop_deinit(struct wq_core *core)
 {
@@ -324,21 +320,17 @@ void dtop_deinit(struct wq_core *core)
 	/* Drop queues */
 	skb_queue_purge(&core->driver.main_rx_Q);
 
-	// /* Unregister char device */
-	// clean_up_mdev(core);
+	/* Unregister char device */
+	clean_up_mdev(core);
 
 	dtop_proc_remove();
-
-	/*TODO: coex bus api need adjust */
-	/* Free coex used memory */
-	// coex_deinit();
 
 	kfree(dtop_handle);
 
 exit_remove:
 	return;
 }
-WQ_DTOP_API(dtop_deinit);
+EXPORT_SYMBOL(dtop_deinit);
 
 /**
  *  @brief This function initializes proc entry
@@ -360,7 +352,6 @@ int dtop_proc_init(struct wq_core *core)
 			 &wq_proc_autopm_fops, core);
 
 	fw_dbglog_cmd_proc(core);
-	coex_cmd_proc(core);
 
 	return 0;
 }
@@ -380,7 +371,6 @@ int dtop_proc_remove(void)
 	remove_proc_entry(DTOP_PROC_DIR "/autopm", NULL);
 	remove_proc_entry(PROC_DIR_FW "/console_cmd", NULL);
 	remove_proc_entry(PROC_DIR_FW "/vendor_cmd", NULL);
-	remove_proc_entry(PROC_DIR_FW "/coex_cmd", NULL);
 
 	remove_proc_entry(DTOP_PROC_DIR, NULL);
 	remove_proc_entry(PROC_DIR_FW, NULL);

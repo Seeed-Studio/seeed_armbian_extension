@@ -511,7 +511,7 @@ u16 wq_pkt_classify(struct sk_buff *skb, int tx, bool has_eth_hdr)
 				wq_pkt_cls |= BIT(WQ_PKT_CLS_ARP_REPLY);
 			}
 
-			printk_ratelimited(KERN_INFO
+			WQ_DBG(DM_TX, DL_WRN,
 			       "%s ARP %s [D %pM][S %pM], len: %d\n", dir, str,
 			       eth->h_dest, eth->h_source, packet_len);
 		}

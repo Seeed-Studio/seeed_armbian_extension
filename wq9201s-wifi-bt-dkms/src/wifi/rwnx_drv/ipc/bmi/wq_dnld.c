@@ -110,7 +110,7 @@ int wq_fw_header_verify(struct wq_core *core, const struct firmware *fw,
 		}
 	} else {
 		WQ_DBG(DM_GENERIC, DL_ERR,
-		       "fw bin in no guard symbol format\n");
+		       "not find guard symbol in firmware! please check it!\n");
 	}
 
 	return -EPROTO;
@@ -246,38 +246,22 @@ static int wq_fw_reset_device(struct wq_core *core)
 	ret = bmi_cmd(core, WQ_BMI_CMD_UNLOAD_DTOP, NULL, 0, NULL, 0,
 		      FW_DL_TIMEOUT);
 	if (ret) {
-		WQ_DBG(DM_GENERIC, DL_ERR, "%s: reset device failed %d\n",
-		       __func__, ret);
-		return ret;
-	}
+	WQ_DBG(DM_GENERIC, DL_ERR, "%s: reset device failed %d\n",
+	       __func__, ret);
+	return ret;
+}
 
 	/* let the chip finish the reset before the caller tears down the bus */
 	msleep(FW_RESET_WAIT_MS);
-
 	return ret;
 }
 
 static int wq_fw_get_sys_state(struct wq_core *core, u8 *sys_state)
 {
 	int ret = 0;
-	int loop = 0;
 
-	do {
-		ret = bmi_cmd(core, WQ_BMI_CMD_GET_SYS_STATE, NULL, 0, sys_state,
-				sizeof(u8), FW_DL_TIMEOUT);
-		if (ret) {
-			WQ_DBG(DM_GENERIC, DL_ERR, "%s: get sys state error %d\n", __func__, ret);
-		} else {
-			break;
-		}
-
-		msleep(1);
-		loop++;
-		if (loop > BMI_CMD_RETRY_TIMES) {
-			WQ_DBG(DM_GENERIC, DL_ERR, "%s: get sys state timeout\n", __func__);
-			break;
-		}
-	} while (1);
+	ret = bmi_cmd(core, WQ_BMI_CMD_GET_SYS_STATE, NULL, 0, sys_state,
+		      sizeof(u8), FW_DL_TIMEOUT);
 
 	return ret;
 }
@@ -293,9 +277,7 @@ static int __wq_fw_dtop_init(struct wq_core *core, const char *fw_name)
 	ret = wq_fw_get_sys_state(core, &sys_state);
 	if (ret)
 		goto exit_dnld;
-
-    WQ_DBG(DM_GENERIC, DL_WRN, "SDIO sys_state: 0x%x!\n", sys_state);
-
+	WQ_DBG(DM_GENERIC, DL_WRN, "SDIO sys_state: 0x%x!\n", sys_state);
 	/* verify dev_state : BootROM or DTOP */
 	if (sys_state & BIT(WQ_FW_DTOP)) {
 		if (sys_state & BIT(WQ_FW_WIFI)) {

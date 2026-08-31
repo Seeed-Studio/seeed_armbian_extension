@@ -61,14 +61,14 @@ int wq_sdio_pools_init(struct wq_sdio *wq_sdio)
 
 	ret = wq_skbreq_pool_init(&wq_sdio->pools.pktout, WQ_PTKOUT_NUM,
 				  wq_skbreq_init, NULL);
-	if (ret <= 0) {
+	if (ret < 0) {
 		pool = "pktout";
 		goto fail;
 	}
 
 	ret = wq_skbreq_pool_init(&wq_sdio->pools.msgout, WQ_MSGOUT_NUM,
 				  wq_skbreq_init, NULL);
-	if (ret <= 0) {
+	if (ret < 0) {
 		pool = "msgout";
 		goto fail;
 	}
@@ -76,7 +76,7 @@ int wq_sdio_pools_init(struct wq_sdio *wq_sdio)
 #ifdef SDIO_RX_AGGR_MODE
 	ret = wq_skbreq_pool_init(&wq_sdio->pools.aggrin, WQ_AGGIN_NUM,
 				  wq_skbreq_aggrin_init, wq_sdio);
-	if (ret <= 0) {
+	if (ret < 0) {
 		pool = "aggrin";
 		goto fail;
 	}
@@ -85,7 +85,7 @@ int wq_sdio_pools_init(struct wq_sdio *wq_sdio)
 #ifdef SDIO_TX_AGGR_MODE
 	ret = wq_skbreq_pool_init(&wq_sdio->pools.aggrout, WQ_AGGROUT_NUM,
 				  wq_skbreq_aggrout_init, wq_sdio);
-	if (ret <= 0) {
+	if (ret < 0) {
 		pool = "aggrout";
 		goto fail;
 	}
@@ -97,7 +97,8 @@ int wq_sdio_pools_init(struct wq_sdio *wq_sdio)
 
 fail:
 	WQ_DBG(DM_TRBUS, DL_ERR, "%s: init pool %s failed\n", __func__, pool);
-	return -1;
+
+	return ret;
 }
 
 void wq_sdio_pools_deinit(struct wq_sdio *wq_sdio)

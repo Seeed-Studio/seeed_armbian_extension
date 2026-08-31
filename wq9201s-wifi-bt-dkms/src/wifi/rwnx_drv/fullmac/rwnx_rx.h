@@ -30,12 +30,6 @@ enum rx_status_bits {
 	RX_STAT_SPURIOUS = 1 << 6,
 	/// packet for monitor interface
 	RX_STAT_MONITOR = 1 << 7,
-	/// unsupported frame
-	RX_STAT_UF = 1 << 8,
-	/// translate frame but do not transfer
-	RX_STAT_FRAG_CACHE = 1 << 9,
-	/// including custom data upload between hw_rxhdr and ethernet payload
-	RX_STAT_CUST_DATA = 1 << 10,
 };
 
 #ifdef CONFIG_RWNX_MON_DATA

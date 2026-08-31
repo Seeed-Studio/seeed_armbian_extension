@@ -3,14 +3,8 @@
 #include "bmi_core.h"
 #include "wq_fw.h"
 #include "bmi_core.h"
-#include "core.h"
 
 #define PROC_DIR "driver/wifi_mp"
-#ifdef DUAL_SDIO_SUPPORT
-#define MP_TEST_NODE "/mp_test1"
-#else
-#define MP_TEST_NODE "/mp_test"
-#endif  /* DUAL_SDIO_SUPPORT */
 
 #define IOCTL_MAGIC 'e'
 #define PROC_MP_TEST_CMD _IOWR(IOCTL_MAGIC, 0, mp_test_cmd_rsp_t)
@@ -129,17 +123,17 @@ static const struct wq_proc_ops proc_mp_test_fops = {
 void wq_mp_test_proc_init(struct wq_core *core)
 {
 	proc_mkdir(PROC_DIR, NULL);
-	proc_create_data(PROC_DIR MP_TEST_NODE, 0666, NULL, &proc_mp_test_fops,
+	proc_create_data(PROC_DIR "/mp_test", 0666, NULL, &proc_mp_test_fops,
 			 core);
 	core->flags.mp_test_proc_init = 1;
 }
-WQ_MP_API(wq_mp_test_proc_init);
+EXPORT_SYMBOL(wq_mp_test_proc_init);
 
 void wq_mp_test_proc_deinit(struct wq_core *core)
 {
 	if (core->flags.mp_test_proc_init == 1) {
-		remove_proc_entry(PROC_DIR MP_TEST_NODE, NULL);
+		remove_proc_entry(PROC_DIR "/mp_test", NULL);
 		remove_proc_entry(PROC_DIR, NULL);
 	}
 }
-WQ_MP_API(wq_mp_test_proc_deinit);
+EXPORT_SYMBOL(wq_mp_test_proc_deinit);

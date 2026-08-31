@@ -22,12 +22,12 @@
 
 #if LINUX_VERSION_CODE >= KERNEL_VERSION(4, 0, 0)
 /* Regulatory rules */
-struct ieee80211_regdomain
+static struct ieee80211_regdomain
 	rwnx_regdom = { .n_reg_rules = 2,
 			.alpha2 = "99",
 			.reg_rules = {
-				REG_RULE(2390 - 10, 2510 + 10, 40, 0, 20, 0),
-				REG_RULE(5150 - 10, 5970 + 10, 80, 0, 20, 0),
+				REG_RULE(2390 - 10, 2510 + 10, 40, 0, 1000, 0),
+				REG_RULE(5150 - 10, 5970 + 10, 80, 0, 1000, 0),
 			} };
 #endif
 
@@ -160,10 +160,10 @@ static int rwnx_check_fw_hw_feature(struct rwnx_hw *rwnx_hw,
 #endif /* CONFIG_RWNX_SPLIT_TX_BUF */
 	}
 
-	//DISABLE USPSD in driver
-	//if (!(sys_feat & BIT(MM_FEAT_UAPSD_BIT))) {
-	rwnx_hw->mod_params.uapsd_timeout = 0;
-	//}
+	//UAPSD function depends on uapsd_timeout and ps_mode setting in init file
+	if (!(sys_feat & BIT(MM_FEAT_UAPSD_BIT)) || !rwnx_hw->mod_params.ps_mode) {
+		rwnx_hw->mod_params.uapsd_timeout = 0;
+	}
 
 	if (!(sys_feat & BIT(MM_FEAT_BFMEE_BIT))) {
 		rwnx_hw->mod_params.bfmee = false;
@@ -357,6 +357,9 @@ static int rwnx_check_fw_hw_feature(struct rwnx_hw *rwnx_hw,
 	if (rwnx_hw->version_cfm.nss == 2 &&
 	    (!rwnx_hw->mod_params.nss1_force)) {
 		phy_feat |= MDM_NSS2_MASK;
+		rwnx_hw->current_nss = 2;
+	} else {
+		rwnx_hw->current_nss = 1;
 	}
 
 #ifndef CONFIG_RWNX_SDM
@@ -469,7 +472,7 @@ static void rwnx_set_ppe_threshold(struct rwnx_hw *rwnx_hw,
 		.ppet8 = 7 //None
 	};
 	u8 *ppe_thres_info_ptr = (u8 *)&ppe_thres_info;
-	u16 *ppe_thres_ptr = NULL;   /* initialized to NULL to avoid static analysis warning */
+	u16 *ppe_thres_ptr = (u16 *)he_cap->ppe_thres;
 	u8 i, j, cnt, offset;
 
 	if (rwnx_hw->mod_params.use_80) {
@@ -547,7 +550,7 @@ static void rwnx_set_vht_capa(struct rwnx_hw *rwnx_hw, struct wiphy *wiphy)
 	struct ieee80211_supported_band *band_5GHz =
 		wiphy->bands[NL80211_BAND_5GHZ];
 	int i;
-	int nss = rwnx_hw->mod_params.nss;
+	int nss = rwnx_hw->current_nss;
 	int mcs_map;
 	int mcs_map_max;
 	int mcs_map_max_2ss_rx = IEEE80211_VHT_MCS_SUPPORT_0_9;
@@ -688,7 +691,7 @@ static void rwnx_set_ht_capa(struct rwnx_hw *rwnx_hw, struct wiphy *wiphy)
 	struct ieee80211_supported_band *band_2GHz =
 		wiphy->bands[NL80211_BAND_2GHZ];
 	int i;
-	int nss = rwnx_hw->mod_params.nss;
+	int nss = rwnx_hw->current_nss;
 
 	if (!rwnx_hw->mod_params.ht_on) {
 		band_2GHz->ht_cap.ht_supported = false;
@@ -746,7 +749,7 @@ static void rwnx_set_he_capa(struct rwnx_hw *rwnx_hw, struct wiphy *wiphy)
 	struct ieee80211_supported_band *band_2GHz =
 		wiphy->bands[NL80211_BAND_2GHZ];
 	int i;
-	int nss = rwnx_hw->mod_params.nss;
+	int nss = rwnx_hw->current_nss;
 	struct ieee80211_sta_he_cap *he_cap;
 	int mcs_map, mcs_map_max_2ss = IEEE80211_HE_MCS_SUPPORT_0_11;
 	u8 dcm_max_ru = IEEE80211_HE_PHY_CAP8_DCM_MAX_RU_484;
@@ -871,7 +874,7 @@ static void rwnx_set_he_capa(struct rwnx_hw *rwnx_hw, struct wiphy *wiphy)
 			IEEE80211_HE_PHY_CAP8_HE_ER_SU_PPDU_4XLTF_AND_08_US_GI;
 	}
 
-	// mcs_map = rwnx_hw->mod_params.he_mcs_map;
+	mcs_map = rwnx_hw->mod_params.he_mcs_map;
 	memset(&he_cap->he_mcs_nss_supp, 0, sizeof(he_cap->he_mcs_nss_supp));
 	for (i = 0; i < nss; i++) {
 		__le16 unsup_for_ss =
@@ -1256,35 +1259,31 @@ void wq_update_mac_capa(struct rwnx_hw *rwnx_hw, struct wiphy *wiphy)
 	rwnx_set_rf_params(rwnx_hw, wiphy);
 }
 
-void rwnx_custregd(struct rwnx_hw *rwnx_hw, struct wiphy *wiphy, const struct ieee80211_regdomain *regdomain)
+void rwnx_custregd(struct rwnx_hw *rwnx_hw, struct wiphy *wiphy)
 {
 #if LINUX_VERSION_CODE >= KERNEL_VERSION(4, 0, 0)
-	bool lock = false;
 	if (!rwnx_hw->mod_params.custregd)
 		return;
 
 	/* REGULATORY_IGNORE_STALE_KICKOFF is removed since Linux 6.1.0-12, and it's useless. */
 	/* wiphy->regulatory_flags |= REGULATORY_IGNORE_STALE_KICKOFF; */
 	wiphy->regulatory_flags |= REGULATORY_WIPHY_SELF_MANAGED;
-	if (!rtnl_is_locked()) {
-		rtnl_lock();
-		lock = true;
-	}
+
+	rtnl_lock();
 #if LINUX_VERSION_CODE > KERNEL_VERSION(5, 12, 0)
-	if (regulatory_set_wiphy_regd_sync(wiphy, (struct ieee80211_regdomain *)regdomain))
+	if (regulatory_set_wiphy_regd_sync(wiphy, &rwnx_regdom))
 #else
-	if (regulatory_set_wiphy_regd_sync_rtnl(wiphy, (struct ieee80211_regdomain *)regdomain))
+	if (regulatory_set_wiphy_regd_sync_rtnl(wiphy, &rwnx_regdom))
 #endif
-		wiphy_err(wiphy, "Failed to set custom regdomain(%s)\n", regdomain->alpha2);
+		wiphy_err(wiphy, "Failed to set custom regdomain\n");
 	else
 		wiphy_err(
 			wiphy,
 			"\n"
 			"*******************************************************\n"
-			"** CAUTION: USING PERMISSIVE CUSTOM REGULATORY RULES(%s) **\n"
-			"*******************************************************\n", regdomain->alpha2);
-	if (lock)
-		rtnl_unlock();
+			"** CAUTION: USING PERMISSIVE CUSTOM REGULATORY RULES **\n"
+			"*******************************************************\n");
+	rtnl_unlock();
 #endif
 }
 

@@ -15,8 +15,8 @@
 #define WQ_PKTIN_URB_NUM 15
 #define WQ_PKTOUT_URB_NUM 100
 
-#define THRESHOLD_USB_OUT_BUNDLE_MAX 1
-#define USB_OUT_PKT_LEN 2048
+#define THRESHOLD_USB_OUT_BUNDLE_MAX 10
+#define USB_OUT_PKT_LEN 1664
 
 /* stop netdev queue when number of queued buffers if greater than this  */
 #define RWNX_NDEV_FLOW_CTRL_USB_STOP 600
@@ -37,6 +37,7 @@
 #define WQ_VREQ_ID_GET_ROM_VER 0xCA //get rom version
 #define WQ_VREQ_ID_SET_SOC_RESET 0xDA //set chip reset to bootrom
 #define WQ_VREQ_ID_RESET_RESUME_NOTIFY 0xDB //resume reset notify fw
+#define WQ_VREQ_ID_BMI_CMD 0xE0 // send bmi cmd to fw
 
 /****************************
  * USB module structure
@@ -90,9 +91,6 @@ struct wq_usb {
 	struct sk_buff_head bundle_retry_list;
 	struct sk_buff_head buf_retry_list;
 	uint32_t usb_retry_count;
-
-	/* tasklet for retransmission */
-	struct tasklet_struct retransmit_task;
 
 	struct {
 		spinlock_t lock;

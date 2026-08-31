@@ -16,6 +16,7 @@
 #include <linux/workqueue.h>
 #include <linux/if_ether.h>
 #include "rwnx_fw_trace.h"
+#include <linux/kref.h>
 
 struct rwnx_hw;
 struct rwnx_sta;
@@ -144,7 +145,6 @@ struct rwnx_debugfs {
 	struct rwnx_fw_trace fw_trace;
 
 	//struct work_struct sta_work;
-	struct workqueue_struct *sta_wq;
 	struct list_head sta_works;
 	struct mutex sta_works_lock;
 	struct dentry **dir_sta;
@@ -164,6 +164,7 @@ struct rwnx_sta_ws {
 	struct work_struct sta_work;
 	struct rwnx_debugfs *debugfs;
 	uint8_t sta_idx;
+	struct kref kref;
 };
 
 // Max duration in msecs to save rate config for a sta after disconnection

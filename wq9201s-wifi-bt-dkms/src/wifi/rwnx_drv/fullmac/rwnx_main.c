@@ -49,9 +49,6 @@
 #include "wq_profiling.h"
 #include "rwnx_main.h"
 #include "ieee80211_extap.h"
-#ifdef CONFIG_WQ_WLAN_USB
-#include "usb.h"
-#endif
 
 /* nbw_type default: 0
     0 - disable
@@ -69,7 +66,7 @@ MODULE_PARM_DESC(reg_data_file, "Bin file path");
 bool gv_get_pwr_from_bin_flag = false;
 
 /* The upper limit of the number of data packets that the netdev can process at poll function */
-#define NAPI_RX_WEIGHT 64
+#define NAPI_RX_WEIGHT 32
 
 /* enable monitor mode minimal interframe space by set aifs = 1, and cwmin = cwmax = 0 */
 #define MONITOR_TX_MIN_IFS_ENABLE 0
@@ -501,41 +498,10 @@ extern void store_supp_chan_pwr(struct rwnx_hw *rwnx_hw,
 				struct supp_chan_pwr_str *supp_pwr);
 struct supp_chan_pwr_str wq_supp_pwr[MAC_DOMAINCHANNEL_24G_MAX +
 				     MAC_DOMAINCHANNEL_5G_MAX] = { { 0 } };
-#ifdef CONFIG_WQ_WLAN_USB
-extern int gv_usb_mtu_pkt_bundle_i;
-#endif
 
 /*********************************************************************
  * helper
  *********************************************************************/
-static void wq_disable_all_channels(struct ieee80211_channel *ch, int n)
-{
-	int i;
-	for (i = 0; i < n; i++) {
-		ch[i].flags |= IEEE80211_CHAN_DISABLED;
-	}
-}
-
-static void wq_apply_band_mode(struct wiphy *wiphy, uint8_t mode)
-{
-	switch (mode) {
-	case WQ_BAND_2G:
-		/* 2.4 GHz only: disable the 5 GHz band */
-		if (wiphy->bands[NL80211_BAND_5GHZ])
-			wq_disable_all_channels(wiphy->bands[NL80211_BAND_5GHZ]->channels,
-									wiphy->bands[NL80211_BAND_5GHZ]->n_channels);
-		break;
-	case WQ_BAND_5G:
-		/* 5 GHz only: disable the 2.4 GHz band */
-		if (wiphy->bands[NL80211_BAND_2GHZ])
-			wq_disable_all_channels(wiphy->bands[NL80211_BAND_2GHZ]->channels,
-									wiphy->bands[NL80211_BAND_2GHZ]->n_channels);
-		break;
-	default:
-		break;
-	}
-}
-
 struct rwnx_sta *rwnx_get_sta(struct rwnx_hw *rwnx_hw, const u8 *mac_addr)
 {
 	int i;
@@ -576,45 +542,6 @@ void rwnx_enable_gcmp(struct rwnx_hw *rwnx_hw)
 	cipher_suites[rwnx_hw->wiphy->n_cipher_suites++] =
 		WLAN_CIPHER_SUITE_GCMP_256;
 #endif
-}
-
-void rwnx_chip_reset_task(struct work_struct *w)
-{
-	// Referring to the host platform gpio number, -1 means undefined
-	#define GPIO_RST_PIN  -1
-	int ret;
-	
-	printk(KERN_ERR "#### %s pull gpio chip reset #####\n", __func__);
-
-	if (GPIO_RST_PIN == -1) {
-		printk(KERN_ERR "%s NO RESET PIN DEFINED!!\n", __func__);
-		return;
-	}
-
-	if (!gpio_is_valid(GPIO_RST_PIN)) {
-		printk(KERN_ERR "Invalid GPIO number %d\n", GPIO_RST_PIN);
-		return;
-	}
-
-	ret = gpio_request(GPIO_RST_PIN, "GPIO_RST_PIN");
-	if (ret) {
-		printk(KERN_ERR "Failed to request GPIO %d, ret=%d\n", GPIO_RST_PIN, ret);
-		return;
-	}
-
-	ret = gpio_direction_output(GPIO_RST_PIN, 0);
-	if (ret) {
-		gpio_free(GPIO_RST_PIN);
-		return;
-	}
-	gpio_set_value(GPIO_RST_PIN, 0);
-	printk(KERN_ERR "GPIO %d set to %d\n", GPIO_RST_PIN, gpio_get_value(GPIO_RST_PIN));
-
-	msleep(100);
-	gpio_set_value(GPIO_RST_PIN, 1);
-	printk(KERN_ERR "GPIO %d set to %d\n", GPIO_RST_PIN, gpio_get_value(GPIO_RST_PIN));
-
-	gpio_free(GPIO_RST_PIN);
 }
 
 /*
@@ -896,7 +823,7 @@ u8 *rwnx_ie_find(u8 *addr, uint16_t buflen, uint8_t ie_id, u8 *len,
 {
 	u8 *start;
 	u8 *end = addr + buflen;
-	uint16_t former_len = 0;
+	uint16_t former_len;
 
 	// loop as long as we do not go beyond the frame size
 	if (buflen > 36) {
@@ -970,11 +897,11 @@ u8 *rwnx_bcn_chan_change(struct rwnx_bcn *bcn, u32 center_freq, u8 band,
 {
 	u8 *buf, *pos;
 	u8 *head_tmp;
-	u8 ds_ie_len = 0;
-	u16 before_ds_len = 0;
+	u8 ds_ie_len;
+	u16 before_ds_len;
 	u8 csa_len = 0;
 	u8 cur_chan = 0;
-	u8 new_chan;
+	u16 new_chan;
 
 	if (!bcn->head) {
 		return NULL;
@@ -1090,67 +1017,6 @@ u8 *rwnx_bcn_nss_update(struct rwnx_hw *rwnx_hw, struct rwnx_bcn *bcn)
 	return buf;
 }
 
-int wq_bcn_change_vendor_ie(struct rwnx_hw *rwnx_hw, struct rwnx_vif *vif,
-	u8 *vendor_ie, size_t ies_len)
-{
-	struct rwnx_bcn *bcn = &vif->ap.bcn;
-	u8 *buf, *pos;
-	int error = 0;
-
-	if (!bcn->head) {
-		WQ_DBG(DM_GENERIC, DL_ERR, "%s: bcn head is NULL\n", __func__);
-		return -EINVAL;
-	}
-
-	bcn->tim_len = 6;
-	bcn->len = bcn->head_len + bcn->tail_len + bcn->ies_len + bcn->tim_len + ies_len;
-
-	buf = kmalloc(bcn->len, GFP_KERNEL);
-	if (!buf) {
-		WQ_DBG(DM_GENERIC, DL_ERR, "%s: can't allocate buffer\n", __func__);
-		return -ENOMEM;
-	}
-
-	WQ_DBG(DM_GENERIC, DL_INF, "%s: head_len: %ld, tail_len: %ld, ies_len: %ld, tim_len: %ld, ies_len: %ld\n",
-		__func__, (long int)bcn->head_len, (long int)bcn->tail_len, (long int)bcn->ies_len,
-		(long int)bcn->tim_len, (long int)ies_len);
-
-	// Build the beacon buffer
-	pos = buf;
-	memcpy(pos, bcn->head, bcn->head_len);
-	pos += bcn->head_len;
-	*pos++ = WLAN_EID_TIM;
-	*pos++ = 4;
-	*pos++ = 0;
-	*pos++ = bcn->dtim;
-	*pos++ = 0;
-	*pos++ = 0;
-
-	if (bcn->tail) {
-		memcpy(pos, bcn->tail, bcn->tail_len);
-		pos += bcn->tail_len;
-	}
-
-	if (bcn->ies) {
-		memcpy(pos, bcn->ies, bcn->ies_len);
-		pos += bcn->ies_len;
-	}
-
-	if (ies_len) {
-		memcpy(pos, vendor_ie, ies_len);
-	}
-
-	error = rwnx_send_bcn_change(rwnx_hw, vif->vif_index, buf, bcn->len,
-				     bcn->head_len, bcn->tim_len, NULL);
-
-	if (buf) {
-		kfree(buf);
-		buf = NULL;
-	}
-
-	return error;
-}
-
 /**
  *
  * @rwnx_send_ch_switch: Change bcn element and send bcn change to FW.
@@ -1251,11 +1117,13 @@ void rwnx_chanctx_unlink(struct rwnx_vif *vif)
 	}
 
 	if (ctxt->count == 0) {
-		/* If current chan ctxt is no longer linked to a vif
-			disable radar detection (no need to check if it was activated) */
-		rwnx_radar_detection_enable(&vif->rwnx_hw->radar,
-						RWNX_RADAR_DETECT_DISABLE,
-						RWNX_RADAR_RIU);
+		if (vif->ch_index == vif->rwnx_hw->cur_chanctx) {
+			/* If current chan ctxt is no longer linked to a vif
+               disable radar detection (no need to check if it was activated) */
+			rwnx_radar_detection_enable(&vif->rwnx_hw->radar,
+						    RWNX_RADAR_DETECT_DISABLE,
+						    RWNX_RADAR_RIU);
+		}
 		/* set chan to null, so that if this ctxt is relinked to a vif that
            don't have channel information, don't use wrong information */
 		ctxt->chan_def.chan = NULL;
@@ -1322,15 +1190,15 @@ static void rwnx_csa_finish(struct work_struct *ws)
 		spin_lock_bh(&rwnx_hw->cb_lock);
 		rwnx_chanctx_unlink(vif);
 		rwnx_chanctx_link(vif, csa->ch_idx, &csa->chandef);
-		if (vif->ch_index < NX_CHAN_CTXT_CNT) {
-			rwnx_radar_detection_enable_on_cur_channel(rwnx_hw, vif);
+		if (rwnx_hw->cur_chanctx == csa->ch_idx) {
+			rwnx_radar_detection_enable_on_cur_channel(rwnx_hw);
 			rwnx_txq_vif_start(vif, RWNX_TXQ_STOP_CHAN, rwnx_hw);
 		} else
 			rwnx_txq_vif_stop(vif, RWNX_TXQ_STOP_CHAN, rwnx_hw);
 		spin_unlock_bh(&rwnx_hw->cb_lock);
 #if LINUX_VERSION_CODE >= KERNEL_VERSION(6, 3, 0)
 		cfg80211_ch_switch_notify(vif->ndev, &csa->chandef, 0, 0);
-#elif LINUX_VERSION_CODE >= KERNEL_VERSION(6, 1, 0)  || defined(AMLOGIC_BUILD_COMPATIBLE)
+#elif LINUX_VERSION_CODE >= KERNEL_VERSION(6, 1, 0)
 		cfg80211_ch_switch_notify(vif->ndev, &csa->chandef, 0);
 #else
 		cfg80211_ch_switch_notify(vif->ndev, &csa->chandef);
@@ -1526,7 +1394,7 @@ static struct rwnx_vif *rwnx_get_vif_by_ndev(struct rwnx_hw *rwnx_hw,
 
 	spin_lock_bh(&rwnx_hw->cb_lock);
 	list_for_each_entry (vif, &rwnx_hw->vifs, list) {
-		if (vif->ndev == ndev) {
+		if (vif && vif->ndev == ndev) {
 			spin_unlock_bh(&rwnx_hw->cb_lock);
 			WQ_DBG(DM_GENERIC, DL_INF,
 			       "IP address of %s is changed.\n", ndev->name);
@@ -1577,8 +1445,8 @@ int fib_netdev_event(struct notifier_block *nb, unsigned long action,
 			/*send the ip to fw*/
 			if ((error = rwnx_send_ip_req(rwnx_hw, ip_address,
 						      vif->drv_vif_index))) {
-                WQ_DBG(DM_GENERIC, DL_ERR,
-                       "send ip req fail, err=%d\n", error);
+				WQ_DBG(DM_GENERIC, DL_ERR,
+				       "send ip req fail\n");
 			}
 			mutex_unlock(&rwnx_hw->mutex);
 		}
@@ -1698,9 +1566,212 @@ void rwnx_cfg80211_timer_setup(struct rwnx_hw *rwnx_hw)
 	mod_timer(&rwnx_hw->tx_monitor_timer, jiffies + HZ);
 }
 
+int rwnx_monitor_dual_mon_ena(struct rwnx_hw *rwnx_hw)
+{
+	switch (rwnx_hw->core->hif_ops->hif) {
+		case WQ_HIF_USB:
+			return 1;
+		default:
+			return 0;
+	}
+
+	return 0;
+}
+
+struct rwnx_monitor_cfg *rwnx_monitor_record(struct rwnx_hw *rwnx_hw, u8 vif)
+{
+	u8 band, mon_idx, chn;
+	struct rwnx_monitor_cfg *p_cfg = NULL;
+
+	if (RWNX_INVALID_VIF == vif) {
+		goto out;
+	}
+
+	if (0 == rwnx_hw->monitor.mon_num) {
+		band = NL80211_BAND_5GHZ;
+		chn = 44; /* Default as fw. FRQ = 5220. */
+	} else {
+		for (mon_idx = 0; mon_idx < rwnx_hw->monitor.mon_num_max; mon_idx++) {
+			if (RWNX_INVALID_VIF != rwnx_hw->monitor.cfg[mon_idx].vif_idx) {
+				p_cfg = &rwnx_hw->monitor.cfg[mon_idx];
+				break;
+			}
+		}
+
+		if (p_cfg) {
+			if (NL80211_BAND_5GHZ == p_cfg->band) {
+				band = NL80211_BAND_2GHZ;
+				chn = 6; /* Default as fw. FRQ = 2437. */
+			} else {
+				band = NL80211_BAND_5GHZ;
+				chn = 44;
+			}
+		} else {
+			rwnx_monitor_dump(rwnx_hw);
+			WARN(1, "rwnx_monitor_record inner error !!");
+			band = NL80211_BAND_2GHZ;
+			chn = 6;
+		}
+	}
+
+	p_cfg = NULL;
+
+	for (mon_idx = 0; mon_idx < rwnx_hw->monitor.mon_num_max; mon_idx++) {
+		if (RWNX_INVALID_VIF == rwnx_hw->monitor.cfg[mon_idx].vif_idx) {
+			p_cfg = &rwnx_hw->monitor.cfg[mon_idx];
+			break;
+		}
+	}
+
+out:
+	if (p_cfg) {
+		p_cfg->vif_idx = vif;
+		p_cfg->nss = 1;
+		p_cfg->band = band;
+		p_cfg->ch_idx = chn;
+
+		p_cfg->tx_mcs_idx = 0xFF;
+		p_cfg->tx_mcs_idx_tmp = 0xFF;
+		p_cfg->tx_bw_idx = 0xFF;
+
+		p_cfg->rx_rssi = 0;
+		p_cfg->ch_bw = 0;
+
+		rwnx_hw->monitor.mon_num++;
+	}
+
+	return p_cfg;
+}
+
+int rwnx_monitor_unrecord(struct rwnx_hw *rwnx_hw, u8 vif)
+{
+	int ret = -1;
+	u8 mon_idx;
+	struct rwnx_monitor_cfg *p_cfg = NULL;
+
+	if (0 == rwnx_hw->monitor.mon_num || RWNX_INVALID_VIF == vif) {
+		goto out;
+	}
+
+	for (mon_idx = 0; mon_idx < rwnx_hw->monitor.mon_num_max; mon_idx++) {
+		if (vif == rwnx_hw->monitor.cfg[mon_idx].vif_idx) {
+			p_cfg = &rwnx_hw->monitor.cfg[mon_idx];
+			break;
+		}
+	}
+
+out:
+	if (p_cfg) {
+		p_cfg->vif_idx = RWNX_INVALID_VIF;
+		rwnx_hw->monitor.mon_num--;
+		ret = 0;
+	}
+
+	return ret;
+}
+
+struct rwnx_monitor_cfg *rwnx_monitor_get_cfg(struct rwnx_hw *rwnx_hw, u8 vif)
+{
+	u8 mon_idx;
+	struct rwnx_monitor_cfg *p_cfg = NULL;
+
+	if (0 == rwnx_hw->monitor.mon_num || RWNX_INVALID_VIF == vif) {
+		goto out;
+	}
+
+	for (mon_idx = 0; mon_idx < rwnx_hw->monitor.mon_num_max; mon_idx++) {
+		if (rwnx_hw->monitor.cfg[mon_idx].vif_idx == vif) {
+			p_cfg = &rwnx_hw->monitor.cfg[mon_idx];
+			break;
+		}
+	}
+
+out:
+	return p_cfg;
+}
+
+struct rwnx_monitor_cfg *rwnx_monitor_get_cfg_by_band(struct rwnx_hw *rwnx_hw, u8 band)
+{
+	u8 mon_idx;
+	struct rwnx_monitor_cfg *p_cfg = NULL;
+
+	if (0 == rwnx_hw->monitor.mon_num
+		|| (NL80211_BAND_2GHZ != band && NL80211_BAND_5GHZ != band)) {
+		goto out;
+	}
+
+	for (mon_idx = 0; mon_idx < rwnx_hw->monitor.mon_num_max; mon_idx++) {
+		if (rwnx_hw->monitor.cfg[mon_idx].band == band && RWNX_INVALID_VIF != rwnx_hw->monitor.cfg[mon_idx].vif_idx) {
+			p_cfg = &rwnx_hw->monitor.cfg[mon_idx];
+			break;
+		}
+	}
+
+out:
+	return p_cfg;
+}
+
+void rwnx_monitor_rate_update(struct rwnx_hw *rwnx_hw)
+{
+	u8 mon_idx;
+	struct rwnx_monitor_cfg *p_cfg = NULL;
+
+	for (mon_idx = 0; mon_idx < rwnx_hw->monitor.mon_num_max; mon_idx++) {
+		p_cfg = &rwnx_hw->monitor.cfg[mon_idx];
+		if (p_cfg->tx_mcs_idx_tmp != 0xFF) {
+			p_cfg->tx_mcs_idx = p_cfg->tx_mcs_idx_tmp;
+			p_cfg->tx_mcs_idx_tmp = 0xFF;
+		}
+	}
+
+	return;
+}
+
+void rwnx_monitor_dump(struct rwnx_hw *rwnx_hw)
+{
+	u8 mon_idx;
+	struct rwnx_monitor_cfg *p_cfg = NULL;
+
+	WQ_DBG(DM_GENERIC, DL_WRN, "rwnx_monitor_dump:\nTotal %d, used %d.\n",
+		rwnx_hw->monitor.mon_num_max, rwnx_hw->monitor.mon_num);
+
+	for (mon_idx = 0; mon_idx < rwnx_hw->monitor.mon_num_max; mon_idx++) {
+		p_cfg = &rwnx_hw->monitor.cfg[mon_idx];
+		WQ_DBG(DM_GENERIC, DL_WRN, "%d: band %d, chn %d, vif %d, mcs %d, bw %d, nss %d.\n",
+		mon_idx, p_cfg->band, p_cfg->ch_idx, p_cfg->vif_idx,
+		p_cfg->tx_mcs_idx, p_cfg->tx_bw_idx, p_cfg->nss);
+	}
+
+	return;
+}
+
+void rwnx_monitor_init(struct rwnx_hw *rwnx_hw)
+{
+	u8 mon_idx;
+	struct rwnx_monitor_cfg *p_cfg;
+
+	if (rwnx_monitor_dual_mon_ena(rwnx_hw)) {
+		rwnx_hw->monitor.mon_num_max = 2;
+	} else {
+		rwnx_hw->monitor.mon_num_max = 1;
+	}
+
+	rwnx_hw->monitor.mon_num = 0;
+
+	for (mon_idx = 0; mon_idx < rwnx_hw->monitor.mon_num_max; mon_idx++) {
+		p_cfg = &rwnx_hw->monitor.cfg[mon_idx];
+
+		p_cfg->vif_idx = RWNX_INVALID_VIF;
+		p_cfg->tx_mcs_idx = 0xFF;
+		p_cfg->tx_mcs_idx_tmp = 0xFF;
+		p_cfg->tx_bw_idx = 0xFF;
+	}
+
+	return;
+}
+
 static int rwnx_monitor_mode_txpath_config(struct net_device *dev)
 {
-	int error = 0;
 #if MONITOR_TX_MIN_IFS_ENABLE
 	u32 aifs = 1;
 	u32 cwmin = 0;
@@ -1714,19 +1785,17 @@ static int rwnx_monitor_mode_txpath_config(struct net_device *dev)
 	struct rwnx_vif *rwnx_vif = netdev_priv(dev);
 	struct rwnx_hw *rwnx_hw = rwnx_vif->rwnx_hw;
 	u8 sta_idx = rwnx_monitor_me_sta_add(rwnx_hw, rwnx_vif->vif_index);
+	struct rwnx_monitor_cfg *p_cfg = rwnx_monitor_record(rwnx_hw, rwnx_vif->vif_index);
 
-	rwnx_hw->monitor_vif = rwnx_vif->vif_index;
-	if (rwnx_vif->ch_index != RWNX_CH_NOT_SET) {
-		//Configure the monitor channel
-		error = rwnx_send_config_monitor_req(
-			rwnx_hw,
-			&rwnx_hw->chanctx_table[rwnx_vif->ch_index].chan_def,
-			NULL);
-
-		if (error) {
-			WQ_DBG(DM_TX, DL_ERR, "%s: rwnx_send_config_monitor_req failed\n", __func__);
-		}
+	if (NULL == p_cfg) {
+		rwnx_monitor_dump(rwnx_hw);
+		WARN(1,
+			"rwnx_monitor_mode_txpath_config: Record vif_index=%u failed.\n",
+			rwnx_vif->vif_index);
 	}
+
+	WQ_DBG(DM_GENERIC, DL_WRN, "%s: vif %u record as band %u chn %u.\n",
+		__func__, rwnx_vif->vif_index, p_cfg->band, p_cfg->ch_idx);
 
 	/* Init TXQ */
 	rwnx_sta = &rwnx_hw->sta_table[sta_idx];
@@ -1831,6 +1900,7 @@ static int rwnx_open(struct net_device *dev)
 	if (rwnx_hw->vif_started > 1) {
 		rwnx_send_me_set_ps_mode(rwnx_hw, PS_MODE_OFF);
 	}
+
 	if (RWNX_VIF_TYPE(rwnx_vif) == NL80211_IFTYPE_MONITOR) {
 		rwnx_monitor_mode_txpath_config(dev);
 	}
@@ -1952,9 +2022,6 @@ static int rwnx_close(struct net_device *dev)
 
 	rwnx_chanctx_unlink(rwnx_vif);
 
-	if (RWNX_VIF_TYPE(rwnx_vif) == NL80211_IFTYPE_MONITOR)
-		rwnx_hw->monitor_vif = RWNX_INVALID_VIF;
-
 	rwnx_hw->vif_started--;
 	if (rwnx_hw->vif_started == 0) {
 		rwnx_send_reset(rwnx_hw);
@@ -1966,6 +2033,8 @@ static int rwnx_close(struct net_device *dev)
 		rwnx_send_me_chan_config_req(rwnx_hw);
 
 		clear_bit(RWNX_DEV_STARTED, &rwnx_hw->flags);
+
+		rwnx_cfg80211_timer_shutdown(rwnx_hw);
 	}
 
 	if (rwnx_hw->vif_started == 1) {
@@ -1976,7 +2045,9 @@ static int rwnx_close(struct net_device *dev)
 		}
 	}
 
-	rwnx_cfg80211_timer_shutdown(rwnx_hw);
+	if (RWNX_VIF_TYPE(rwnx_vif) == NL80211_IFTYPE_MONITOR) {
+		rwnx_monitor_unrecord(rwnx_hw, rwnx_vif->vif_index);
+	}
 
 	return 0;
 }
@@ -2066,7 +2137,6 @@ static int rwnx_set_mac_address(struct net_device *dev, void *addr)
 			else
 				ndev->dev_addr[0] = (ndev->dev_addr[0] ^ (1 << vif->drv_vif_index)) | 0x2;
 #endif
-
 		}
 	}
 	else {
@@ -2096,10 +2166,9 @@ int rwnx_ioctl(struct net_device *dev, struct ifreq *ifr, int cmd)
 }
 
 static void rwnx_set_he_su_mcs_index(struct rwnx_hw *rwnx_hw, uint32_t sta_idx,
-				     uint8_t mcs_index, uint8_t bw_idx)
+				     uint8_t mcs_index, uint8_t bw_idx, uint16_t nss)
 {
 	uint16_t rate_cfg = 0;
-	uint16_t nss = rwnx_hw->mod_params.nss - 1;
 	uint16_t giAndPreTypeTx = 2;
 
 	if (mcs_index > 11) {
@@ -2115,17 +2184,20 @@ static void rwnx_set_he_su_mcs_index(struct rwnx_hw *rwnx_hw, uint32_t sta_idx,
 	rwnx_send_me_rc_set_rate(rwnx_hw, sta_idx, rate_cfg);
 }
 
-static void radiotap_hdr_parse(struct rwnx_hw *rwnx_hw, uint32_t sta_idx,
+static void radiotap_hdr_parse(struct net_device *dev, uint32_t sta_idx,
 			       struct ieee80211_radiotap_header *radiotap_hdr,
 			       uint32_t radiotap_len)
 {
 	int ret;
-	uint8_t known __maybe_unused;
+	uint8_t known;
 	uint8_t flags;
 	uint8_t mcs_idx;
 	uint8_t bw_idx;
-	uint16_t tx_flags __maybe_unused;
+	uint16_t tx_flags;
 	struct ieee80211_radiotap_iterator iterator;
+	struct rwnx_vif *rwnx_vif = netdev_priv(dev);
+	struct rwnx_hw *rwnx_hw = rwnx_vif->rwnx_hw;
+	struct rwnx_monitor_cfg *p_mon_cfg;
 
 	ret = ieee80211_radiotap_iterator_init(&iterator, radiotap_hdr,
 					       radiotap_len, NULL);
@@ -2141,20 +2213,29 @@ static void radiotap_hdr_parse(struct rwnx_hw *rwnx_hw, uint32_t sta_idx,
 			// TBD: need to handle tx flags.
 			break;
 		case IEEE80211_RADIOTAP_MCS:
-			known = *((uint8_t *)(iterator.this_arg) + 0);
-			flags = *((uint8_t *)(iterator.this_arg) + 1);
-			mcs_idx = *((uint8_t *)(iterator.this_arg) + 2);
-			bw_idx = flags & 0x03;
-			if ((mcs_idx != rwnx_hw->monitor_param.tmp_mcs_idx) ||
-			    (bw_idx != rwnx_hw->monitor_param.tx_bw_idx)) {
-				rwnx_set_he_su_mcs_index(rwnx_hw, sta_idx,
-							 mcs_idx, bw_idx);
-				rwnx_hw->monitor_param.tmp_mcs_idx = mcs_idx;
-				rwnx_hw->monitor_param.tx_bw_idx = bw_idx;
-				WQ_DBG(DM_GENERIC, DL_INF,
-				       "%s: switch mcs to %u, bw to %u MHz\n",
-				       __func__, mcs_idx, (1 << bw_idx) * 20);
+			p_mon_cfg = rwnx_monitor_get_cfg(rwnx_hw, rwnx_vif->vif_index);
+			if (p_mon_cfg) {
+				known = *((uint8_t *)(iterator.this_arg) + 0);
+				flags = *((uint8_t *)(iterator.this_arg) + 1);
+				mcs_idx = *((uint8_t *)(iterator.this_arg) + 2);
+				bw_idx = flags & 0x03;
+
+				if ((mcs_idx != p_mon_cfg->tx_mcs_idx && mcs_idx != p_mon_cfg->tx_mcs_idx_tmp) ||
+				    (bw_idx != p_mon_cfg->tx_bw_idx)) {
+					rwnx_set_he_su_mcs_index(rwnx_hw, sta_idx,
+						mcs_idx, bw_idx, p_mon_cfg->nss - 1);
+
+					p_mon_cfg->tx_mcs_idx_tmp = mcs_idx;
+					p_mon_cfg->tx_bw_idx = bw_idx;
+					WQ_DBG(DM_GENERIC, DL_WRN,
+						"%s: vif %u sta %u switch mcs %u to %u, bw to %u MHz\n",
+						__func__, rwnx_vif->vif_index, sta_idx,
+						p_mon_cfg->tx_mcs_idx, mcs_idx, (1 << bw_idx) * 20);
+				}
+			} else {
+				/* Do nothing. */
 			}
+
 			break;
 		default:
 			WQ_DBG(DM_GENERIC, DL_ERR,
@@ -2191,7 +2272,7 @@ static netdev_tx_t rwnx_monitor_start_xmit(struct sk_buff *skb,
 	if (unlikely(skb->len < rtap_len))
 		goto fail;
 
-	radiotap_hdr_parse(rwnx_hw, sta->sta_idx, rtap_hdr, rtap_len);
+	radiotap_hdr_parse(dev, sta->sta_idx, rtap_hdr, rtap_len);
 
 	/* Skip the ratio tap header */
 	skb_pull(skb, rtap_len);
@@ -2240,13 +2321,7 @@ u16 rwnx_monitor_select_queue(struct net_device *dev, struct sk_buff *skb,
 static const struct net_device_ops rwnx_netdev_ops = {
 	.ndo_open = rwnx_open,
 	.ndo_stop = rwnx_close,
-#ifdef TX_IPI_SUPPORT
-	// To reduce CPU load caused by upper-layer applications, offload the driver
-	// TX path to other CPU cores for load balancing and throughput enhancement.
-	.ndo_start_xmit = rwnx_start_xmit_wrap,
-#else
 	.ndo_start_xmit = rwnx_start_xmit,
-#endif
 	.ndo_get_stats = rwnx_get_stats,
 	.ndo_select_queue = rwnx_select_queue,
 	.ndo_set_mac_address = rwnx_set_mac_address,
@@ -2296,7 +2371,8 @@ static int rwnx_napi_poll_rx(struct napi_struct *napi, int budget)
 	int work_done = 0;
 	u64 time_start_us = 0, time_end_us = 0;
 
-	time_start_us = (u64)ktime_to_us(ktime_get());
+	if (rwnx_hw->time_dump_enable)
+		time_start_us = (u64)ktime_to_us(ktime_get());
 
 	PROFILING_SET(SW_PROF_NAPI_RX_SOFTIRQ);
 
@@ -2326,17 +2402,14 @@ done:
 #else
 		napi_complete(napi);
 #endif
-
-		if (rwnx_hw->napi_param.napi_enable &&
-		    !skb_queue_empty(&rwnx_hw->napi_rx_pkt_list)) {
-			napi_schedule(&rwnx_hw->napi_rx);
-		}
 	}
 
 	PROFILING_CLR(SW_PROF_NAPI_RX_SOFTIRQ);
 
-	time_end_us = (u64)ktime_to_us(ktime_get());
-	atomic_add((u32)(time_end_us - time_start_us), &rwnx_hw->napi_rx_time);
+	if (rwnx_hw->time_dump_enable) {
+		time_end_us = (u64)ktime_to_us(ktime_get());
+		atomic_add((u32)(time_end_us - time_start_us), &rwnx_hw->napi_rx_time);
+	}
 
 	return work_done;
 }
@@ -2388,17 +2461,34 @@ static struct wireless_dev *rwnx_interface_add(struct rwnx_hw *rwnx_hw,
 	if (vif_idx < 0)
 		return NULL;
 
+	WQ_DBG(DM_CRDT, DL_WRN,
+		"%s: Name %s, type %d, vif_idx %d.\n", __func__, name, type, vif_idx);
+
 #ifndef CONFIG_RWNX_MON_DATA
-	list_for_each_entry (vif, &rwnx_hw->vifs, list) {
-		// Check if monitor interface already exists or type is monitor
-		if ((RWNX_VIF_TYPE(vif) == NL80211_IFTYPE_MONITOR) ||
-		    (type == NL80211_IFTYPE_MONITOR)) {
-			wiphy_err(
-				rwnx_hw->wiphy,
-				"Monitor+Data interface support (MON_DATA) disabled\n");
-			return NULL;
+	if (rwnx_monitor_dual_mon_ena(rwnx_hw)) {
+		list_for_each_entry (vif, &rwnx_hw->vifs, list) {
+			// Check if monitor interface already exists or type is monitor
+			if ((RWNX_VIF_TYPE(vif) != type) &&
+				(type == NL80211_IFTYPE_MONITOR || RWNX_VIF_TYPE(vif) == NL80211_IFTYPE_MONITOR)) {
+				wiphy_err(
+					rwnx_hw->wiphy,
+					"%s: Monitor+Data interface unsupport (MON_DATA disabled).\n", __func__);
+				return NULL;
+			}
+		}
+	} else {
+		list_for_each_entry (vif, &rwnx_hw->vifs, list) {
+			// Check if monitor interface already exists or type is monitor
+			if ((RWNX_VIF_TYPE(vif) == NL80211_IFTYPE_MONITOR) ||
+				(type == NL80211_IFTYPE_MONITOR)) {
+				wiphy_err(
+					rwnx_hw->wiphy,
+					"%s: Monitor+Data interface unsupport (MON_DATA disabled).\n", __func__);
+				return NULL;
+			}
 		}
 	}
+
 #endif
 
 #if LINUX_VERSION_CODE >= KERNEL_VERSION(3, 17, 0)
@@ -2495,7 +2585,6 @@ static struct wireless_dev *rwnx_interface_add(struct rwnx_hw *rwnx_hw,
 
 		if (type == NL80211_IFTYPE_STATION) {
 			vif->extAP_supp = rwnx_hw->mod_params.extap_support;
-			rwnx_hw->amsdu_param.enable = !vif->extAP_supp;
 			WQ_DBG(DM_CRDT, DL_WRN, "%s: extAP_supp:%d\n", __func__, vif->extAP_supp);
 		}
 
@@ -2639,7 +2728,6 @@ static int rwnx_cfg80211_del_iface(struct wiphy *wiphy,
 	struct rwnx_hw *rwnx_hw = wiphy_priv(wiphy);
 
 	ENTER();
-
 	netdev_info(dev, "Remove Interface");
 
 	if (dev->reg_state == NETREG_REGISTERED) {
@@ -2741,6 +2829,7 @@ static int rwnx_cfg80211_change_iface(struct wiphy *wiphy,
 	struct rwnx_hw *rwnx_hw = wiphy_priv(wiphy);
 #endif
 	struct rwnx_vif *vif = netdev_priv(dev);
+	struct rwnx_monitor_cfg *p_cfg;
 
 	ENTER();
 
@@ -2762,6 +2851,8 @@ static int rwnx_cfg80211_change_iface(struct wiphy *wiphy,
 			WQ_DBG(DM_GENERIC, DL_WRN,
 			       "switch vif(%s) mode from %d to %d", dev->name,
 			       RWNX_VIF_TYPE(vif), type);
+			/* BUG36879: Wait rwnx_sta_work done before set vif_table as NULL.*/
+			rwnx_dbgfs_flush_sta_work(rwnx_hw);
 			rwnx_switch_vif_mode(dev, type);
 		} else {
 			return (-EBUSY);
@@ -2778,7 +2869,7 @@ static int rwnx_cfg80211_change_iface(struct wiphy *wiphy,
 			    (RWNX_VIF_TYPE(vif) != NL80211_IFTYPE_MONITOR)) {
 				wiphy_err(
 					rwnx_hw->wiphy,
-					"Monitor+Data interface support (MON_DATA) disabled\n");
+					"%s: Monitor+Data interface unsupport (MON_DATA disabled).\n", __func__);
 				return -EIO;
 			}
 		}
@@ -2812,8 +2903,10 @@ static int rwnx_cfg80211_change_iface(struct wiphy *wiphy,
 	case NL80211_IFTYPE_AP_VLAN:
 		return -EPERM;
 	case NL80211_IFTYPE_MONITOR:
-		rwnx_hw->monitor_param.tx_mcs_idx = 0xFF;
-		rwnx_hw->monitor_param.tmp_mcs_idx = 0xFF;
+		if (NULL != (p_cfg = rwnx_monitor_get_cfg(rwnx_hw, vif->vif_index))) {
+			p_cfg->tx_mcs_idx = 0xFF;
+			p_cfg->tx_mcs_idx_tmp = 0xFF;
+		}
 		dev->type = ARPHRD_IEEE80211_RADIOTAP;
 		dev->netdev_ops = &rwnx_netdev_monitor_ops;
 		break;
@@ -2829,7 +2922,7 @@ static int rwnx_cfg80211_change_iface(struct wiphy *wiphy,
 	return 0;
 }
 
-static void rwnx_cfg80211_abort_scan(struct wiphy *wiphy,
+static __maybe_unused void rwnx_cfg80211_abort_scan(struct wiphy *wiphy,
 				     struct wireless_dev *wdev)
 {
 	struct rwnx_hw *rwnx_hw = wiphy_priv(wiphy);
@@ -3013,7 +3106,7 @@ static int rwnx_cfg80211_sched_scan_stop(struct wiphy *wiphy,
  * @add_key: add a key with the given parameters. @mac_addr will be %NULL
  *	when adding a group key.
  */
-#if LINUX_VERSION_CODE >= KERNEL_VERSION(6, 1, 0) || defined(AMLOGIC_BUILD_COMPATIBLE)
+#if LINUX_VERSION_CODE >= KERNEL_VERSION(6, 1, 0)
 static int rwnx_cfg80211_add_key(struct wiphy *wiphy, struct net_device *netdev,
 				 int link_id, u8 key_index, bool pairwise,
 				 const u8 *mac_addr, struct key_params *params)
@@ -3151,7 +3244,7 @@ static int rwnx_cfg80211_add_key(struct wiphy *wiphy, struct net_device *netdev,
  *	not possible to retrieve the key, -ENOENT if it doesn't exist.
  *
  */
-#if LINUX_VERSION_CODE >= KERNEL_VERSION(6, 1, 0) || defined(AMLOGIC_BUILD_COMPATIBLE)
+#if LINUX_VERSION_CODE >= KERNEL_VERSION(6, 1, 0)
 static int rwnx_cfg80211_get_key(struct wiphy *wiphy, struct net_device *netdev,
 				 int link_id, u8 key_index, bool pairwise,
 				 const u8 *mac_addr, void *cookie,
@@ -3174,7 +3267,7 @@ static int rwnx_cfg80211_get_key(struct wiphy *wiphy, struct net_device *netdev,
  * @del_key: remove a key given the @mac_addr (%NULL for a group key)
  *	and @key_index, return -ENOENT if the key doesn't exist.
  */
-#if LINUX_VERSION_CODE >= KERNEL_VERSION(6, 1, 0) || defined(AMLOGIC_BUILD_COMPATIBLE)
+#if LINUX_VERSION_CODE >= KERNEL_VERSION(6, 1, 0)
 static int rwnx_cfg80211_del_key(struct wiphy *wiphy, struct net_device *netdev,
 				 int link_id, u8 key_index, bool pairwise,
 				 const u8 *mac_addr)
@@ -3208,7 +3301,7 @@ static int rwnx_cfg80211_del_key(struct wiphy *wiphy, struct net_device *netdev,
 /**
  * @set_default_key: set the default key on an interface
  */
-#if LINUX_VERSION_CODE >= KERNEL_VERSION(6, 1, 0) || defined(AMLOGIC_BUILD_COMPATIBLE)
+#if LINUX_VERSION_CODE >= KERNEL_VERSION(6, 1, 0)
 static int rwnx_cfg80211_set_default_key(struct wiphy *wiphy,
 					 struct net_device *netdev, int link_id,
 					 u8 key_index, bool unicast,
@@ -3229,7 +3322,7 @@ static int rwnx_cfg80211_set_default_key(struct wiphy *wiphy,
 /**
  * @set_default_mgmt_key: set the default management frame key on an interface
  */
-#if LINUX_VERSION_CODE >= KERNEL_VERSION(6, 1, 0) || defined(AMLOGIC_BUILD_COMPATIBLE)
+#if LINUX_VERSION_CODE >= KERNEL_VERSION(6, 1, 0)
 static int rwnx_cfg80211_set_default_mgmt_key(struct wiphy *wiphy,
 					      struct net_device *netdev,
 					      int link_id, u8 key_index)
@@ -3240,30 +3333,6 @@ static int rwnx_cfg80211_set_default_mgmt_key(struct wiphy *wiphy,
 #endif
 {
 	return 0;
-}
-
-bool rwnx_is_enable_multi_vap(struct rwnx_hw *rwnx_hw)
-{
-	bool ret = false;
-	struct rwnx_vif *vif;
-	u8 ap_cnt = 0;
-
-	// Look for VIF entry
-	list_for_each_entry (vif, &rwnx_hw->vifs, list) {
-		if (vif->up && (RWNX_VIF_TYPE(vif) == NL80211_IFTYPE_AP ||
-		    RWNX_VIF_TYPE(vif) == NL80211_IFTYPE_P2P_GO)) {
-			if (vif->ap.flags & RWNX_AP_STARTED) {
-				ap_cnt++;
-			}
-		}
-	}
-
-	if(ap_cnt > 1) {
-		ret = true;
-	}
-	WQ_DBG(DM_GENERIC, DL_WRN, "%s:ap_cnt=%d",
-			__func__, ap_cnt);
-	return ret;
 }
 
 /**
@@ -3288,12 +3357,6 @@ static int rwnx_cfg80211_connect(struct wiphy *wiphy, struct net_device *dev,
 		WQ_DBG(DM_IEEE80211, DL_ERR,
 		       "[auto]msg:ignore connect req, %lu < %lu", jiffies,
 		       rwnx_hw->connect_req_ts + msecs_to_jiffies(10000));
-		return -EINPROGRESS;
-	}
-
-	if (rwnx_is_enable_multi_vap(rwnx_hw)) {
-		WQ_DBG(DM_GENERIC, DL_WRN, "[auto]msg: %s vif_index=%d WARNING: in AP+AP mode, reject cfg80211 connect req",
-			__func__, rwnx_vif->vif_index);
 		return -EINPROGRESS;
 	}
 
@@ -3335,7 +3398,7 @@ static int rwnx_cfg80211_connect(struct wiphy *wiphy, struct net_device *dev,
 			/* update security info for debug */
 			rwnx_vif->security.auth_type = sme->auth_type;
 #endif
-#if LINUX_VERSION_CODE >= KERNEL_VERSION(6, 1, 0) || defined(AMLOGIC_BUILD_COMPATIBLE)
+#if LINUX_VERSION_CODE >= KERNEL_VERSION(6, 1, 0)
 			rwnx_cfg80211_add_key(wiphy, dev, 0, sme->key_idx,
 					      false, NULL, &key_params);
 #else
@@ -3378,14 +3441,6 @@ static int rwnx_cfg80211_connect(struct wiphy *wiphy, struct net_device *dev,
 
 	/* Forward the information to the LMAC */
 	mutex_lock(&rwnx_hw->mutex);
-
-	if (rwnx_vif->b_connected) {
-		// reject the connect req if it's already connected
-		WQ_DBG(DM_GENERIC, DL_ERR, "rwnx_cfg80211_connect: reject when connected");
-		mutex_unlock(&rwnx_hw->mutex);
-		return -EINPROGRESS;
-	}
-
 	if ((error = rwnx_send_sm_connect_req(rwnx_hw, rwnx_vif, sme,
 					      &sm_connect_cfm))) {
 		mutex_unlock(&rwnx_hw->mutex);
@@ -3416,15 +3471,23 @@ static int rwnx_cfg80211_connect(struct wiphy *wiphy, struct net_device *dev,
 		error = 0;
 		break;
 	case CO_BUSY:
+		WQ_DBG(DM_GENERIC, DL_WRN, "connect cfm: busy\n");
+		mutex_unlock(&rwnx_hw->mutex);
 		error = -EINPROGRESS;
 		break;
 	case CO_BAD_PARAM:
+		WQ_DBG(DM_GENERIC, DL_WRN, "connect cfm: bad param\n");
+		mutex_unlock(&rwnx_hw->mutex);
 		error = -EINVAL;
 		break;
 	case CO_OP_IN_PROGRESS:
+		WQ_DBG(DM_GENERIC, DL_WRN, "connect cfm: in progress\n");
+		mutex_unlock(&rwnx_hw->mutex);
 		error = -EALREADY;
 		break;
 	default:
+		WQ_DBG(DM_GENERIC, DL_WRN, "connect cfm: error\n");
+		mutex_unlock(&rwnx_hw->mutex);
 		error = -EIO;
 		break;
 	}
@@ -3451,7 +3514,7 @@ static int rwnx_cfg80211_disconnect(struct wiphy *wiphy, struct net_device *dev,
      * in which case cfg80211_disconnected() will take care of
      * this later.
      */
-#if LINUX_VERSION_CODE >= KERNEL_VERSION(6, 1, 0) || defined(AMLOGIC_BUILD_COMPATIBLE)
+#if LINUX_VERSION_CODE >= KERNEL_VERSION(6, 1, 0)
 	if (!wdev->u.ibss.current_bss)
 		wdev->u.client.ssid_len = 0;
 #else
@@ -3461,7 +3524,6 @@ static int rwnx_cfg80211_disconnect(struct wiphy *wiphy, struct net_device *dev,
 
 	//del key_add_timer in case of disconnect
 	del_timer(&rwnx_hw->key_add_timer);
-	rwnx_vif->b_connected = false;
 
 	return (rwnx_send_sm_disconnect_req(rwnx_hw, rwnx_vif, reason_code));
 }
@@ -3537,7 +3599,7 @@ static void rwnx_set_station_capability(struct rwnx_hw *rwnx_hw,
 	sta->legacy_rate_idx = 12;
 	sta->rx_nss = 0;
 
-#if LINUX_VERSION_CODE >= KERNEL_VERSION(6, 0, 0) || defined(AMLOGIC_BUILD_COMPATIBLE)
+#if LINUX_VERSION_CODE >= KERNEL_VERSION(6, 0, 0)
 	if (params->link_sta_params.ht_capa) {
 		const struct ieee80211_ht_cap *ht_capa =
 			params->link_sta_params.ht_capa;
@@ -3557,12 +3619,10 @@ static void rwnx_set_station_capability(struct rwnx_hw *rwnx_hw,
 			sta->rx_nss++;
 		if (ht_capa->mcs.rx_mask[3])
 			sta->rx_nss++;
-
-		if(sta->rx_nss > 0)
-			sta->rx_mcs_idx |= (sta->rx_nss - 1) << 3;
+		sta->rx_mcs_idx |= (sta->rx_nss - 1) << 3;
 	}
 
-#if LINUX_VERSION_CODE >= KERNEL_VERSION(6, 0, 0) || defined(AMLOGIC_BUILD_COMPATIBLE)
+#if LINUX_VERSION_CODE >= KERNEL_VERSION(6, 0, 0)
 	if (params->link_sta_params.vht_capa) {
 		const struct ieee80211_vht_cap *vht_capa =
 			params->link_sta_params.vht_capa;
@@ -3588,7 +3648,7 @@ static void rwnx_set_station_capability(struct rwnx_hw *rwnx_hw,
 	}
 
 #if LINUX_VERSION_CODE >= KERNEL_VERSION(4, 20, 0)
-#if LINUX_VERSION_CODE >= KERNEL_VERSION(6, 0, 0) || defined(AMLOGIC_BUILD_COMPATIBLE)
+#if LINUX_VERSION_CODE >= KERNEL_VERSION(6, 0, 0)
 	if (params->link_sta_params.he_capa) {
 		const struct ieee80211_he_cap_elem *he_capa =
 			params->link_sta_params.he_capa;
@@ -3681,7 +3741,7 @@ static int rwnx_cfg80211_add_station(struct wiphy *wiphy,
 		sta->vlan_idx = sta->vif_idx;
 		sta->qos = (params->sta_flags_set &
 			    BIT(NL80211_STA_FLAG_WME)) != 0;
-#if LINUX_VERSION_CODE >= KERNEL_VERSION(6, 0, 0) || defined(AMLOGIC_BUILD_COMPATIBLE)
+#if LINUX_VERSION_CODE >= KERNEL_VERSION(6, 0, 0)
 		sta->ht_cap_info =
 			params->link_sta_params.ht_capa ?
 				      params->link_sta_params.ht_capa->cap_info :
@@ -3979,7 +4039,7 @@ static int rwnx_cfg80211_change_station(struct wiphy *wiphy,
 				sta->vlan_idx = sta->vif_idx;
 				sta->qos = (params->sta_flags_set &
 					    BIT(NL80211_STA_FLAG_WME)) != 0;
-#if LINUX_VERSION_CODE >= KERNEL_VERSION(6, 0, 0) || defined(AMLOGIC_BUILD_COMPATIBLE)
+#if LINUX_VERSION_CODE >= KERNEL_VERSION(6, 0, 0)
 				sta->ht_cap_info =
 					params->link_sta_params.ht_capa ?
 						      params->link_sta_params.ht_capa
@@ -4073,15 +4133,12 @@ static int rwnx_cfg80211_change_station(struct wiphy *wiphy,
 			}
 
 			clear_bit(RWNX_DEV_ADDING_STA, &rwnx_hw->flags);
-
-			if (error)
-				return error;
 		} else {
 			return -EINVAL;
 		}
 	}
 
-	if (sta && (params->sta_flags_mask & BIT(NL80211_STA_FLAG_AUTHORIZED)))
+	if (params->sta_flags_mask & BIT(NL80211_STA_FLAG_AUTHORIZED))
 		rwnx_send_me_set_control_port_req(
 			rwnx_hw,
 			(params->sta_flags_set &
@@ -4090,14 +4147,14 @@ static int rwnx_cfg80211_change_station(struct wiphy *wiphy,
 
 	if (RWNX_VIF_TYPE(vif) == NL80211_IFTYPE_MESH_POINT) {
 		if (params->sta_modify_mask & STATION_PARAM_APPLY_PLINK_STATE) {
-			if (sta && (params->plink_state < NUM_NL80211_PLINK_STATES)) {
+			if (params->plink_state < NUM_NL80211_PLINK_STATES) {
 				rwnx_send_mesh_peer_update_ntf(
 					rwnx_hw, vif, sta->sta_idx,
 					params->plink_state);
 			}
 		}
 
-		if (sta && (params->local_pm != NL80211_MESH_POWER_UNKNOWN)) {
+		if (params->local_pm != NL80211_MESH_POWER_UNKNOWN) {
 			sta->mesh_pm = params->local_pm;
 			rwnx_update_mesh_power_mode(vif);
 		}
@@ -4109,7 +4166,7 @@ static int rwnx_cfg80211_change_station(struct wiphy *wiphy,
 		vif = netdev_priv(params->vlan);
 		vlan_idx = vif->vif_index;
 
-		if (sta && (sta->vlan_idx != vlan_idx)) {
+		if (sta->vlan_idx != vlan_idx) {
 			struct rwnx_vif *old_vif;
 			old_vif = rwnx_hw->vif_table[sta->vlan_idx];
 			rwnx_txq_sta_switch_vif(sta, old_vif, vif);
@@ -4188,7 +4245,7 @@ static int rwnx_cfg80211_start_ap(struct wiphy *wiphy, struct net_device *dev,
                ctxt). In anycase retest if radar detection must be activated
              */
 		if (txq_status == 0) {
-			rwnx_radar_detection_enable_on_cur_channel(rwnx_hw, rwnx_vif);
+			rwnx_radar_detection_enable_on_cur_channel(rwnx_hw);
 		}
 #ifdef DEBUG_WQ_DFX
 		/* update debug info, clear cipher and update auth type */
@@ -4291,7 +4348,7 @@ static int rwnx_cfg80211_change_beacon(struct wiphy *wiphy,
 /**
  * * @stop_ap: Stop being an AP, including stopping beaconing.
  */
-#if LINUX_VERSION_CODE >= KERNEL_VERSION(5, 19, 2) || defined(AMLOGIC_BUILD_COMPATIBLE)
+#if LINUX_VERSION_CODE >= KERNEL_VERSION(5, 19, 2)
 static int rwnx_cfg80211_stop_ap(struct wiphy *wiphy, struct net_device *dev,
 				 unsigned int link_id)
 #else
@@ -4300,7 +4357,7 @@ static int rwnx_cfg80211_stop_ap(struct wiphy *wiphy, struct net_device *dev)
 {
 	struct rwnx_hw *rwnx_hw = wiphy_priv(wiphy);
 	struct rwnx_vif *rwnx_vif = netdev_priv(dev);
-	// struct rwnx_sta *sta;
+	struct rwnx_sta *sta;
 
 	WQ_DBG(DM_GENERIC, DL_WRN, "%s\n", __func__);
 
@@ -4325,7 +4382,7 @@ static int rwnx_cfg80211_stop_ap(struct wiphy *wiphy, struct net_device *dev)
 	}
 
 	/* delete BC/MC STA */
-	// sta = &rwnx_hw->sta_table[rwnx_vif->ap.bcmc_index];
+	sta = &rwnx_hw->sta_table[rwnx_vif->ap.bcmc_index];
 	rwnx_txq_vif_deinit(rwnx_hw, rwnx_vif);
 	rwnx_del_bcn(&rwnx_vif->ap.bcn);
 	rwnx_del_csa(rwnx_vif);
@@ -4346,18 +4403,32 @@ static int rwnx_cfg80211_stop_ap(struct wiphy *wiphy, struct net_device *dev)
  * Also called internaly with chandef set to NULL simply to retrieve the channel
  * configured at firmware level.
  */
-static int rwnx_cfg80211_set_monitor_channel(struct wiphy *wiphy,
+static int rwnx_set_monitor_channel(struct wiphy *wiphy, struct wireless_dev *wdev,
 					     struct cfg80211_chan_def *chandef)
 {
 	struct rwnx_hw *rwnx_hw = wiphy_priv(wiphy);
-	struct rwnx_vif *rwnx_vif;
+	struct rwnx_vif *rwnx_vif = container_of(wdev, struct rwnx_vif, wdev);
 	struct me_config_monitor_cfm cfm;
+
 	ENTER();
 
-	if (rwnx_hw->monitor_vif == RWNX_INVALID_VIF)
+	if (!rwnx_monitor_check_valid(rwnx_hw, rwnx_vif->vif_index)) {
 		return -EINVAL;
+	}
 
-	rwnx_vif = rwnx_hw->vif_table[rwnx_hw->monitor_vif];
+	if (chandef) {
+		WQ_DBG(DM_CRDT, DL_WRN, "%s(%u): Center_freq %u, width %u, freq1 %u, freq2 %u.\n",
+			__func__,
+			rwnx_vif->vif_index,
+			chandef->chan ? chandef->chan->center_freq : 0,
+			chandef->width,
+			chandef->center_freq1,
+			chandef->center_freq2);
+	} else {
+		WQ_DBG(DM_CRDT, DL_WRN, "%s(%u): chandef=NULL.\n",
+			__func__,
+			rwnx_vif->vif_index);
+	}
 
 	// Do nothing if monitor interface is already configured with the requested channel
 	if (rwnx_chanctx_valid(rwnx_hw, rwnx_vif->ch_index)) {
@@ -4370,7 +4441,7 @@ static int rwnx_cfg80211_set_monitor_channel(struct wiphy *wiphy,
 
 	// Always send command to firmware. It allows to retrieve channel context index
 	// and its configuration.
-	if (rwnx_send_config_monitor_req(rwnx_hw, chandef, &cfm))
+	if (rwnx_send_config_monitor_req(rwnx_hw, chandef, rwnx_vif->vif_index, &cfm))
 		return -EIO;
 
 	// Always re-set channel context info
@@ -4381,7 +4452,7 @@ static int rwnx_cfg80211_set_monitor_channel(struct wiphy *wiphy,
 	if (cfm.chan_index != RWNX_CH_NOT_SET) {
 		struct cfg80211_chan_def mon_chandef;
 
-		if (rwnx_hw->vif_started > 1) {
+		if (rwnx_hw->vif_started > RWNX_MONITOR_MAX) {
 			// In this case we just want to update the channel context index not
 			// the channel configuration
 			rwnx_chanctx_link(rwnx_vif, cfm.chan_index, NULL);
@@ -4398,6 +4469,43 @@ static int rwnx_cfg80211_set_monitor_channel(struct wiphy *wiphy,
 	}
 
 	return 0;
+}
+
+static int rwnx_cfg80211_set_monitor_channel(struct wiphy *wiphy,
+	struct cfg80211_chan_def *chandef)
+{
+	u8 org_band;
+	struct rwnx_hw *rwnx_hw = wiphy_priv(wiphy);
+	struct rwnx_vif *vif;
+	struct wireless_dev *wdev = NULL, *fd_wdev = NULL;
+	struct rwnx_monitor_cfg *p_cfg;
+
+	/* Prepare switch band of the monitor vif. */
+	#if LINUX_VERSION_CODE <= KERNEL_VERSION(4,6,7)
+		org_band = chandef->chan->band == IEEE80211_BAND_5GHZ ? IEEE80211_BAND_2GHZ : IEEE80211_BAND_5GHZ;
+	#else
+		org_band = chandef->chan->band == NL80211_BAND_5GHZ ? NL80211_BAND_2GHZ : NL80211_BAND_5GHZ;
+	#endif
+	
+	if ((NULL == (p_cfg = rwnx_monitor_get_cfg_by_band(rwnx_hw, chandef->chan->band)))
+		&& (NULL == (p_cfg = rwnx_monitor_get_cfg_by_band(rwnx_hw, org_band)))) {
+		WQ_DBG(DM_CRDT, DL_ERR, "rwnx_cfg80211_set_monitor_channel: No monitor interface.\n");
+		return -EINVAL;
+	}
+
+	list_for_each_entry (vif, &rwnx_hw->vifs, list) {
+		if (vif->vif_index == p_cfg->vif_idx && RWNX_VIF_TYPE(vif) == NL80211_IFTYPE_MONITOR) {
+			fd_wdev = wdev;
+			break;
+		}
+	}
+
+	if (NULL == fd_wdev) {
+		WQ_DBG(DM_CRDT, DL_ERR, "rwnx_cfg80211_set_monitor_channel: No wdev for band %u.\n", chandef->chan->band);
+		return -EINVAL;
+	}
+
+	return rwnx_set_monitor_channel(wiphy, fd_wdev, chandef);;
 }
 
 /**
@@ -4487,6 +4595,40 @@ static int rwnx_cfg80211_set_tx_power(struct wiphy *wiphy,
 }
 
 /**
+ * @get_tx_power: get the current transmit power from firmware in mBm.
+ */
+static int rwnx_cfg80211_get_tx_power(struct wiphy *wiphy,
+				      struct wireless_dev *wdev,
+				      int *dbm)
+{
+	struct rwnx_hw *rwnx_hw = wiphy_priv(wiphy);
+	struct rwnx_vif *vif = NULL;
+	struct {
+		u8 vif_idx;
+	} req = {};
+	struct mm_set_power_cfm cfm;
+	int ret;
+
+	if (wdev) {
+		vif = container_of(wdev, struct rwnx_vif, wdev);
+	}
+
+	if (!vif)
+		return -ENODEV;
+
+	req.vif_idx = vif->vif_index;
+	ret = RWNX_INFO_NOTIFY_GET_NO_CHK(rwnx_hw, MSG_TYPE_GET_TX_POWER,
+					  req, &cfm);
+	if (ret >= sizeof(cfm)) {
+		*dbm = cfm.power;
+		WQ_DBG(DM_CRDT, DL_WRN, "%s: vif-%d power %ddBm\n", __func__, cfm.radio_idx, *dbm);
+		return 0;
+	}
+
+	return -EINVAL;
+}
+
+/**
  * @set_power_mgmt: set the power save to one of those two modes:
  *  Power-save off
  *  Power-save on - Dynamic mode
@@ -4508,12 +4650,6 @@ static int rwnx_cfg80211_set_power_mgmt(struct wiphy *wiphy,
 
 	//disable PS mode is ps_disable:1
 	if (rwnx_hw->feature.ps_disable) {
-		enabled = false;
-	}
-
-	// disable PS mode if we run at USB interface with ps_mode = 15, ds_when_suspend is true
-	if (rwnx_hw->core->hif_ops->hif == WQ_HIF_USB &&
-	    wq_conf.ds_when_suspend == true && wq_conf.ps_mode == 15) {
 		enabled = false;
 	}
 
@@ -4730,7 +4866,7 @@ static int rwnx_cfg80211_dump_survey(struct wiphy *wiphy,
  *	For monitor interfaces, it should return %NULL unless there's a single
  *	current monitoring channel.
  */
-#if LINUX_VERSION_CODE >= KERNEL_VERSION(6, 1, 0) || defined(AMLOGIC_BUILD_COMPATIBLE)
+#if LINUX_VERSION_CODE >= KERNEL_VERSION(6, 1, 0)
 static int rwnx_cfg80211_get_channel(struct wiphy *wiphy,
 				     struct wireless_dev *wdev,
 				     unsigned int link_id,
@@ -4749,9 +4885,9 @@ static int rwnx_cfg80211_get_channel(struct wiphy *wiphy,
 		return -ENODATA;
 	}
 
-	if (rwnx_vif->vif_index == rwnx_hw->monitor_vif) {
+	if (rwnx_monitor_check_valid(rwnx_hw, rwnx_vif->vif_index)) {
 		//retrieve channel from firmware
-		rwnx_cfg80211_set_monitor_channel(wiphy, NULL);
+		rwnx_set_monitor_channel(wiphy, wdev, NULL);
 	}
 
 	//Check if channel context is valid
@@ -4928,12 +5064,6 @@ rwnx_cfg80211_start_radar_detection(struct wiphy *wiphy, struct net_device *dev,
 	struct apm_start_cac_cfm cfm;
 
 #if LINUX_VERSION_CODE >= KERNEL_VERSION(3, 15, 0)
-	if (rwnx_hw->cactimeout > 0) {
-		WQ_DBG(DM_GENERIC, DL_WRN, "change cac_time_ms to %u ms\n",
-			rwnx_hw->cactimeout);
-		cac_time_ms = rwnx_hw->cactimeout;
-	}
-
 	rwnx_radar_start_cac(&rwnx_hw->radar, cac_time_ms, rwnx_vif);
 #else
 	rwnx_radar_start_cac(&rwnx_hw->radar, 0, rwnx_vif);
@@ -4943,9 +5073,10 @@ rwnx_cfg80211_start_radar_detection(struct wiphy *wiphy, struct net_device *dev,
 	if (cfm.status == CO_OK) {
 		spin_lock_bh(&rwnx_hw->cb_lock);
 		rwnx_chanctx_link(rwnx_vif, cfm.ch_idx, chandef);
-		rwnx_radar_detection_enable(&rwnx_hw->radar,
-						RWNX_RADAR_DETECT_REPORT,
-						RWNX_RADAR_RIU);
+		if (rwnx_hw->cur_chanctx == rwnx_vif->ch_index)
+			rwnx_radar_detection_enable(&rwnx_hw->radar,
+						    RWNX_RADAR_DETECT_REPORT,
+						    RWNX_RADAR_RIU);
 		spin_unlock_bh(&rwnx_hw->cb_lock);
 	} else {
 		return -EIO;
@@ -5012,7 +5143,6 @@ rwnx_cfg80211_update_ft_ies(struct wiphy *wiphy, struct net_device *dev,
 	if (!ft_assoc_ies) {
 		netdev_warn(dev,
 			    "Fail to allocate buffer for association elements");
-		return 0;
 	}
 
 	// Recopy current Association Elements one at a time and replace FT
@@ -5068,7 +5198,6 @@ rwnx_cfg80211_update_ft_ies(struct wiphy *wiphy, struct net_device *dev,
 				pos += sizeof(*fte) + fte->datalen;
 				fte = NULL;
 			}
-			WARN_ON_ONCE(!pos);
 			memcpy(pos, elem, sizeof(*elem) + elem->datalen);
 			pos += sizeof(*elem) + elem->datalen;
 		}
@@ -5192,8 +5321,8 @@ static int rwnx_cfg80211_channel_switch(struct wiphy *wiphy,
 	}
 
 	/* Build the beacon to use after CSA. It will only be sent to fw once
-	   CSA is over, but do it before sending the beacon as it must be ready
-	   when CSA is finished. */
+       CSA is over, but do it before sending the beacon as it must be ready
+       when CSA is finished. */
 	csa = kzalloc(sizeof(struct rwnx_csa), GFP_KERNEL);
 	if (!csa) {
 		error = -ENOMEM;
@@ -5222,19 +5351,11 @@ static int rwnx_cfg80211_channel_switch(struct wiphy *wiphy,
 		rwnx_del_csa(vif);
 		goto end;
 	} else {
-		INIT_WORK(&csa->work, rwnx_csa_finish);
-
-		/* If there is CSA IE contained, stop the TxQ */
-		if (csa_oft[0]) {
-			WQ_DBG(DM_TX, DL_WRN, "stop txq for vif(%s)\n",
-				vif->ndev->name);
-			rwnx_txq_vif_stop(vif, RWNX_TXQ_STOP_CHAN, rwnx_hw);
-		}
-
+		WQ_INIT_WORK(&csa->work, rwnx_csa_finish);
 #if LINUX_VERSION_CODE >= KERNEL_VERSION(6, 3, 0)
 		cfg80211_ch_switch_started_notify(dev, &csa->chandef, 0,
 						  params->count, false, 0);
-#elif LINUX_VERSION_CODE >= KERNEL_VERSION(6, 1, 0) || defined(AMLOGIC_BUILD_COMPATIBLE)
+#elif LINUX_VERSION_CODE >= KERNEL_VERSION(6, 1, 0)
 		cfg80211_ch_switch_started_notify(dev, &csa->chandef, 0,
 						  params->count, false);
 #elif LINUX_VERSION_CODE >= KERNEL_VERSION(5, 11, 0)
@@ -5521,7 +5642,7 @@ static int rwnx_cfg80211_change_bss(struct wiphy *wiphy, struct net_device *dev,
 
 //iw dev wlan0 set bitrates legacy-2.4 1.0 (legacy 1Mbps)
 //iw dev wlan0 set bitrates ht-mcs-2.4 0 (MCS 0)
-#if LINUX_VERSION_CODE >= KERNEL_VERSION(6, 1, 0) || defined(AMLOGIC_BUILD_COMPATIBLE)
+#if LINUX_VERSION_CODE >= KERNEL_VERSION(6, 1, 0)
 static int rwnx_cfg80211_set_bitrate(struct wiphy *wiphy,
 				     struct net_device *dev,
 				     unsigned int link_id, const u8 *addr,
@@ -5647,11 +5768,13 @@ static void rwnx_trans_rate_from_cfg(struct rate_info *rate_info, u32 rate_confi
 {
 	union rwnx_rate_ctrl_info *r_cfg = (union rwnx_rate_ctrl_info *)&rate_config;
 	union rwnx_mcs_index *mcs_index = (union rwnx_mcs_index *)&rate_config;
-	unsigned int ft, gi, bw, nss, mcs;
+	unsigned int ft, pre, gi, bw, nss, mcs, dcm;
 
 	ft = r_cfg->formatModTx;
+	pre = r_cfg->giAndPreTypeTx >> 1;
 	gi = r_cfg->giAndPreTypeTx;
 	bw = r_cfg->bwTx;
+	dcm = 0;
 
 	if (ft == FORMATMOD_HE_MU || (ft == FORMATMOD_HE_SU)) {
 #if LINUX_VERSION_CODE >= KERNEL_VERSION(4, 19, 0)
@@ -5660,6 +5783,7 @@ static void rwnx_trans_rate_from_cfg(struct rate_info *rate_info, u32 rate_confi
 		rate_info->he_dcm = 0;
 		mcs = mcs_index->he.mcs;
 		nss = mcs_index->he.nss;
+		dcm = r_cfg->dcmTx;
 #else
 		//kernel does not support HE, pretend this is a VHT rate
 		rate_info->flags = RATE_INFO_FLAGS_VHT_MCS;
@@ -6367,8 +6491,8 @@ static int rwnx_cfg80211_join_mesh(struct wiphy *wiphy, struct net_device *dev,
                activation on MM_CHANNEL_SWITCH_IND (unless another vif use this
                ctxt). In anycase retest if radar detection must be activated
              */
-		if (rwnx_vif->ch_index < NX_CHAN_CTXT_CNT) {
-			rwnx_radar_detection_enable_on_cur_channel(rwnx_hw, rwnx_vif);
+		if (rwnx_hw->cur_chanctx == mesh_start_cfm.ch_idx) {
+			rwnx_radar_detection_enable_on_cur_channel(rwnx_hw);
 		}
 		break;
 
@@ -6594,9 +6718,6 @@ int rwnx_cfg80211_suspend(struct wiphy *wiphy, struct cfg80211_wowlan *wowl)
 		return -ETIMEDOUT;
 	}
 
-	// Notify FW PM change
-	wq_core_suspend_set(rwnx_hw->core, 1);
-
 	rwnx_cfg80211_timer_shutdown(rwnx_hw);
 
 	/* Wait command idle. */
@@ -6702,9 +6823,6 @@ int rwnx_cfg80211_resume(struct wiphy *wiphy)
 
 	rwnx_cfg80211_timer_setup(rwnx_hw);
 
-	// Notify FW PM change
-	wq_core_suspend_set(rwnx_hw->core, 0);
-	
 	ret = rwnx_cfg80211_resume_wow(wiphy);
 
 	/* start txq */
@@ -6730,53 +6848,6 @@ static int rwnx_cfg80211_set_rekey_data(struct wiphy *wiphy,
 	return rwnx_send_rekey_data_set(rwnx_hw, vif->vif_index, key);
 }
 #endif
-
-int rwnx_set_beacon_interval(struct net_device *ndev, uint16_t interval)
-{
-	struct rwnx_vif *vif = netdev_priv(ndev);
-	struct rwnx_hw *rwnx_hw = vif->rwnx_hw;
-	struct cfg80211_beacon_data info;
-	struct ieee80211_mgmt *mgmt;
-	struct rwnx_bcn *bcn;
-	u8 *buf;
-	int error = 0;
-
-	// used for ap interface only
-	if (RWNX_VIF_TYPE(vif) != NL80211_IFTYPE_AP) {
-		WQ_DBG(DM_GENERIC, DL_WRN, "%s: non-ap interface\n", __func__);
-		return -EINVAL;
-	}
-
-	// build beacon
-	bcn = &vif->ap.bcn;
-	info.head = NULL;
-	info.tail = NULL;
-	buf = rwnx_build_bcn(bcn, &info);
-
-	if (!buf) {
-		WQ_DBG(DM_GENERIC, DL_WRN, "%s: failed to build bcn\n", __func__);
-		return -ENOMEM;
-	}
-
-	// update beacon content and pass to fw
-	mgmt = (struct ieee80211_mgmt *)buf;
-	mgmt->u.beacon.beacon_int = cpu_to_le16(interval);
-
-	error = rwnx_send_bcn_change(rwnx_hw, vif->vif_index, buf, bcn->len,
-			bcn->head_len, bcn->tim_len, NULL);
-
-	if (buf) {
-		kfree(buf);
-		buf = NULL;
-	}
-
-	if (!error) {
-		// change fw beacon interval after new beacon pushed
-		error = RWNX_INFO_NOTIFY_SET_VIF(rwnx_hw, MSG_TYPE_BEACON_INTERVAL, vif->vif_index, interval);
-	}
-
-	return error;
-}
 
 static struct cfg80211_ops rwnx_cfg80211_ops = {
 	.add_virtual_intf = rwnx_cfg80211_add_iface,
@@ -6805,7 +6876,7 @@ static struct cfg80211_ops rwnx_cfg80211_ops = {
 	.set_wiphy_params = rwnx_cfg80211_set_wiphy_params,
 	.set_txq_params = rwnx_cfg80211_set_txq_params,
 	.set_tx_power = rwnx_cfg80211_set_tx_power,
-	//    .get_tx_power = rwnx_cfg80211_get_tx_power,
+	.get_tx_power = rwnx_cfg80211_get_tx_power,
 	.set_power_mgmt = rwnx_cfg80211_set_power_mgmt,
 	.get_station = rwnx_cfg80211_get_station,
 	.dump_station = rwnx_cfg80211_dump_station,
@@ -6910,23 +6981,21 @@ static void rwnx_stat_timer_cb(struct timer_list *t)
 	struct rwnx_hw *rwnx_hw = from_timer(rwnx_hw, t, stat_timer);
 	int dump_mask = wq_conf.stats_dump_mask;
 
-	if (rwnx_hw->timer_dump_enable) {
-		//1. dump credit info
-		if (dump_mask & WQ_STATS_DUMP_TX_CREDIT)
-			rwnx_credit_dump_info(rwnx_hw);
+	//1. dump credit info
+	if (dump_mask & WQ_STATS_DUMP_TX_CREDIT)
+		rwnx_credit_dump_info(rwnx_hw);
 
-		//2. dump hif info
-		if (dump_mask & WQ_STATS_DUMP_HIF_INFO)
-			hif_dump_info(rwnx_hw->core);
+	//2. dump hif info
+	if (dump_mask & WQ_STATS_DUMP_HIF_INFO)
+		hif_dump_info(rwnx_hw->core);
 
-		if (dump_mask & WQ_STATS_DUMP_MAC_TXQ)
-			rwnx_txq_stats_dump(rwnx_hw);
+	if (dump_mask & WQ_STATS_DUMP_MAC_TXQ)
+		rwnx_txq_stats_dump(rwnx_hw);
 
-		//reorder info
-		if (dump_mask & WQ_STATS_DUMP_REORDER)
-			ieee80211_ampdu_reorder_dump_info(rwnx_hw, NULL, true, false, 0,
-							0);
-	}
+	//reorder info
+	if (dump_mask & WQ_STATS_DUMP_REORDER)
+		ieee80211_ampdu_reorder_dump_info(rwnx_hw, NULL, true, false, 0,
+						  0);
 
 	if (wq_conf.stats_dump_interval)
 		mod_timer(t, jiffies + (HZ * wq_conf.stats_dump_interval));
@@ -6998,9 +7067,7 @@ static void rwnx_throughput_calc_cb(struct timer_list *t)
 
 	rwnx_hw->tx_throughput = tx_tp = (tx_bytes * 8) / (1 << 20) / 1;
 	rwnx_hw->rx_throughput = rx_tp = (rx_bytes * 8) / (1 << 20) / 1;
-
-	if (rwnx_hw->timer_dump_enable) {
-		WQ_DBG(DM_GENERIC, DL_WRN,
+	WQ_DBG(DM_GENERIC, DL_WRN,
 	       "Tx_Tput: %u Mbps, Rx_Tput:%u Mbps, tx_pkt: %u, tx_bytes: %u, rx_pkt: %u, rx_bytes: %u, crdt_num: %u, "
 	       "comp_ratio:%d.%d%%, start_xmit_cnt: %u, ipc_tx_cnt: %u, ipc_rx_cnt: %u, txll:%u - %u, "
 	       "fwdone:%u - %u, hidone:%u - %u, txtcpack dly:%d - %d, stopcewm:%d - %d, stopsuspend:%d - %d\n",
@@ -7015,7 +7082,6 @@ static void rwnx_throughput_calc_cb(struct timer_list *t)
 	       atomic_read(&rwnx_hw->xmit_to_hif_ms_max),
 	       rwnx_hw->ce_sw_watermark_in, rwnx_hw->ce_sw_watermark_out,
 	       rwnx_hw->suspend_in, rwnx_hw->suspend_out);
-	}
 
 	if (rwnx_hw->txq_ring_sts) {
 		txqring_sts = rwnx_hw->txq_ring_sts;
@@ -7029,28 +7095,25 @@ static void rwnx_throughput_calc_cb(struct timer_list *t)
 				    .push_txqring_cnt[2] ||
 			    txqring_sts->txq_ring_rcd[sta_idx]
 				    .push_txqring_cnt[3]) {
-
-				if (rwnx_hw->timer_dump_enable) {
-					WQ_DBG(DM_GENERIC, DL_WRN,
-						"txq ring dump: sta:%d, push:%d, %d, %d, %d, pop:%d, %d, %d, %d\n",
-						sta_idx,
-						txqring_sts->txq_ring_rcd[sta_idx]
-							.push_txqring_cnt[0],
-						txqring_sts->txq_ring_rcd[sta_idx]
-							.push_txqring_cnt[1],
-						txqring_sts->txq_ring_rcd[sta_idx]
-							.push_txqring_cnt[2],
-						txqring_sts->txq_ring_rcd[sta_idx]
-							.push_txqring_cnt[3],
-						txqring_sts->txq_ring_rcd[sta_idx]
-							.pop_txqring_cnt[0],
-						txqring_sts->txq_ring_rcd[sta_idx]
-							.pop_txqring_cnt[1],
-						txqring_sts->txq_ring_rcd[sta_idx]
-							.pop_txqring_cnt[2],
-						txqring_sts->txq_ring_rcd[sta_idx]
-							.pop_txqring_cnt[3]);
-				}
+				WQ_DBG(DM_GENERIC, DL_WRN,
+				       "txq ring dump: sta:%d, push:%d, %d, %d, %d, pop:%d, %d, %d, %d\n",
+				       sta_idx,
+				       txqring_sts->txq_ring_rcd[sta_idx]
+					       .push_txqring_cnt[0],
+				       txqring_sts->txq_ring_rcd[sta_idx]
+					       .push_txqring_cnt[1],
+				       txqring_sts->txq_ring_rcd[sta_idx]
+					       .push_txqring_cnt[2],
+				       txqring_sts->txq_ring_rcd[sta_idx]
+					       .push_txqring_cnt[3],
+				       txqring_sts->txq_ring_rcd[sta_idx]
+					       .pop_txqring_cnt[0],
+				       txqring_sts->txq_ring_rcd[sta_idx]
+					       .pop_txqring_cnt[1],
+				       txqring_sts->txq_ring_rcd[sta_idx]
+					       .pop_txqring_cnt[2],
+				       txqring_sts->txq_ring_rcd[sta_idx]
+					       .pop_txqring_cnt[3]);
 			}
 		}
 	}
@@ -7059,32 +7122,22 @@ static void rwnx_throughput_calc_cb(struct timer_list *t)
 	    WQ_HIF_USB) //this is noisy for USB, so...
 	{
 		if (tx_packets < 20 || rwnx_hw->ipc_tx_pkt_cnt < 30) {
-			if (rwnx_hw->timer_dump_enable) {
-				dump_sta_txq(rwnx_hw);
+			dump_sta_txq(rwnx_hw);
+			WQ_DBG(DM_GENERIC, DL_WRN,
+			       "crdt_num: %u, hard_start_xmit_cnt: %u, ipc_tx_pkt_cnt: %u\n",
+			       crdt_mgmt->drv_crdt_num,
+			       rwnx_hw->hard_start_xmit_cnt,
+			       rwnx_hw->ipc_tx_pkt_cnt);
+			for (i = 0; i < 5; i++)
 				WQ_DBG(DM_GENERIC, DL_WRN,
-					"crdt_num: %u, hard_start_xmit_cnt: %u, ipc_tx_pkt_cnt: %u\n",
-					crdt_mgmt->drv_crdt_num,
-					rwnx_hw->hard_start_xmit_cnt,
-					rwnx_hw->ipc_tx_pkt_cnt);
-				for (i = 0; i < 5; i++)
-					WQ_DBG(DM_GENERIC, DL_WRN,
-						"[%d]: credit:%d, jiffies: %lu, hard_start_xmit_cnt: %u, ipc_tx_pkt_cnt: %u\n",
-						i, rwnx_hw->record_stats[i].crdt_num,
-						rwnx_hw->record_stats[i].timestamp,
-						rwnx_hw->record_stats[i]
-							.hard_start_xmit_cnt,
-						rwnx_hw->record_stats[i].ipc_tx_pkt_cnt);
-			}
+				       "[%d]: credit:%d, jiffies: %lu, hard_start_xmit_cnt: %u, ipc_tx_pkt_cnt: %u\n",
+				       i, rwnx_hw->record_stats[i].crdt_num,
+				       rwnx_hw->record_stats[i].timestamp,
+				       rwnx_hw->record_stats[i]
+					       .hard_start_xmit_cnt,
+				       rwnx_hw->record_stats[i].ipc_tx_pkt_cnt);
 		}
 	}
-
-
-	if (rwnx_hw->core->hif_ops->hif == WQ_HIF_SDIO) {
-		if (rwnx_hw->timer_dump_enable) {
-			dump_less_info(rwnx_hw->core);
-		}
-	}
-
 	mod_timer(t, jiffies + HZ);
 
 	if (rwnx_hw->tx_mon_idx == 5)
@@ -7159,53 +7212,98 @@ void wq_hwq_task(unsigned long data)
 	struct rwnx_hw *rwnx_hw = (struct rwnx_hw *)data;
 	u64 time_start_us = 0, time_end_us = 0;
 
-	time_start_us = (u64)ktime_to_us(ktime_get());
+	if (rwnx_hw->time_dump_enable) {
+		time_start_us = (u64)ktime_to_us(ktime_get());
+	}
 
 	spin_lock_bh(&rwnx_hw->tx_lock);
 	wq_hwq_process_all(rwnx_hw);
 	spin_unlock_bh(&rwnx_hw->tx_lock);
 
-	time_end_us = (u64)ktime_to_us(ktime_get());
-	atomic_add((u32)(time_end_us - time_start_us),
-		   &rwnx_hw->wq_hwq_task_time);
+	if (rwnx_hw->time_dump_enable) {
+		time_end_us = (u64)ktime_to_us(ktime_get());
+		atomic_add((u32)(time_end_us - time_start_us), &rwnx_hw->wq_hwq_task_time);
+	}
 }
 
 void wq_proc_init(struct rwnx_hw *rwnx_hw, struct wireless_dev *wdev);
-void wq_proc_deinit(struct rwnx_hw *rwnx_hw);
+void wq_proc_deinit(void);
 
 static int wq_hw_vif_sta_table_init(struct rwnx_hw *rwnx_hw, u8 max_vif_nb,
 				    u16 max_sta_nb)
 {
 	u16 num = max_vif_nb + max_sta_nb;
+	u16 i, j;
+	struct rwnx_sta *sta_table = NULL;
+	struct ieee80211_rx_ampdu *rx_ampdu= NULL;
 
 	WQ_DBG(DM_GENERIC, DL_WRN, "%s: max_vif_nb:%d, max_sta_nb:%d\n",
 	       __func__, max_vif_nb, max_sta_nb);
 
-	rwnx_hw->vif_table = (struct rwnx_vif **)vzalloc(
-		sizeof(struct rwnx_vif *) * num);
+	rwnx_hw->vif_table = (struct rwnx_vif **)kzalloc(
+		sizeof(struct rwnx_vif *) * num, GFP_KERNEL);
 	if (rwnx_hw->vif_table == NULL)
 		goto err_vif;
-	rwnx_hw->sta_table = (struct rwnx_sta *)vzalloc(
-		sizeof(struct rwnx_sta) * num);
+	rwnx_hw->sta_table = (struct rwnx_sta *)kzalloc(
+		sizeof(struct rwnx_sta) * num, GFP_KERNEL);
 	if (rwnx_hw->sta_table == NULL) {
 		goto err_sta;
 	}
 
+	for (i = 0; i < num; i++) {
+		sta_table = &rwnx_hw->sta_table[i];
+		for (j = 0; j < ARRAY_SIZE(sta_table->rx_ampdu); j++) {
+			rx_ampdu = kzalloc(sizeof(struct ieee80211_rx_ampdu), GFP_KERNEL);
+			if (rx_ampdu == NULL) {
+				WQ_DBG(DM_GENERIC, DL_ERR, "%s: rx ampdu malloc failed.\n",
+					__func__);
+				goto err_rx_ampdu;
+			}
+			sta_table->rx_ampdu[j] = rx_ampdu;
+		}
+	}
+
 	return 0;
+
+err_rx_ampdu:
+	while (i) {
+		while (j) {
+			j--;
+			sta_table = &rwnx_hw->sta_table[i];
+			rx_ampdu = sta_table->rx_ampdu[j];
+			kfree(rx_ampdu);
+		}
+		j = ARRAY_SIZE(sta_table->rx_ampdu);
+		i--;
+	}
+	kfree(rwnx_hw->sta_table);
 err_sta:
-	vfree(rwnx_hw->vif_table);
+	kfree(rwnx_hw->vif_table);
 err_vif:
 	return -ENOMEM;
 }
 
-static void wq_hw_vif_sta_table_deinit(struct rwnx_hw *rwnx_hw)
+static void wq_hw_vif_sta_table_deinit(struct rwnx_hw *rwnx_hw, u8 max_vif_nb, u16 max_sta_nb)
 {
+	u16 num = max_vif_nb + max_sta_nb;
+	u16 i, j;
+	struct rwnx_sta *sta_table = NULL;
+	struct ieee80211_rx_ampdu *rx_ampdu= NULL;
+	
+	for (i = 0; i < num; i++) {
+		sta_table = &rwnx_hw->sta_table[i];
+		for (j = 0; j < ARRAY_SIZE(sta_table->rx_ampdu); j++) {
+			rx_ampdu = sta_table->rx_ampdu[j];
+			kfree(rx_ampdu);
+			sta_table->rx_ampdu[j] = NULL;
+		}
+	}
 	if (rwnx_hw->sta_table != NULL) {
-		vfree(rwnx_hw->sta_table);
+		kfree(rwnx_hw->sta_table);
 		rwnx_hw->sta_table = NULL;
 	}
 	if (rwnx_hw->vif_table != NULL) {
-		vfree(rwnx_hw->vif_table);
+		kfree(rwnx_hw->vif_table);
 		rwnx_hw->vif_table = NULL;
 	}
 }
@@ -7214,18 +7312,6 @@ char *cc_user = NULL;
 module_param(cc_user, charp, 0);
 MODULE_PARM_DESC(cc_user,
 		 "Set country code from insmod param, ex. CN/US/JP...etc");
-
-#ifdef TX_IPI_SUPPORT
-void wq_xmit_task(unsigned long data)
-{
-	struct rwnx_hw *rwnx_hw = (struct rwnx_hw *)data;
-	struct sk_buff *skb;
-
-	while ((skb = skb_dequeue(&rwnx_hw->xmit_ipi_queue))) {
-		rwnx_start_xmit(skb, skb->dev);
-	}
-}
-#endif
 
 /**
  *
@@ -7288,7 +7374,8 @@ int rwnx_cfg80211_init(struct wq_core *core)
 	ieee80211_ht_init();
 
 	rwnx_hw->vif_started = 0;
-	rwnx_hw->monitor_vif = RWNX_INVALID_VIF;
+
+	rwnx_monitor_init(rwnx_hw);
 
 	rwnx_hw->scan_ie.addr = NULL;
 	wq_rxu_defrag_init(rwnx_hw);
@@ -7297,8 +7384,7 @@ int rwnx_cfg80211_init(struct wq_core *core)
 
 	rwnx_hw->roc = NULL;
 	rwnx_hw->roc_cookie = 1;
-
-	rwnx_hw->disconnecting_in_progress = false;
+	rwnx_hw->time_dump_enable = false;
 
 #if defined(CONFIG_HIGH_RES_TIMERS) && defined(USE_HRT)
 	tasklet_init(&rwnx_hw->amsdu_task, amsdu_task, (unsigned long)rwnx_hw);
@@ -7369,7 +7455,7 @@ int rwnx_cfg80211_init(struct wq_core *core)
 	wiphy->features |= NL80211_FEATURE_SAE;
 #endif
 
-#if LINUX_VERSION_CODE >= KERNEL_VERSION(3, 19, 0)
+#if 0
 	if (rwnx_hw->mod_params.tdls)
 		/* TDLS support */
 		wiphy->features |= NL80211_FEATURE_TDLS_CHANNEL_SWITCH;
@@ -7403,17 +7489,13 @@ int rwnx_cfg80211_init(struct wq_core *core)
 	wiphy->extended_capabilities_mask = rwnx_hw->ext_capa;
 	wiphy->extended_capabilities_len = ARRAY_SIZE(rwnx_hw->ext_capa);
 
-	INIT_WORK(&rwnx_hw->add_key_task, rwnx_send_ptk_key_add);
-	INIT_WORK(&rwnx_hw->update_nss_task, wq_nss_update_task_hdl);
-	INIT_WORK(&rwnx_hw->ipv6_set_task, rwnx_ipv6_set_task);
-	INIT_WORK(&rwnx_hw->disconnect_task, rwnx_disconnect_task);
+	WQ_INIT_WORK(&rwnx_hw->add_key_task, rwnx_send_ptk_key_add);
+	WQ_INIT_WORK(&rwnx_hw->update_nss_task, wq_nss_update_task_hdl);
+	WQ_INIT_WORK(&rwnx_hw->ipv6_set_task, rwnx_ipv6_set_task);
+	WQ_INIT_WORK(&rwnx_hw->disconnect_task, rwnx_disconnect_task);
 	INIT_DELAYED_WORK(&rwnx_hw->bcn_change_task, rwnx_bcn_change_task);
 	INIT_WORK(&rwnx_hw->bcn_change_done_task, rwnx_bcn_change_done_task);
-#ifndef CONFIG_WQ_GKI
-	INIT_WORK(&rwnx_hw->tracer_dump_task, rwnx_tracer_dump_task);
-#endif
-	INIT_WORK(&rwnx_hw->connect_fail_task, rwnx_connect_fail_task);
-	INIT_WORK(&rwnx_hw->chip_reset_task, rwnx_chip_reset_task);
+	WQ_INIT_WORK(&rwnx_hw->tracer_dump_task, rwnx_tracer_dump_task);
 
 	INIT_LIST_HEAD(&rwnx_hw->vifs);
 
@@ -7434,9 +7516,10 @@ int rwnx_cfg80211_init(struct wq_core *core)
 	rwnx_hw->amsdu_param.timeout = AMSDU_TIMEOUT;
 	rwnx_hw->amsdu_param.enable = true;
 	rwnx_hw->ampdu_parm.max_aggr_num = AMPDU_MAX_PTK_NUM;
-
-	/* initiailze dwell time to 0xffffffff */
-	rwnx_hw->dwell_time = -1;
+	rwnx_hw->tracer.tracer_dump_event_num_64 = 0;
+	rwnx_hw->tracer.tracer_dump_event_num_32 = 0;
+	rwnx_hw->tracer.dump32 = false;
+	rwnx_hw->tracer.dump32 = false;
 
 	/* for usb interface, we change the amsdu parameter to 4ms timeout
            and maximum packet 10 */
@@ -7465,20 +7548,9 @@ int rwnx_cfg80211_init(struct wq_core *core)
 	timer_setup(&rwnx_hw->key_add_timer, rwnx_ptk_add_timeout, 0);
 	timer_setup(&rwnx_hw->roc_timer, rwnx_roc_timeout, 0);
 
-#ifdef TX_IPI_SUPPORT
-	skb_queue_head_init(&rwnx_hw->xmit_ipi_queue);
-	tasklet_init(&rwnx_hw->xmit_task, wq_xmit_task,
-						(unsigned long)rwnx_hw);
-#endif
-
 	/* After interface created and notification sent to the upper layer,
        rwnx_open may be invoked and use the timer (in mod_timer). So move the
        timer initialization here prior to register_inetaddr_notifier. */
-#ifdef WQ_CPU_UNBIND
-	rwnx_hw->timer_dump_enable = false;
-#else
-	rwnx_hw->timer_dump_enable = true;
-#endif
 	timer_setup(&rwnx_hw->stat_timer, rwnx_stat_timer_cb, 0);
 	timer_setup(&rwnx_hw->tx_monitor_timer, rwnx_throughput_calc_cb, 0);
 	timer_setup(&rwnx_hw->ap_mgt_txdone_timer, rwnx_ap_txdone_cb, 0);
@@ -7489,6 +7561,8 @@ int rwnx_cfg80211_init(struct wq_core *core)
 
 	atomic_set(&rwnx_hw->sending, 0);
 	q_stats_init(&rwnx_hw->tx_stats, 0);
+
+	rwnx_hw->rx_ipi_state = 0;
 
 	rwnx_cmd_mgr_init(&rwnx_hw->cmd_mgr);
 
@@ -7514,19 +7588,19 @@ int rwnx_cfg80211_init(struct wq_core *core)
 
 	for (i = 0; i < NX_VIRT_DEV_MAX + NX_REMOTE_STA_MAX; i++)
 		rwnx_hw->avail_idx_map |= BIT_ULL(i);
-	if ((ret = wq_hw_vif_sta_table_init(rwnx_hw, NX_VIRT_DEV_MAX,
-				     NX_REMOTE_STA_MAX))) {
+
+	if (wq_hw_vif_sta_table_init(rwnx_hw, NX_VIRT_DEV_MAX,
+		NX_REMOTE_STA_MAX)) {
 		WQ_DBG(DM_GENERIC, DL_ERR, "malloc table fail\n");
-		dev_err(core->dev, "malloc table fail %u %u\n", NX_VIRT_DEV_MAX, NX_REMOTE_STA_MAX);
 		goto err_malloc;
 	}
+
 	NX_NB_TXQ = ((NX_NB_TXQ_PER_STA * NX_REMOTE_STA_MAX) +
 		     (NX_NB_TXQ_PER_VIF * NX_VIRT_DEV_MAX) + 1);
 	WQ_DBG(DM_GENERIC, DL_ERR, "VIF_MAX:%d,STA_MAX:%d,NX_NB_TXQ:%d\n",
 	       NX_VIRT_DEV_MAX, NX_REMOTE_STA_MAX, NX_NB_TXQ);
-	if ((ret = rwnx_txq_malloc(rwnx_hw, NX_NB_TXQ))) {
+	if (rwnx_txq_malloc(rwnx_hw, NX_NB_TXQ)) {
 		WQ_DBG(DM_GENERIC, DL_ERR, "malloc txq fail\n");
-		dev_err(core->dev, "malloc txq fail %u\n", NX_NB_TXQ);
 		goto err_malloc;
 	}
 	rwnx_txq_prepare(rwnx_hw);
@@ -7619,15 +7693,13 @@ int rwnx_cfg80211_init(struct wq_core *core)
 		rwnx_limits_dfs[0].max = NX_VIRT_DEV_MAX;
 	}
 
-	wq_apply_band_mode(wiphy, core->band);
-
 	if ((ret = wiphy_register(wiphy))) {
 		wiphy_err(wiphy, "Could not register wiphy device\n");
 		goto err_register_wiphy;
 	}
 
 	/* Work to defer processing of rx buffer */
-	INIT_WORK(&rwnx_hw->defer_rx.work, rwnx_rx_deferred);
+	WQ_INIT_WORK(&rwnx_hw->defer_rx.work, rwnx_rx_deferred);
 	skb_queue_head_init(&rwnx_hw->defer_rx.sk_list);
 
 	/* Update regulatory (if needed) and set channel parameters to firmware
@@ -7684,12 +7756,10 @@ int rwnx_cfg80211_init(struct wq_core *core)
 		}
 	}
 
-#ifdef CONFIG_WQ_WLAN_USB
 	if (rwnx_hw->core->hif_ops->hif == WQ_HIF_USB) {
 		/* set max upload bundle size */
-		rwnx_send_set_usb_param_req(rwnx_hw, gv_usb_mtu_pkt_bundle_i);
+		rwnx_send_set_usb_param_req(rwnx_hw, WQ_USB_MTU_PKT_BUNDLE_I);
 	}
-#endif
 
 #ifdef NAPI_SUPPORT
 	if (rwnx_hw->core->config.napi_enable) {
@@ -7711,11 +7781,7 @@ int rwnx_cfg80211_init(struct wq_core *core)
 
 	wq_proc_init(rwnx_hw, wdev);
 
-#ifdef WQ_WLAN_ALL_IN_ONE
-	//wq_pktlog_init(&rwnx_hw->pktlog);
-#endif
-
-	rwnx_hw->pktlog.tty.driver = NULL;
+	wq_pktlog_init(&rwnx_hw->pktlog);
 
 	wiphy_info(wiphy, "New interface create %s", wdev->netdev->name);
 
@@ -7732,9 +7798,6 @@ int rwnx_cfg80211_init(struct wq_core *core)
 		printk("failed to register inet6addr notifier\n");
 		goto err_add_interface;
 	}
-
-	rwnx_hw->monitor_param.tx_mcs_idx = 0xFF;
-	rwnx_hw->monitor_param.tmp_mcs_idx = 0xFF;
 
 	return 0;
 
@@ -7855,7 +7918,7 @@ void rwnx_cfg80211_deinit(struct rwnx_hw *rwnx_hw)
 	}
 #endif
 
-	wq_hw_vif_sta_table_deinit(rwnx_hw);
+	wq_hw_vif_sta_table_deinit(rwnx_hw, NX_VIRT_DEV_MAX, NX_REMOTE_STA_MAX);
 	rwnx_txq_free(rwnx_hw);
 	rwnx_wdev_unregister(rwnx_hw);
 	unregister_inetaddr_notifier(&rwnx_hw->fib_netdev_notifier);
@@ -7867,15 +7930,9 @@ void rwnx_cfg80211_deinit(struct rwnx_hw *rwnx_hw)
 
 	rwnx_hwq_deinit(rwnx_hw);
 	wq_rxu_defrag_deinit(rwnx_hw);
-
-#ifdef WQ_WLAN_ALL_IN_ONE
-	//wq_pktlog_deinit(&rwnx_hw->pktlog);
-#endif
-
-	wq_proc_deinit(rwnx_hw);
-	if (rwnx_hw->core->config.rx_ll) {
-		rx_ll_deinit(rwnx_hw);
-	}
+	wq_pktlog_deinit(&rwnx_hw->pktlog);
+	wq_proc_deinit();
+	rx_ll_deinit(rwnx_hw);
 	/* txq ring deinit */
 	rwnx_txq_ring_deinit(rwnx_hw, NX_REMOTE_STA_MAX);
 	/* free mem which used to store pwr data read from bin file*/
@@ -7888,7 +7945,6 @@ void rwnx_cfg80211_deinit(struct rwnx_hw *rwnx_hw)
 	cancel_work_sync(&rwnx_hw->defer_rx.work);
 	cancel_delayed_work_sync(&rwnx_hw->bcn_change_task);
 	cancel_work_sync(&rwnx_hw->bcn_change_done_task);
-	cancel_work_sync(&rwnx_hw->connect_fail_task);
 
 	wiphy_free(rwnx_hw->wiphy);
 }

@@ -28,7 +28,7 @@
 // TODO: remove later, temp including
 #include "hif_api.h"
 #include "ieee80211_extap.h"
-
+#include "rwnx_main.h"
 struct vendor_radiotap_hdr {
 	u8 oui[3];
 	u8 subns;
@@ -184,11 +184,10 @@ void rwnx_rx_statistic(struct rwnx_hw *rwnx_hw, struct hw_rxhdr *hw_rxhdr,
 	}
 	if (rate_idx < rate_stats->size) {
 		// sta->stats.rx_rate.table could be free in rwnx_dbgfs_unregister_sta
-		if (rate_stats->table) {
+		if (rate_stats->table)
 			if (!rate_stats->table[rate_idx])
 				rate_stats->rate_cnt++;
-			rate_stats->table[rate_idx]++;
-		}
+		rate_stats->table[rate_idx]++;
 		rate_stats->cpt++;
 	} else {
 		wiphy_err(rwnx_hw->wiphy,
@@ -477,7 +476,7 @@ bool rwnx_rx_data_skb(struct rwnx_hw *rwnx_hw, struct rwnx_vif *rwnx_vif,
 						       RWNX_VIF_TYPE(rwnx_vif),
 						       0, NULL, NULL);
 #else
-#if LINUX_VERSION_CODE >= KERNEL_VERSION(6, 6, 0) || defined(CONFIG_ARCH_ROCKCHIP)
+#if LINUX_VERSION_CODE >= KERNEL_VERSION(6, 1, 107)
 			ieee80211_amsdu_to_8023s(skb, &list,
 						 rwnx_vif->ndev->dev_addr,
 						 RWNX_VIF_TYPE(rwnx_vif), 0,
@@ -771,32 +770,6 @@ static void rwnx_rx_mgmt(struct rwnx_hw *rwnx_hw, struct rwnx_vif *rwnx_vif,
 	dump_bytes(DL_VRB, "rwnx_rx_mgmt()", skb->data,
 		   sizeof(struct ieee80211_hdr));
 
-	// auth frame received but the vif is incorrect, replace auth with deauth to del sta
-	if (ieee80211_is_auth(mgmt->frame_control) && memcmp(mgmt->da, rwnx_vif->ndev->dev_addr, ETH_ALEN) != 0 &&
-		RWNX_VIF_TYPE(rwnx_vif) == NL80211_IFTYPE_AP) {
-		struct rwnx_sta *sta = NULL;
-
-		WQ_DBG(DM_RX, DL_WRN, "%s: auth frame received but not for vif-%d! auth da=%pM, sa=%pM, bssid=%pM, vif dev_addr=%pM, vif_type=%d\n",
-					__func__, rwnx_vif->vif_index,
-					mgmt->da, mgmt->sa, mgmt->bssid,
-					rwnx_vif->ndev->dev_addr, RWNX_VIF_TYPE(rwnx_vif));
-
-		list_for_each_entry (sta, &rwnx_vif->ap.sta_list, list) {
-			if (sta && memcmp(mgmt->sa, sta->mac_addr, ETH_ALEN) == 0) {
-				WQ_DBG(DM_RX, DL_WRN, "%s: find matching sta from sta_list, construct the deauth frame to del sta %d (%pM)\n",
-							__func__, sta->sta_idx, sta->mac_addr);
-
-				mgmt->frame_control = cpu_to_le16(IEEE80211_FTYPE_MGMT | IEEE80211_STYPE_DEAUTH);
-				memcpy(mgmt->da, rwnx_vif->ndev->dev_addr, ETH_ALEN);
-				memcpy(mgmt->bssid, rwnx_vif->ndev->dev_addr, ETH_ALEN);
-				mgmt->u.deauth.reason_code = cpu_to_le16(WLAN_REASON_UNSPECIFIED);
-				skb_trim(skb, offsetof(struct ieee80211_mgmt, u.deauth.reason_code) +
-					 sizeof(mgmt->u.deauth.reason_code));
-				break;
-			}
-		}
-	}
-
 	spin_lock(&rwnx_hw->mgmt_hist_lock);
 	if (mgmt_idx < HIST_CNT &&
 	    (mgmt->frame_control & IEEE80211_FCTL_STYPE) &&
@@ -903,47 +876,13 @@ int wq_get_vif_band(struct rwnx_vif *vif) {
 void rwnx_rx_mgmt_any(struct rwnx_hw *rwnx_hw, struct sk_buff *skb,
 		      struct hw_rxhdr *hw_rxhdr)
 {
-	struct rwnx_vif *rwnx_vif = NULL;
+	struct rwnx_vif *rwnx_vif;
 	int vif_idx = hw_rxhdr->flags_vif_idx;
 	int vif_band;
-	struct ieee80211_mgmt *mgmt = (struct ieee80211_mgmt *)skb->data;
 
 	trace_mgmt_rx(hw_rxhdr->phy_info.phy_prim20_freq, vif_idx,
 		      hw_rxhdr->flags_sta_idx,
 		      (struct ieee80211_mgmt *)skb->data);
-
-	if (ieee80211_is_probe_req(mgmt->frame_control)) {
-		if (vif_idx != RWNX_INVALID_STA) {
-			rwnx_vif = rwnx_rx_get_vif(rwnx_hw, vif_idx);
-		}
-
-		if (!is_unicast_ether_addr(mgmt->da) && vif_idx != RWNX_INVALID_STA) {
-			WQ_DBG(DM_RX, DL_INF, "%s: broadcast probe request frame received but vif_idx=%d, set it to 0xFF! probe_req da=%pM, sa=%pM, bssid=%pM\n",
-						__func__, vif_idx,
-						mgmt->da, mgmt->sa, mgmt->bssid);
-
-			vif_idx = RWNX_INVALID_VIF;
-		} else if (unlikely(is_unicast_ether_addr(mgmt->da)) && rwnx_vif &&
-					memcmp(mgmt->da, rwnx_vif->ndev->dev_addr, ETH_ALEN) != 0) {
-			struct rwnx_vif *correct_vif = NULL;
-
-			WQ_DBG(DM_RX, DL_WRN, "%s: unicast probe request frame received but not for vif-%d! probe_req da=%pM, sa=%pM, bssid=%pM, vif dev_addr=%pM, vif_type=%d\n",
-						__func__, rwnx_vif->vif_index,
-						mgmt->da, mgmt->sa, mgmt->bssid,
-						rwnx_vif->ndev->dev_addr, RWNX_VIF_TYPE(rwnx_vif));
-
-			list_for_each_entry (correct_vif, &rwnx_hw->vifs, list) {
-				if (correct_vif && correct_vif->up &&
-					memcmp(mgmt->da, correct_vif->ndev->dev_addr, ETH_ALEN) == 0) {
-					WQ_DBG(DM_RX, DL_WRN, "%s: find matching vif (%pM) from vif list, use corrected vif_idx: %d->%d\n",
-								__func__, correct_vif->ndev->dev_addr,
-								vif_idx, correct_vif->vif_index);
-					vif_idx = correct_vif->vif_index;
-					break;
-				}
-			}
-		}
-	}
 
 	if (vif_idx == RWNX_INVALID_VIF) {
 		list_for_each_entry (rwnx_vif, &rwnx_hw->vifs, list) {
@@ -1022,15 +961,14 @@ void rwnx_rx_cntrl_any(struct rwnx_hw *rwnx_hw, struct sk_buff *skb,
 u8 rwnx_rx_rtap_hdrlen(struct rx_vec_detail_1 *rxvect, bool has_vend_rtap)
 {
 	u8 rtap_len;
-	u8 antenna_set = rxvect->antenna_set & 0x0F;
 
 	/* Compute radiotap header length */
 	rtap_len = sizeof(struct ieee80211_radiotap_header) + 8;
 
 	// Check for multiple antennas
-	if (hweight8(antenna_set) > 1)
+	if (hweight32(rxvect->antenna_set) > 1)
 		// antenna and antenna signal fields
-		rtap_len += 4 * hweight8(antenna_set);
+		rtap_len += 4 * hweight8(rxvect->antenna_set);
 
 	// TSFT
 	if (!has_vend_rtap) {
@@ -1042,7 +980,7 @@ u8 rwnx_rx_rtap_hdrlen(struct rx_vec_detail_1 *rxvect, bool has_vend_rtap)
 	rtap_len++;
 
 	// Check if single antenna
-	if (hweight8(antenna_set) == 1)
+	if (hweight32(rxvect->antenna_set) == 1)
 		rtap_len++; //Single antenna
 
 	// padding for RX FLAGS
@@ -1075,9 +1013,9 @@ u8 rwnx_rx_rtap_hdrlen(struct rx_vec_detail_1 *rxvect, bool has_vend_rtap)
 	}
 
 	// Check for multiple antennas
-	if (hweight8(antenna_set) > 1) {
+	if (hweight32(rxvect->antenna_set) > 1) {
 		// antenna and antenna signal fields
-		rtap_len += 2 * hweight8(antenna_set);
+		rtap_len += 2 * hweight8(rxvect->antenna_set);
 	}
 
 	// Check for vendor specific data
@@ -1126,13 +1064,15 @@ s8 ant2_rssi(struct rx_vec_detail_1 *rxvect, struct hw_vect *hwvect)
  *
  * Builds a radiotap header and add it to @skb.
  */
-static void rwnx_rx_add_rtap_hdr(struct rwnx_hw *rwnx_hw, struct sk_buff *skb,
+static void rwnx_rx_add_rtap_hdr(struct rwnx_hw *rwnx_hw, struct rwnx_vif *rwnx_vif,
+				 struct sk_buff *skb,
 				 struct rx_vec_detail_1 *rxvect,
 				 struct phy_channel_info_desc *phy_info,
 				 struct hw_vect *hwvect, int rtap_len,
 				 u8 vend_rtap_len, u32 vend_it_present)
 {
 	struct ieee80211_radiotap_header *rtap;
+	struct rwnx_monitor_cfg *p_cfg;
 	u8 *pos, rate_idx;
 	__le32 *it_present;
 	u32 it_present_val = 0;
@@ -1140,12 +1080,9 @@ static void rwnx_rx_add_rtap_hdr(struct rwnx_hw *rwnx_hw, struct sk_buff *skb,
 	bool short_gi = false;
 	bool stbc = false;
 	bool aggregation = false;
-	int chain;
-	unsigned long int chains = rxvect->antenna_set & 0x0F;
-	u8 rssis[2] = { rxvect->rssi_leg, ant2_rssi(rxvect, hwvect)};
 
-	if (rwnx_hw->monitor_vif != RWNX_INVALID_VIF) {
-		rwnx_hw->monitor_param.rx_rssi = rxvect->rssi_leg;
+	if (NULL != (p_cfg = rwnx_monitor_get_cfg(rwnx_hw, rwnx_vif->vif_index))) {
+		p_cfg->rx_rssi = rxvect->rssi_leg;
 	}
 
 	rtap = (struct ieee80211_radiotap_header *)skb_push(skb, rtap_len);
@@ -1158,7 +1095,10 @@ static void rwnx_rx_add_rtap_hdr(struct rwnx_hw *rwnx_hw, struct sk_buff *skb,
 	it_present = &rtap->it_present;
 
 	// Check for multiple antennas
-	if (hweight8(chains) > 1) {
+	if (hweight32(rxvect->antenna_set) > 1) {
+		int chain;
+		unsigned long chains = rxvect->antenna_set;
+
 		for_each_set_bit (chain, &chains, IEEE80211_MAX_CHAINS) {
 			it_present_val |=
 				BIT(IEEE80211_RADIOTAP_EXT) |
@@ -1253,17 +1193,16 @@ static void rwnx_rx_add_rtap_hdr(struct rwnx_hw *rwnx_hw, struct sk_buff *skb,
 				   pos);
 	pos += 2;
 
-	if (hweight8(chains) == 1) {
+	if (hweight32(rxvect->antenna_set) == 1) {
 		// IEEE80211_RADIOTAP_DBM_ANTSIGNAL
 		rtap->it_present |=
 			cpu_to_le32(1 << IEEE80211_RADIOTAP_DBM_ANTSIGNAL);
-		chain = find_first_bit(&chains, IEEE80211_MAX_CHAINS);
-		*pos++ = rssis[chain];
+		*pos++ = rxvect->rssi_leg;
 
 		// IEEE80211_RADIOTAP_ANTENNA
 		rtap->it_present |=
 			cpu_to_le32(1 << IEEE80211_RADIOTAP_ANTENNA);
-		*pos++ = chain;
+		*pos++ = rxvect->antenna_set;
 	}
 
 	// IEEE80211_RADIOTAP_LOCK_QUALITY is missing
@@ -1374,7 +1313,7 @@ static void rwnx_rx_add_rtap_hdr(struct rwnx_hw *rwnx_hw, struct sk_buff *skb,
 
 	// Check for HE frames
 	if (rxvect->format_mod >= FORMATMOD_HE_SU) {
-		struct ieee80211_radiotap_he he = {0};
+		struct ieee80211_radiotap_he he;
 #define HE_PREP(f, val) cpu_to_le16(FIELD_PREP(IEEE80211_RADIOTAP_HE_##f, val))
 #define D1_KNOWN(f) cpu_to_le16(IEEE80211_RADIOTAP_HE_DATA1_##f##_KNOWN)
 #define D2_KNOWN(f) cpu_to_le16(IEEE80211_RADIOTAP_HE_DATA2_##f##_KNOWN)
@@ -1469,7 +1408,15 @@ static void rwnx_rx_add_rtap_hdr(struct rwnx_hw *rwnx_hw, struct sk_buff *skb,
 	}
 
 	// Rx Chains
-	if (hweight8(chains) > 1) {
+	if (hweight32(rxvect->antenna_set) > 1) {
+		int chain;
+		unsigned long chains = rxvect->antenna_set;
+		s8 rssi_ant1 = rxvect->rssi_leg;
+		s8 rssi_ant2 = 0;
+		u8 rssis[2] = { rssi_ant1, rssi_ant2};
+
+		rssi_ant2 = ant2_rssi(rxvect, hwvect);
+
 		for_each_set_bit (chain, &chains, IEEE80211_MAX_CHAINS) {
 			*pos++ = rssis[chain];
 			*pos++ = chain;
@@ -1500,7 +1447,7 @@ int rwnx_rx_monitor(struct rwnx_hw *rwnx_hw, struct rwnx_vif *rwnx_vif,
 	}
 
 	/* Add RadioTap Header */
-	rwnx_rx_add_rtap_hdr(rwnx_hw, skb, &hw_rxhdr_ptr->hwvect.rx_vec_1,
+	rwnx_rx_add_rtap_hdr(rwnx_hw, rwnx_vif, skb, &hw_rxhdr_ptr->hwvect.rx_vec_1,
 			     &hw_rxhdr_ptr->phy_info, &hw_rxhdr_ptr->hwvect,
 			     rtap_len, 0, 0);
 
@@ -1540,7 +1487,7 @@ u8 rwnx_rxdataind(struct rwnx_hw *rwnx_hw, struct sk_buff *skb)
 	struct wq_rx_hdr *sw_rxhdr;
 	struct hw_rxhdr *hw_rxhdr;
 	struct rxdesc_tag_wq *rxdesc;
-	struct rwnx_vif *rwnx_vif;
+	struct rwnx_vif *rwnx_vif = NULL;
 	int msdu_offset = sizeof(struct hw_rxhdr);
 	u16 status;
 	u32 frame_len;
@@ -1560,33 +1507,14 @@ u8 rwnx_rxdataind(struct rwnx_hw *rwnx_hw, struct sk_buff *skb)
 	status = sw_rxhdr->status;
 
 	skb_pull(skb, sizeof(struct wq_rx_hdr));
-
-	if (status & RX_STAT_CUST_DATA) {
-		u8 *cust_data_buff = ((uint8_t *)skb->data);
-		u8 cust_data_len = *cust_data_buff;
-		u16 cust_data_align_len = ALIGN((cust_data_len + 1), 4);
-
-		if (skb->len < cust_data_align_len) {
-			WQ_DBG(DM_RX, DL_ERR, "%s, CUST DATA err, skb too short(%u<%u)!!\n",
-				__func__, skb->len, cust_data_align_len);
-			dev_kfree_skb(skb);
-			goto end;
-		} else {
-			cust_data_buff++; // skip length field of cust data
-			//dump_bytes(DL_WRN, "cust data", cust_data_buff, cust_data_len);
-			skb_pull(skb, cust_data_align_len);
-		}
-		status &= ~RX_STAT_CUST_DATA;
-	}
-
 	hw_rxhdr = (struct hw_rxhdr *)skb->data;
 	frame_len = hw_rxhdr->hwvect.frmlen;
 
 	WQ_DBG(DM_RX, DL_INF,
-	       "%s: skb=0x%p, status: 0x%x, is_ampdu: %u, tid: %u, sn:%u, sta_idx: %u, is_80211_mpdu: %u\n",
+	       "%s: skb=0x%p, status: 0x%x, is_ampdu: %u, tid: %u, sn:%u, sta_idx: %u, is_80211_mpdu: %u, mac %d, vif %d.\n",
 	       __func__, skb, sw_rxhdr->status, sw_rxhdr->is_ampdu,
 	       sw_rxhdr->tid, sw_rxhdr->sn, hw_rxhdr->flags_sta_idx,
-	       hw_rxhdr->flags_is_80211_mpdu);
+	       hw_rxhdr->flags_is_80211_mpdu, sw_rxhdr->mac_id, hw_rxhdr->flags_vif_idx);
 
 	/* Check if we need to delete the buffer */
 	if (status & RX_STAT_DELETE) {
@@ -1600,24 +1528,33 @@ u8 rwnx_rxdataind(struct rwnx_hw *rwnx_hw, struct sk_buff *skb)
 	if (status & RX_STAT_MONITOR) {
 		struct sk_buff *skb_monitor;
 		struct hw_rxhdr hw_rxhdr_copy;
+		struct rwnx_monitor_cfg *p_cfg;
 		u8 rtap_len;
 		u16 frm_len;
 
 		WQ_DBG(DM_RX, DL_INF, "%s, RX_STAT_MONITOR !!\n", __func__);
 
+		if (rwnx_monitor_check_valid(rwnx_hw, hw_rxhdr->flags_vif_idx)) {
+			rwnx_vif = rwnx_rx_get_vif(rwnx_hw, hw_rxhdr->flags_vif_idx);
+		} else if (RWNX_INVALID_VIF == hw_rxhdr->flags_vif_idx) {
+			/* vif = 255, forward to 5G or 2G port. */
+			if (NULL != (p_cfg = rwnx_monitor_get_cfg_by_band(rwnx_hw, hw_rxhdr->phy_info.phy_band))) {
+				rwnx_vif = rwnx_rx_get_vif(rwnx_hw, p_cfg->vif_idx);
+			} else {
+				/* Do nothing. pakage will be dropped. */
+			}
+		} else {
+			/* Invalid vif for monitor. */
+		}
+
 		//Check if monitor interface exists and is open
-		rwnx_vif = rwnx_rx_get_vif(rwnx_hw, rwnx_hw->monitor_vif);
 		if (!rwnx_vif) {
 			monitor_skb_need_free = 1;
-			dev_err_ratelimited(rwnx_hw->dev,
-				"Received monitor frame but there is no monitor interface open\n");
+			WQ_DBG(DM_RX, DL_WRN,"%s: vif %u is not monitor, pakage dropped.\n", __func__, hw_rxhdr->flags_vif_idx);
 			goto check_len_update;
 		}
 
 		hw_rxhdr = (struct hw_rxhdr *)skb->data;
-		rwnx_rx_vector_convert(rwnx_hw->machw_type,
-				       &hw_rxhdr->hwvect.rx_vec_1,
-				       &hw_rxhdr->hwvect.rx_vec_2);
 
 		rtap_len =
 			rwnx_rx_rtap_hdrlen(&hw_rxhdr->hwvect.rx_vec_1, false);
@@ -1770,9 +1707,6 @@ check_len_update:
 		WQ_DBG(DM_RX, DL_INF, "%s, RX_STAT_FORWARD !! %d\n", __func__,
 		       __LINE__);
 		hw_rxhdr = (struct hw_rxhdr *)skb->data;
-		rwnx_rx_vector_convert(rwnx_hw->machw_type,
-				       &hw_rxhdr->hwvect.rx_vec_1,
-				       &hw_rxhdr->hwvect.rx_vec_2);
 
 		skb_pull(skb, msdu_offset);
 
@@ -1830,7 +1764,9 @@ check_len_update:
 
 			skb->priority = 256 + hw_rxhdr->flags_user_prio;
 
-			time_start_us = (u64)ktime_to_us(ktime_get());
+			if (rwnx_hw->time_dump_enable) {
+				time_start_us = (u64)ktime_to_us(ktime_get());
+			}
 
 			ret = sw_rxhdr->is_ampdu && ieee80211_ampdu_reorder(
 						rwnx_hw, hw_rxhdr->flags_sta_idx,
@@ -1838,8 +1774,10 @@ check_len_update:
 						sw_rxhdr->msdu_seq, sw_rxhdr->msdu_seq_end,
 						skb);
 
-			time_end_us = (u64)ktime_to_us(ktime_get());
-			atomic_add((u32)(time_end_us - time_start_us), &rwnx_hw->rx_reorder_time);
+			if (rwnx_hw->time_dump_enable) {
+				time_end_us = (u64)ktime_to_us(ktime_get());
+				atomic_add((u32)(time_end_us - time_start_us), &rwnx_hw->rx_reorder_time);
+			}
 
 			if (ret) {
 				goto check_alloc;

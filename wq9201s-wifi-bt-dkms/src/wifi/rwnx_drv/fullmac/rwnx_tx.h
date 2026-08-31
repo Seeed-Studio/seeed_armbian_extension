@@ -110,9 +110,6 @@ struct rwnx_msdu_txdone_status {
 
 u16 rwnx_select_txq(struct rwnx_vif *rwnx_vif, struct sk_buff *skb);
 netdev_tx_t rwnx_start_xmit(struct sk_buff *skb, struct net_device *dev);
-#ifdef TX_IPI_SUPPORT
-netdev_tx_t rwnx_start_xmit_wrap(struct sk_buff *skb, struct net_device *dev);
-#endif
 int rwnx_start_mgmt_xmit(struct rwnx_vif *vif, struct rwnx_sta *sta,
 			 struct cfg80211_mgmt_tx_params *params, bool offchan,
 			 u64 *cookie);

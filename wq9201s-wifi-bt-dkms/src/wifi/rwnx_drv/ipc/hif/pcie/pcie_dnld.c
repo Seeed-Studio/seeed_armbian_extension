@@ -183,6 +183,7 @@ int wq_dnld_msg_handle(struct wq_pcie *wq_pcie, u32 msg_type)
 	case PCIE_MSG_E2R_BIN_WILL_JUMP:
 		WQ_DBG(DM_TRBUS, DL_INF, "%s: dnld dtop ok, dtop will jump\n",
 		       __func__);
+		complete(&wq_pcie->wq_dnld_down);
 		break;
 	case PCIE_MSG_E2R_ROM_VER_IS_RDY:
 		WQ_DBG(DM_TRBUS, DL_INF, "%s: bootrom version ready\n",
@@ -358,9 +359,9 @@ __maybe_unused static int wq_dnld_use_ce(struct wq_pcie *wq_pcie,
 }
 
 static int wq_dnld_use_cpu_copy(struct wq_pcie *wq_pcie, const char *data,
-				int size, enum wq_bmi_xfer_type type)
+				int size, enum wq_bmi_xfer_type type, int timeout)
 {
-	int ret;
+	int ret = 0;
 	u32 len = sizeof(struct wq_fw_info_tag) + size;
 
 	ret = wq_map_consistent(wq_pcie, (u8 **)&wq_pcie->fw_buf,
@@ -378,9 +379,7 @@ static int wq_dnld_use_cpu_copy(struct wq_pcie *wq_pcie, const char *data,
 	if (ret != 0) {
 		WQ_DBG(DM_TRBUS, DL_ERR, "%s: dnld info forge failed\n",
 		       __func__);
-		wq_unmap_consistent(wq_pcie, (u8 **)&wq_pcie->fw_buf,
-				    &wq_pcie->fw_buf_pa, len);
-		return -EINVAL;
+		goto error_ret;
 	}
 	memcpy(wq_pcie->fw_buf + sizeof(struct wq_fw_info_tag), data, size);
 
@@ -388,16 +387,25 @@ static int wq_dnld_use_cpu_copy(struct wq_pcie *wq_pcie, const char *data,
 	if (ret != 0) {
 		WQ_DBG(DM_GENERIC, DL_ERR, "%s: notify fw dnld failed\n",
 		       __func__);
-		wq_unmap_consistent(wq_pcie, (u8 **)&wq_pcie->fw_buf,
-				    &wq_pcie->fw_buf_pa, len);
-		return -EIO;
+		goto error_ret;
 	}
 
-	return 0;
+	// wait pcie dnld down
+	if (!wait_for_completion_timeout(&wq_pcie->wq_dnld_down,
+		HZ * timeout)) {
+		ret = -ETIMEDOUT;
+		goto error_ret;
+	}
+
+error_ret:
+	wq_unmap_consistent(wq_pcie, (u8 **)&wq_pcie->fw_buf,
+				&wq_pcie->fw_buf_pa, len);
+
+	return ret;
 }
 
 static int wq_pcie_fw_dpc(struct wq_pcie *wq_pcie, const char *data, int len,
-			  enum wq_bmi_xfer_type type)
+			  enum wq_bmi_xfer_type type, int timeout)
 {
 	int ret;
 
@@ -429,7 +437,7 @@ static int wq_pcie_fw_dpc(struct wq_pcie *wq_pcie, const char *data, int len,
 	}
 #undef MSLEEP_TIME
 
-	ret = wq_dnld_use_cpu_copy(wq_pcie, data, len, type);
+	ret = wq_dnld_use_cpu_copy(wq_pcie, data, len, type, timeout);
 
 	return ret;
 }
@@ -440,7 +448,7 @@ int wq_pcie_bmi_xfer(struct wq_core *core, enum wq_bmi_xfer_type type,
 	int ret;
 	struct wq_pcie *wq_pcie = container_of(core, struct wq_pcie, core);
 
-	ret = wq_pcie_fw_dpc(wq_pcie, data, len, type);
+	ret = wq_pcie_fw_dpc(wq_pcie, data, len, type, timeout);
 
 	return ret;
 }
@@ -515,10 +523,6 @@ int wq_pcie_bmi_cmd(struct wq_core *core, u8 cmd, const void *param, u16 p_size,
 		/* if need to check wifi state, please reset wifi_state in dtop_fw boot_state when wifi remove*/
 		break;
 	case WQ_BMI_CMD_VERIFY_FW:
-		wq_unmap_consistent(
-			wq_pcie, (u8 **)&wq_pcie->fw_buf, &wq_pcie->fw_buf_pa,
-			wq_pcie->fw_len + sizeof(struct wq_fw_info_tag));
-		break;
 	case WQ_BMI_CMD_SET_FW_INFO:
 	case WQ_BMI_CMD_UNLOAD_DTOP:
 		ret = 0;

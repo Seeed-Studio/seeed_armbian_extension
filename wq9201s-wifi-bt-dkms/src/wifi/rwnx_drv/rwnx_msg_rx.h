@@ -27,6 +27,5 @@ void rwnx_bcn_change_done_task(struct work_struct *w);
 u8 vht_mcs_map_to_mcs_val(u8 vht_mcs_map);
 u8 he_mcs_map_to_mcs_max(u8 he_mcs_map);
 void rwnx_tracer_dump_task(struct work_struct *w);
-void rwnx_connect_fail_task(struct work_struct *w);
 
 #endif /* _RWNX_MSG_RX_H_ */

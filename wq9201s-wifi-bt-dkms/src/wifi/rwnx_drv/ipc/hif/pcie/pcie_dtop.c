@@ -46,9 +46,7 @@ int wq_pci_dtop_send(struct wq_core *core, u8 *data, u32 size, u32 timeout)
 
 void wq_pcie_app_deinit(struct wq_pcie *wq_pcie)
 {
-#ifdef WQ_WLAN_ALL_IN_ONE
 	wq_fw_log_proc_deinit(&wq_pcie->core);
-#endif
 #ifdef CONFIG_WQ_DTOP
 	dtop_deinit(&wq_pcie->core);
 #endif
@@ -59,9 +57,9 @@ int wq_pcie_app_init(struct wq_pcie *wq_pcie)
 	struct wq_core *core = &wq_pcie->core;
 
 	WQ_DBG(DM_TRBUS, DL_INF, "[%s] init\n", __func__);
-#ifdef WQ_WLAN_ALL_IN_ONE
+
 	wq_fw_log_proc_init(&wq_pcie->core);
-#endif
+
 	/** Initialize the wait queue */
 	init_waitqueue_head(&core->driver.main_waitQ);
 	skb_queue_head_init(&core->driver.main_rx_Q);

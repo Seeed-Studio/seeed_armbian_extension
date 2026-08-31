@@ -42,10 +42,14 @@
 #include "mail_box_reg.h"
 #include "intc_reg.h"
 #include "pcie_ext_ctrl_reg.h"
+#include "pcie_usb3_inf_ctrl_reg.h"
+#include "pmm_reg.h"
 #include "rwnx_defs.h"
+#include "config.h"
 
 #include "wq_log.h"
 #include "fw_log.h"
+#include "wq_wifi_dbg.h"
 
 /** define WUQI vendor id */
 #define WUQI_PCIE_VENDOR_ID 0x1fdd
@@ -61,7 +65,7 @@
 #define WUQI_DRV_NAME "WuQi Wlan PCIe"
 
 /* bar0 multiple atu region target address */
-#define PCIE_BAR0_ATU_REGION_NUM 7
+#define PCIE_BAR0_ATU_REGION_NUM 9
 #define PCIE_REGION0_TARGET_ADDR 0x0FE00000
 #define PCIE_REGION1_TARGET_ADDR 0x08000000
 #define PCIE_REGION2_TARGET_ADDR 0x08002000
@@ -69,6 +73,8 @@
 #define PCIE_REGION4_TARGET_ADDR 0x0810E000
 #define PCIE_REGION5_TARGET_ADDR 0x08010000
 #define PCIE_REGION6_TARGET_ADDR 0x08019000
+#define PCIE_REGION7_TARGET_ADDR 0x0810F000
+#define PCIE_REGION8_TARGET_ADDR 0x0A500000
 
 /* bar region config */
 #define PCIE_ATU_VIEWPORT 0x900
@@ -95,12 +101,19 @@
 #define WIFI_SCRATCH1_ADDR (HOST_W_AHB_REG_BASEADDR + 0x34)
 
 #define MAILBOX_N_BASEADDR(x) (HOST_W_MAILBOX_BASEADDR + 0x20 * x)
+#define PMM_SOFT_RESET_ADDR (HOST_W_PMM_REG_BASEADDR + CFG_PMM_SOFT_RESET_ADDR)
+#define PMM_SCATCH1_ADDR (HOST_W_PMM_REG_BASEADDR + CFG_PMM_SCRATCH1_CFG_ADDR)
 
 typedef struct wq_pcie_region_addr {
 	u32 base_addr;
 	u32 limit_addr;
 	u32 target_addr;
 } wq_pcie_region_addr_t;
+
+struct wq_pcie_reprobe {
+	struct device *dev;
+	struct work_struct work;
+};
 
 static wq_pcie_region_addr_t wq_pcie_bar0_region[PCIE_BAR0_ATU_REGION_NUM] = {
 	{ HOST_W_IRAM_BASEADDR, HOST_W_IRAM_ENDADDR, PCIE_REGION0_TARGET_ADDR },
@@ -115,6 +128,10 @@ static wq_pcie_region_addr_t wq_pcie_bar0_region[PCIE_BAR0_ATU_REGION_NUM] = {
 	  PCIE_REGION5_TARGET_ADDR },
 	{ HOST_W_MAILBOX_BASEADDR, HOST_W_MAILBOX_ENDADDR,
 	  PCIE_REGION6_TARGET_ADDR },
+        { HOST_PCIE_USB3_INT_CTRL_BASEADDR, HOST_PCIE_USB3_INT_CTRL_ENDADDR,
+          PCIE_REGION7_TARGET_ADDR },
+        { HOST_W_PMM_REG_BASEADDR, HOST_W_PMM_REG_ENDADDR,
+          PCIE_REGION8_TARGET_ADDR },
 };
 
 #define WQ_PCIE_CHN_DUMP_MASK                                                  \
@@ -122,26 +139,43 @@ static wq_pcie_region_addr_t wq_pcie_bar0_region[PCIE_BAR0_ATU_REGION_NUM] = {
 	 (WQ_STATS_HIF_START_BIT - WQ_PCIE_CE_CH_WIFI_BASE))
 
 #define PCIE_CE_DEPTH_MSG_TX 128
+#ifdef COMPAT_MODE_ENABLE
+#define PCIE_CE_DEPTH_MSG_RX 128
+#else
 #define PCIE_CE_DEPTH_MSG_RX 2048
+#endif
 
+#ifdef COMPAT_MODE_ENABLE
+#define PCIE_CE_DEPTH_PKT_TX 128
+#define PCIE_CE_DEPTH_PKT_RX 128
+#else
 #define PCIE_CE_DEPTH_PKT_TX 4096
 #define PCIE_CE_DEPTH_PKT_RX 8192
+#endif
 
 #define PCIE_CE_DATA_SIZE_MAX (1024 * 2)
 #ifndef PHY_ADC_DUMP
+#ifdef COMPAT_MODE_ENABLE
+#define PCIE_CE_EVT_SIZE_MAX (1024 * 2)
+#else
 #define PCIE_CE_EVT_SIZE_MAX (1024 * 12)
+#endif
 #else
 #define PCIE_CE_EVT_SIZE_MAX (1024 * 64)
 #endif
 
+#ifdef COMPAT_MODE_ENABLE
+#define PCIE_CE_DEPTH_FW_LOG 2
+#else
 #define PCIE_CE_DEPTH_FW_LOG 256
+#endif
 #define PCIE_CE_FW_LOG_SIZE_MAX 2048
 
-#define CE_RAW_PACKET_TX_TIMEOUT_NS 1000000UL /* 1ms */
+#define CE_RAW_PACKET_TX_TIMEOUT_NS 5000000UL /* 5ms */
 #define CE_RAW_PACKET_RX_TIMEOUT_NS 1000000UL /* 1ms */
 
-#define FLOW_CTRL_THRESHOLD_STOP 800
-#define FLOW_CTRL_THRESHOLD_RESTART 600
+#define FLOW_CTRL_THRESHOLD_STOP  3000
+#define FLOW_CTRL_THRESHOLD_RESTART 2000
 
 #define WQ_PCIE_AUTUSUSPEND_DELAY_MS 500
 
@@ -265,6 +299,9 @@ MODULE_PARM_DESC(fw_wifi_pcie, "wifi firmware name for pcie, default: null.");
 static int wq_pcie_autopm_get_async(struct wq_core *core);
 static void wq_pcie_autopm_put_async(struct wq_core *core);
 static bool wq_pcie_is_bus_active(struct wq_core *core);
+static void wq_pcie_force_reset_device(struct wq_pcie *wq_pcie);
+static void wq_pcie_set_bypass_perst_flag(struct wq_pcie *wq_pcie);
+static void wq_pcie_clr_bypass_perst_flag(struct wq_pcie *wq_pcie);
 
 static void wq_mailbox_irq_handle(struct wq_pcie *wq_pcie, u32 msg_type)
 {
@@ -624,22 +661,26 @@ int wq_pcie_show_bus_info(struct wq_pcie *wq_pcie)
 {
 	u8 index;
 	u32 bar0, bar1;
-	u16 vid, did;
+	u16 vid, did, sts, cmd;
 	u32 tmp;
+	if(wq_pcie->bus_dead) return 0;
 	WQ_DBG(DM_TRBUS, DL_ERR,
 	       " ======== WQ PCIe DEBUG INFO START ========\n");
 
 #if LINUX_VERSION_CODE >= KERNEL_VERSION(5, 10, 0)
 	/* show pcie link speed */
-   #ifndef CONFIG_WQ_GKI
 	pcie_print_link_status(wq_pcie->pdev);
-   #endif
 #endif
 
 	/* show pcie bar address */
 	pci_read_config_dword(wq_pcie->pdev, PCI_BASE_ADDRESS_0, &bar0);
 	pci_read_config_dword(wq_pcie->pdev, PCI_BASE_ADDRESS_1, &bar1);
 	WQ_DBG(DM_TRBUS, DL_ERR, " PCIe BAR0: 0x%x, BAR1: 0x%x\n", bar0, bar1);
+
+        /* show status and command */
+	pci_read_config_word(wq_pcie->pdev, PCI_COMMAND, &sts);
+	pci_read_config_word(wq_pcie->pdev, PCI_STATUS, &cmd);
+	WQ_DBG(DM_TRBUS, DL_ERR, " PCIe STATUS: 0x%x, COMMAND: 0x%x\n", sts, cmd);
 
 	/* check device id and vendor id */
 	pci_read_config_word(wq_pcie->pdev, PCI_VENDOR_ID, &vid);
@@ -660,13 +701,119 @@ int wq_pcie_show_bus_info(struct wq_pcie *wq_pcie)
 		wq_pcie_read_bar0_inbond_atu(wq_pcie->pdev, index);
 	};
 
+        /* show scartch1 value */
+        tmp = wq_pcie_read32(wq_pcie, PMM_SCATCH1_ADDR);
+	WQ_DBG(DM_TRBUS, DL_ERR, " PMM Scartch1 reg: 0x%x\n", tmp);
+
 	WQ_DBG(DM_TRBUS, DL_ERR, " ======== WQ PCIe DEBUG INFO END ========\n");
+	return 0;
+}
+
+static void wq_pcie_reprobe_worker(struct work_struct *work)
+{
+	int ret = 0;
+	struct wq_pcie_reprobe *reprobe =
+		container_of(work, struct wq_pcie_reprobe, work);
+	struct device *dev = reprobe->dev;
+#if LINUX_VERSION_CODE < KERNEL_VERSION(5, 10, 0)
+	device_release_driver(dev);
+	if (!dev->driver) {
+		ret = device_attach(dev);
+	}
+	ret = ret < 0 ? ret : 0;
+#else
+	ret = device_reprobe(dev);
+#endif
+	if (ret && ret != -EPROBE_DEFER)
+		dev_err(reprobe->dev, "Reprobe error %d\n", ret);
+
+	put_device(reprobe->dev);
+	kfree(reprobe);
+	module_put(THIS_MODULE);
+}
+
+static int wq_pcie_reprobe_trigger(struct wq_pcie *wq_pcie)
+{
+	int ret = 0;
+	struct wq_pcie_reprobe *reprobe = NULL;
+	reprobe = kzalloc(sizeof(*reprobe),
+			  in_atomic() ? GFP_ATOMIC : GFP_KERNEL);
+	if (!reprobe)
+		return -ENOMEM;
+	ret = try_module_get(THIS_MODULE);
+	if (!ret) {
+		kfree(reprobe);
+		dev_err(&wq_pcie->pdev->dev, "Reprobe get module error %d\n",
+			ret);
+		return 0;
+	};
+
+	WQ_INIT_WORK(&reprobe->work, wq_pcie_reprobe_worker);
+	reprobe->dev = get_device(&wq_pcie->pdev->dev);
+	queue_work(system_long_wq, &reprobe->work);
+	return 0;
+}
+
+/**
+ *  @brief: pcie recovery when device crash
+ *  @param wq_pcie Pointer to the struct wq_pcie
+ *  @return: status
+ */
+int wq_pcie_recovery_device(struct wq_pcie *wq_pcie)
+{
+	u32 bar0, bar1;
+	u8 cmd;
+	if (wq_pcie->bus_dead)
+		return 0;
+	if (!wq_conf.recovery_level) {
+		WQ_DBG(DM_TRBUS, DL_ERR,
+		       " wlan self recovery is not configured.\n");
+		return -1;
+	}
+
+	/* ce return 0xFFFF_FFFF */
+
+	/* read pcie config bar address */
+	pci_read_config_dword(wq_pcie->pdev, PCI_BASE_ADDRESS_0, &bar0);
+	pci_read_config_dword(wq_pcie->pdev, PCI_BASE_ADDRESS_1, &bar1);
+
+	/* read pcie config space command: busmaster */
+	pci_read_config_byte(wq_pcie->pdev, PCI_COMMAND, &cmd);
+
+	if ((bar0 == 0x04) && (bar1 == 0x00) && !(cmd & PCI_COMMAND_MASTER)) {
+		WQ_DBG(DM_TRBUS, DL_ERR,
+		       " WQ PCIe Entry Recovery saved bar0 %u, bar1 %u...\n",
+		       wq_pcie->pcie_bar0, wq_pcie->pcie_bar1);
+		wq_pcie->bus_dead = true;
+		/* restore pcie config bar address */
+		pci_write_config_dword(wq_pcie->pdev, PCI_BASE_ADDRESS_0,
+				       wq_pcie->pcie_bar0);
+		pci_write_config_dword(wq_pcie->pdev, PCI_BASE_ADDRESS_1,
+				       wq_pcie->pcie_bar1);
+		/* debug */
+		wq_pcie_show_bus_info(wq_pcie);
+
+		/* call remove & install flow */
+		if (wq_conf.recovery_level == 1) {
+			return wq_pcie_reprobe_trigger(wq_pcie);
+		} else if (wq_conf.recovery_level == 2) {
+			wq_wlan_handle_bus_recovery(&wq_pcie->core);
+		}
+
+	} else {
+		WQ_DBG(DM_TRBUS, DL_ERR,
+		       " WQ PCIe Entry failed bar0 %u, bar1 %u, cmd %u\n", bar0,
+		       bar1, cmd);
+		return -1;
+		/* restart device */
+	}
 	return 0;
 }
 
 static void wq_pcie_ce_ring_fill(struct wq_pcie *wq_pcie, CE_CHN_UUID chn,
 				 u16 nentries)
 {
+	const int max_alloc_retries = 100;
 	u32 nbytes;
 	dma_addr_t phys_addr;
 	struct sk_buff *skb;
@@ -677,9 +824,37 @@ static void wq_pcie_ce_ring_fill(struct wq_pcie *wq_pcie, CE_CHN_UUID chn,
 
 	nbytes = pcie_attr_table[chn].src_sz_max;
 
+	if (unlikely(wq_pcie->pending_refill_count[chn])) {
+		if (unlikely((nentries + wq_pcie->pending_refill_count[chn]) > pcie_attr_table[chn].dst_depth)) {
+			WQ_DBG(DM_TRBUS, DL_ERR, "%s chn%u, %u entry + %u refill > %u dst_depth\n", __func__, chn,
+			       nentries, wq_pcie->pending_refill_count[chn], pcie_attr_table[chn].dst_depth);
+			BUG_ON(1);
+		}
+
+		nentries += wq_pcie->pending_refill_count[chn];
+		wq_pcie->pending_refill_count[chn] = 0;
+	}
+
 	while (nentries-- > 0) {
 		skb = dev_alloc_skb(nbytes);
-		BUG_ON(!skb);
+
+		if (unlikely(!skb)) {
+			wq_pcie->alloc_fail_count[chn]++;
+			wq_pcie->pending_refill_count[chn] = nentries + 1;
+			if (net_ratelimit() || (wq_pcie->alloc_fail_count[chn] >= max_alloc_retries)) {
+				WQ_DBG(DM_TRBUS, DL_ERR, "%s chn%u alloc %u bytes skb failed, entry %u fail count %u\n",
+				       __func__, chn, nbytes, nentries, wq_pcie->alloc_fail_count[chn]);
+				wq_dbg_dump_mem_status();
+			}
+
+			if (wq_pcie->alloc_fail_count[chn] >= max_alloc_retries) {
+				BUG_ON(!skb);
+			}
+
+			break;
+		}
+
+		wq_pcie->alloc_fail_count[chn] = 0;
 
 		status = wq_map_memory(wq_pcie, skb->data, &phys_addr, nbytes,
 				       DMA_FROM_DEVICE);
@@ -845,6 +1020,11 @@ static void wq_pcie_ce_polling_handle(struct wq_pcie *wq_pcie)
 	for (chn = WQ_PCIE_CE_CH_WIFI_BASE; chn < WQ_PCIE_CE_CH_LAST; chn++) {
 		u16 nentries = 0;
 
+#ifdef RX_IPI_SUPPORT
+		if (chn == WQ_PCIE_CE_CH_RAW_RX)
+			continue;
+#endif
+
 		if (pcie_attr_table[chn].src_depth > 0 &&
 		    wq_pcie->ce_dma_tx_done[chn]) {
 			//check tx_done
@@ -933,12 +1113,130 @@ static void wq_pcie_ce_tasklet(unsigned long data)
 	LEAVE();
 }
 
+static void wq_pcie_tx_tasklet(unsigned long data)
+{
+	struct wq_pcie *wq_pcie = (struct wq_pcie *)data;
+	struct sk_buff *skb = NULL;
+	dma_addr_t phys_addr = 0;
+	u8 chn;
+	u32 nbytes = 0;
+	int ret = 0;
+
+	for (chn = WQ_PCIE_CE_CH_PKT_TX; chn <= WQ_PCIE_CE_CH_RAW_TX; chn++) {
+		if (pcie_attr_table[chn].src_depth > 0 &&
+		    wq_pcie->ce_dma_tx_done[chn]) {
+			struct sk_buff_head sk_list;
+
+			__skb_queue_head_init(&sk_list);
+
+			//check tx_done
+			while ((ret = wq_ce_send_completed_next(
+				       wq_pcie, chn, (void **)&skb, &phys_addr,
+				       &nbytes, NULL)) >= 0) {
+				if (skb == NULL) {
+					WQ_DBG(DM_TRBUS, DL_ERR, "tx ce chn[%d] get skb null!\n", chn);
+					break;
+				}
+				WQ_DBG(DM_TRBUS, DL_VRB, "ce chn[%d] tx done\n",
+				       chn);
+
+				if (chn == WQ_PCIE_CE_CH_CMD_TX)
+					htc_tx_done(&wq_pcie->core, skb, ret);
+				else if (chn == WQ_PCIE_CE_CH_RAW_TX ||
+					 chn == WQ_PCIE_CE_CH_PKT_TX) {
+				//	htc_ll_msdu_tx_done(&wq_pcie->core, skb, ret);
+					__skb_queue_tail(&sk_list, skb);
+				}
+				else {
+					WQ_DBG(DM_TRBUS, DL_ERR,
+					       "%s: ignore chan<%d> data\n",
+					       __func__, chn);
+					htc_tx_skb_dma_unmap(&wq_pcie->core,
+							     skb);
+					dev_kfree_skb_any(skb);
+				}
+			}
+
+			// Just for test, the status should not always be 0
+			if (chn == WQ_PCIE_CE_CH_PKT_TX ||
+			    chn == WQ_PCIE_CE_CH_RAW_TX)
+				htc_txq_done(&wq_pcie->core, &sk_list, 0);
+
+			wq_pcie->ce_dma_tx_done[chn] = false;
+			wq_ce_irq_unmask(wq_pcie, chn, WQ_CE_CHN_SRC);
+		}
+	}
+}
+
+static void wq_pcie_rx_tasklet(unsigned long data)
+{
+	struct wq_pcie *wq_pcie = (struct wq_pcie *)data;
+	struct sk_buff *skb = NULL;
+	dma_addr_t phys_addr = 0;
+	u8 chn = WQ_PCIE_CE_CH_RAW_RX;
+	u32 nbytes = 0;
+	u16 nentries = 0;
+
+	if (pcie_attr_table[chn].dst_depth > 0 &&
+	    wq_pcie->ce_dma_rx_done[chn]) {
+		struct sk_buff_head sk_list;
+
+		__skb_queue_head_init(&sk_list);
+
+		//polling Rx data
+		while ((wq_ce_recv_completed_next(
+			       wq_pcie, chn, (void **)&skb, &phys_addr,
+			       &nbytes, NULL)) == 0) {
+			if (skb == NULL) {
+				WQ_DBG(DM_TRBUS, DL_ERR, "rx ce chn[%d] get skb null!\n", chn);
+				break;
+			}
+			WQ_DBG(DM_TRBUS, DL_VRB, "ce chn[%d] Rx data\n",
+			       chn);
+
+			// Sanity check
+			if (nbytes >
+			    wq_pcie->ce_attr_table[chn].src_sz_max) {
+				WQ_DBG(DM_TRBUS, DL_ERR,
+				       "%s: CE nbytes(%d) exceeds max size(%d)!\n",
+				       __func__, nbytes,
+				       wq_pcie->ce_attr_table[chn]
+					       .src_sz_max);
+				wq_ce_everything_dump(wq_pcie);
+				BUG_ON(1);
+			}
+
+			wq_sync_memory_for_cpu(wq_pcie, phys_addr,
+					       nbytes, DMA_FROM_DEVICE);
+			wq_unmap_memory(
+				wq_pcie, &phys_addr,
+				wq_pcie->ce_attr_table[chn].src_sz_max,
+				DMA_FROM_DEVICE);
+
+			skb_put(skb, nbytes);
+			//htc_rx(&wq_pcie->core, WQ_QID_AC_BK,
+			//	skb);
+			__skb_queue_tail(&sk_list, skb);
+			nentries++;
+		}
+
+		htc_rxq(&wq_pcie->core, &sk_list);
+
+		if (nentries)
+			wq_pcie_ce_ring_fill(wq_pcie, chn, nentries);
+
+		wq_pcie->ce_dma_rx_done[chn] = false;
+		wq_ce_irq_unmask(wq_pcie, chn, WQ_CE_CHN_DST);
+	}
+}
+
 static enum hrtimer_restart ce_tx_timer_func(struct hrtimer *timer)
 {
 	struct wq_pcie *wq_pcie =
 		container_of(timer, struct wq_pcie, ce_tx_timer);
 
-	tasklet_schedule(&wq_pcie->ce_txrx_tasklet);
+	//tasklet_schedule(&wq_pcie->ce_txrx_tasklet);
+	tasklet_schedule(&wq_pcie->tx_data_tasklet);
 	return HRTIMER_NORESTART;
 }
 
@@ -947,7 +1245,7 @@ static enum hrtimer_restart ce_rx_timer_func(struct hrtimer *timer)
 	struct wq_pcie *wq_pcie =
 		container_of(timer, struct wq_pcie, ce_rx_timer);
 
-	tasklet_schedule(&wq_pcie->ce_txrx_tasklet);
+	tasklet_schedule(&wq_pcie->rx_data_tasklet);
 	return HRTIMER_NORESTART;
 }
 
@@ -1000,6 +1298,12 @@ int wq_pcie_ce_task_start(struct wq_pcie *wq_pcie)
 	tasklet_init(&wq_pcie->txqring_tasklet, wq_txqring_tasklet,
 		     (unsigned long)wq_pcie);
 
+	tasklet_init(&wq_pcie->tx_data_tasklet, wq_pcie_tx_tasklet,
+		     (unsigned long)wq_pcie);
+
+	tasklet_init(&wq_pcie->rx_data_tasklet, wq_pcie_rx_tasklet,
+		     (unsigned long)wq_pcie);
+
 	WQ_DBG(DM_TRBUS, DL_WRN, "%s: ce tx/rx hrtimer init\n", __func__);
 	hrtimer_init(&wq_pcie->ce_tx_timer, CLOCK_MONOTONIC, HRTIMER_MODE_REL);
 	wq_pcie->ce_tx_timer.function = ce_tx_timer_func;
@@ -1024,6 +1328,8 @@ int wq_pcie_ce_task_stop(struct wq_pcie *wq_pcie)
 	hrtimer_cancel(&wq_pcie->ce_rx_timer);
 	hrtimer_cancel(&wq_pcie->txqring_timer);
 	tasklet_kill(&wq_pcie->ce_txrx_tasklet);
+	tasklet_kill(&wq_pcie->tx_data_tasklet);
+	tasklet_kill(&wq_pcie->rx_data_tasklet);
 	tasklet_kill(&wq_pcie->txqring_tasklet);
 
 	return 0;
@@ -1135,9 +1441,7 @@ static __attribute__((unused)) void wq_pcie_ce_rx_fwlog(struct wq_pcie *wq_pcie,
 					attr->src_sz_max, DMA_FROM_DEVICE);
 		dma_unmap_single(wq_pcie->core.dev, phys_addr, attr->src_sz_max,
 				 DMA_FROM_DEVICE);
-	#ifndef CONFIG_WQ_GKI
 		wq_fw_log_push(&wq_pcie->core, skb, size);
-	#endif
 		nentries++;
 	}
 	if (nentries) {
@@ -1376,6 +1680,11 @@ static int wq_pcie_tx(struct wq_core *core, enum wq_hif_qid qid,
 		qid == WQ_QID_MSG ? WQ_PCIE_CE_CH_CMD_TX : WQ_PCIE_CE_CH_RAW_TX;
 	struct sk_buff *skb;
 	int ret = 0;
+	
+	if(wq_pcie->bus_dead) {
+		WQ_DBG(DM_TRBUS, DL_ERR, "%s: fw crashed!\n", __func__);
+		return -ENXIO;
+	}
 
 	/* FIXME: check CE remainder depth */
 	while ((skb = __skb_dequeue(skbq))) {
@@ -1463,7 +1772,9 @@ static int wq_pcie_tx(struct wq_core *core, enum wq_hif_qid qid,
 		ret = wq_ce_send(wq_pcie, ch, skb, phys_addr, dma_len, flag);
 		if (ret && ret != -ENOBUFS) {
 			__skb_queue_head(skbq, skb);
-			wq_ce_chn_ring_dump(wq_pcie, ch);
+			if(wq_pcie_recovery_device(wq_pcie)) {
+				wq_ce_chn_ring_dump(wq_pcie, ch);
+			}
 			return ret;
 		}
 	}
@@ -1507,9 +1818,33 @@ static void wq_pcie_autopm_put_async(struct wq_core *core)
 static bool wq_pcie_is_bus_active(struct wq_core *core)
 {
 	struct wq_pcie *wq_pcie = (struct wq_pcie *)core;
-	BUG_ON(wq_pcie->pm_status == PCIE_SYS_SUSPENDING ||
-	       wq_pcie->pm_status == PCIE_SYS_SUSPENDED);
-	return wq_pcie->pm_status == PCIE_ACTIVE;
+	BUG_ON(atomic_read(&wq_pcie->pm_status) == PCIE_SYS_SUSPENDING ||
+	       atomic_read(&wq_pcie->pm_status) == PCIE_SYS_SUSPENDED);
+	return atomic_read(&wq_pcie->pm_status) == PCIE_ACTIVE;
+}
+
+static void wq_pcie_force_reset_device(struct wq_pcie *wq_pcie)
+{
+        u32 tmp;
+        WQ_DBG(DM_TRBUS, DL_WRN, "PCIe WARNING: !!! Host force reset device !!!\n");
+        tmp = wq_pcie_read32(wq_pcie, PMM_SOFT_RESET_ADDR);
+        wq_pcie_write32(wq_pcie, PMM_SOFT_RESET_ADDR, (tmp | 0x02));
+}
+
+static void wq_pcie_set_bypass_perst_flag(struct wq_pcie *wq_pcie)
+{
+        u32 tmp;
+        WQ_DBG(DM_TRBUS, DL_WRN, "PCIe: set scratch[31] for bypass PERST# check\n");
+        tmp = wq_pcie_read32(wq_pcie, PMM_SCATCH1_ADDR);
+        wq_pcie_write32(wq_pcie, PMM_SCATCH1_ADDR, (tmp | 0x80000000));
+}
+
+static void wq_pcie_clr_bypass_perst_flag(struct wq_pcie *wq_pcie)
+{
+        u32 tmp;
+        WQ_DBG(DM_TRBUS, DL_WRN, "PCIe: clear scarcg1[31] for bypass PERSRT# check\n");
+        tmp = wq_pcie_read32(wq_pcie, PMM_SCATCH1_ADDR);
+        wq_pcie_write32(wq_pcie, PMM_SCATCH1_ADDR, (tmp & 0x7FFFFFFF));
 }
 
 static void wq_pcie_runtime_allow(struct wq_core *core)
@@ -1521,6 +1856,12 @@ static void wq_pcie_runtime_allow(struct wq_core *core)
 static int hif_get_hdr_sz_pcie(struct wq_core *core)
 {
 	return sizeof(struct wq_hif_hdr);
+}
+
+static inline void hif_pcie_attempt_recovery(struct wq_core *core)
+{
+	struct wq_pcie *wq_pcie = (struct wq_pcie *)core;
+	wq_pcie_recovery_device(wq_pcie);
 }
 
 static struct wq_hif_ops wq_pcie_ops = {
@@ -1546,9 +1887,10 @@ static struct wq_hif_ops wq_pcie_ops = {
 	.hif_txq_ring_2task = wq_txqring_2task,
 	.hif_txq_ring_timerstart = wq_txqring_start_timer,
 
-#if defined(CONFIG_WQ_DTOP) && !defined(CONFIG_WQ_GKI)
+#ifdef CONFIG_WQ_DTOP
 	.dtop_bulk_send = wq_pci_dtop_send,
 #endif
+	.hif_bus_attempt_recovery = hif_pcie_attempt_recovery,
 };
 
 #if PCIE_NUM_MSIX_VECTORS
@@ -1599,6 +1941,7 @@ static int wq_pcie_init_irq(struct wq_pcie *wq_pcie)
 	int ret;
 
 	ENTER();
+#ifndef WQ_PCIE_ONLY_SUP_LATENCY_INTX
 	if (pci_msi_enabled()) {
 #if PCIE_NUM_MSIX_VECTORS
 		/* try MSIX */
@@ -1622,8 +1965,10 @@ static int wq_pcie_init_irq(struct wq_pcie *wq_pcie)
 		WQ_DBG(DM_TRBUS, DL_ERR, "request_irq/MSI failed: ret=%d\n",
 		       ret);
 	}
+#endif
 
 	wq_pcie->intr_mode = PCIE_INTR_MODE_LEGACY;
+	wq_pcie_write32(wq_pcie, HOST_PCIE_USB3_INT_CTRL_BASEADDR + CFG_PCIE_INTER_MEIP_MASK_ADDR, 0x01);
 	ret = request_irq(pdev->irq, wq_pcie_interrupt, IRQF_SHARED, "wq_pcie",
 			  pdev);
 	if (ret)
@@ -1678,8 +2023,8 @@ static void wq_pcie_read_bar0_inbond_atu(struct pci_dev *pdev, int index)
 {
 	u32 tmp;
 	u32 bar0, bar1;
-	pci_read_config_dword(pdev, 0x10, &bar0);
-	pci_read_config_dword(pdev, 0x14, &bar1);
+	pci_read_config_dword(pdev, PCI_BASE_ADDRESS_0, &bar0);
+	pci_read_config_dword(pdev, PCI_BASE_ADDRESS_1, &bar1);
 	WQ_DBG(DM_TRBUS, DL_ERR, "PCIe BAR0: 0x%x, BAR1: 0x%x\n", bar0, bar1);
 
 	pci_write_config_dword(pdev, PCIE_ATU_VIEWPORT,
@@ -1713,10 +2058,10 @@ static void wq_pcie_cfg_inbond(struct pci_dev *pdev)
 	u32 val;
 	int index;
 
-	pci_read_config_dword(pdev, 0x14, &val);
+	pci_read_config_dword(pdev, PCI_BASE_ADDRESS_1, &val);
 	base = val;
 	base = base << 32;
-	pci_read_config_dword(pdev, 0x10, &val);
+	pci_read_config_dword(pdev, PCI_BASE_ADDRESS_0, &val);
 	base |= val & 0xfffffff0;
 
 	WQ_DBG(DM_TRBUS, DL_INF, "PCIe bar0 base : %llx\n", base);
@@ -1729,6 +2074,8 @@ static void wq_pcie_cfg_inbond(struct pci_dev *pdev)
 static int wq_pcie_hw_claim(struct pci_dev *pdev, struct wq_pcie *wq_pcie)
 {
 	int ret;
+	struct pci_dev *parent;
+	uint8_t cmd_cfg;
 
 	pci_set_drvdata(pdev, wq_pcie);
 
@@ -1745,6 +2092,9 @@ static int wq_pcie_hw_claim(struct pci_dev *pdev, struct wq_pcie *wq_pcie)
 		       BAR_NUM, ret);
 		goto err_device;
 	}
+		/* read pcie config bar address */
+	pci_read_config_dword(pdev, PCI_BASE_ADDRESS_0, &wq_pcie->pcie_bar0);
+	pci_read_config_dword(pdev, PCI_BASE_ADDRESS_1, &wq_pcie->pcie_bar1);
 
 	wq_pcie_cfg_inbond(pdev);
 
@@ -1771,6 +2121,18 @@ static int wq_pcie_hw_claim(struct pci_dev *pdev, struct wq_pcie *wq_pcie)
 		WQ_DBG(DM_TRBUS, DL_ERR, "failed to iomap BAR%d\n", BAR_NUM);
 		ret = -EIO;
 		goto err_master;
+	}
+	if (wq_conf.recovery_level) {
+		parent = pdev->bus->self;
+		pci_read_config_byte(parent, PCI_COMMAND, &cmd_cfg);
+		if ((cmd_cfg & 0X07) != 0x07) {
+			pci_write_config_byte(parent, PCI_COMMAND,
+					      (cmd_cfg | PCI_COMMAND_IO |
+					       PCI_COMMAND_MEMORY |
+					       PCI_COMMAND_MASTER));
+			WQ_DBG(DM_TRBUS, DL_ERR,
+			       "parent command config write 0x07\n");
+		}
 	}
 
 	WQ_DBG(DM_TRBUS, DL_INF, "PCI memory: %p", wq_pcie->mem);
@@ -1822,8 +2184,9 @@ int wq_pcie_mailbox_send_msg(struct wq_pcie *wq_pcie, u32 mbox_id, u32 msg)
 			udelay(1000);
 		}
 	}
-
-	BUG_ON(retry_count >= 10);
+	if (retry_count >= 10 && wq_pcie_recovery_device(wq_pcie)) {
+		BUG_ON(1);
+	}
 
 	return 0;
 }
@@ -1855,71 +2218,43 @@ static __maybe_unused void wq_pcie_enable_L1ss(struct pci_dev *pdev, u8 enable)
 
 static __maybe_unused void wq_pcie_disable_aspm(struct pci_dev *pdev)
 {
-	u16 child_lnkctl, parent_lnkctl = 0;
 	struct pci_dev *parent = pdev->bus->self;
+	struct wq_pcie *wq_pcie = pci_get_drvdata(pdev);
 
 	ENTER();
-	pcie_capability_read_word(pdev, PCI_EXP_LNKCTL, &child_lnkctl);
-	child_lnkctl &= PCI_EXP_LNKCTL_ASPMC;
-	if (parent) {
-		pcie_capability_read_word(parent, PCI_EXP_LNKCTL,
-					  &parent_lnkctl);
-		parent_lnkctl &= PCI_EXP_LNKCTL_ASPMC;
-	}
+	pcie_capability_clear_and_set_word(pdev, PCI_EXP_LNKCTL,
+            PCI_EXP_LNKCTL_ASPMC, 0x0);
+	if (parent)
+		pcie_capability_clear_and_set_word(parent, PCI_EXP_LNKCTL,
+					  PCI_EXP_LNKCTL_ASPMC, 0x0);
 
-	if (!child_lnkctl && (!parent || !parent_lnkctl)) {
-		/* aspm already disabled */
-		WQ_DBG(DM_GENERIC, DL_INF, "aspm already disabled\n");
-		return;
-	}
-
-	pcie_capability_clear_word(pdev, PCI_EXP_LNKCTL, child_lnkctl);
-	// if (parent)
-	// 	pcie_capability_clear_word(parent, PCI_EXP_LNKCTL,
-	// 				   child_lnkctl);
-
+        wq_pcie->aspm_enabled = false;
 	LEAVE();
-	return;
 }
 
 static __maybe_unused void wq_pcie_enable_aspm(struct pci_dev *pdev)
 {
-	u32 parent_lnkcap = 0, child_lnkcap = 0;
-	u16 parent_lnkctl = 0, child_lnkctl = 0;
-	u32 link_val;
+	u32 parent_lnkcap = 0;
 	struct pci_dev *parent = pdev->bus->self;
 	struct pci_dev *child = pdev;
+	struct wq_pcie *wq_pcie = pci_get_drvdata(pdev);
 
 	ENTER();
-	pcie_capability_read_dword(child, PCI_EXP_LNKCAP, &child_lnkcap);
-	pcie_capability_read_word(child, PCI_EXP_LNKCTL, &child_lnkctl);
-	if (parent) {
-		pcie_capability_read_dword(parent, PCI_EXP_LNKCAP,
-					   &parent_lnkcap);
-		pcie_capability_read_word(parent, PCI_EXP_LNKCTL,
-					  &parent_lnkctl);
-	}
-	if (!(parent_lnkcap & child_lnkcap & PCI_EXP_LNKCAP_ASPMS)) {
-		WQ_DBG(DM_GENERIC, DL_INF,
-		       "aspm not support: parent: 0x%x, child: 0x%x\n",
-		       parent_lnkcap, child_lnkcap);
-		return;
-	}
 
-	if (child_lnkctl & parent_lnkctl & PCI_EXP_LNKCTL_ASPMC) {
-		/* aspm already enabled */
-		WQ_DBG(DM_GENERIC, DL_INF, "aspm already enabled\n");
-		return;
-	}
+        if (!parent)
+                return;
 
-	link_val = parent_lnkcap & child_lnkcap & PCI_EXP_LNKCTL_ASPMC;
-	// if (parent) {
-	// 	pcie_capability_set_dword(parent, PCI_EXP_LNKCTL, link_val);
-	// }
-	pcie_capability_set_dword(pdev, PCI_EXP_LNKCTL, link_val);
+        /* check RC aspm cap */
+        pcie_capability_read_dword(parent, PCI_EXP_LNKCAP, &parent_lnkcap);
+        if (parent_lnkcap & 0x00000800) {
+		pcie_capability_clear_and_set_word(parent, PCI_EXP_LNKCTL,
+					  PCI_EXP_LNKCTL_ASPMC, PCI_EXP_LNKCTL_ASPM_L1);
+		pcie_capability_clear_and_set_word(child, PCI_EXP_LNKCTL,
+					  PCI_EXP_LNKCTL_ASPMC, PCI_EXP_LNKCTL_ASPM_L1);
+                wq_pcie->aspm_enabled = true;
+        }
 
 	LEAVE();
-	return;
 }
 
 static void wq_pcie_release(struct wq_pcie *wq_pcie)
@@ -1946,20 +2281,22 @@ static __attribute__((unused)) void wq_pcie_runtime_init(struct device *dev,
 							 int delay)
 {
 	struct wq_pcie *wq_pcie = dev_get_drvdata(dev);
-	wq_pcie->pm_status = PCIE_ACTIVE;
+	atomic_set(&wq_pcie->pm_status, PCIE_ACTIVE);
 	if (!pm_runtime_active(dev)) {
 		pm_runtime_set_active(dev);
 	}
-	if (!pm_runtime_enabled(dev)) {
-		pm_runtime_enable(dev);
-	}
 	pm_runtime_set_autosuspend_delay(dev, delay);
 	pm_runtime_use_autosuspend(dev);
-	// pm_runtime_allow(dev);
 	pm_runtime_mark_last_busy(dev);
 	pm_runtime_put_noidle(dev);
-	WQ_DBG(DM_TRBUS, DL_INF, "dev %s pcie runtime pm inited\n",
-	       dev_name(dev));
+	WQ_DBG(DM_TRBUS, DL_INF, "dev %s pcie runtime pm inited, enabled:%u\n",
+	       dev_name(dev), pm_runtime_enabled(dev));
+}
+
+static void wq_pcie_runtime_deinit(struct device *dev)
+{
+	pm_runtime_get_noresume(dev);
+	pm_runtime_mark_last_busy(dev);
 }
 #endif
 
@@ -2050,6 +2387,7 @@ static int wq_pcie_probe(struct pci_dev *pdev, const struct pci_device_id *id)
 
 	spin_lock_init(&wq_pcie->intc_lock);
 	init_completion(&wq_pcie->bmi_recv_done);
+	init_completion(&wq_pcie->wq_dnld_down);
 
 	ret = wq_pcie_hw_claim(pdev, wq_pcie);
 	if (ret)
@@ -2058,6 +2396,7 @@ static int wq_pcie_probe(struct pci_dev *pdev, const struct pci_device_id *id)
 	/* TODO: force target awake */
 	wq_pcie_wakeup_target(wq_pcie);
 
+        wq_pcie_set_bypass_perst_flag(wq_pcie);
 	wq_pcie_show_bus_info(wq_pcie);
 
 	/* TODO: disable interrupts */
@@ -2084,7 +2423,10 @@ static int wq_pcie_probe(struct pci_dev *pdev, const struct pci_device_id *id)
 	if (ret)
 		goto err_deinit_irq;
 
-#if defined(CONFIG_WQ_DTOP) && !defined(CONFIG_WQ_GKI)
+	memset(wq_pcie->alloc_fail_count, 0, sizeof(wq_pcie->alloc_fail_count));
+	memset(wq_pcie->pending_refill_count, 0, sizeof(wq_pcie->pending_refill_count));
+
+#ifdef CONFIG_WQ_DTOP
 	ret = wq_pcie_app_init(wq_pcie);
 	if (ret)
 		goto err_ce_deinit;
@@ -2132,9 +2474,6 @@ static int wq_pcie_probe(struct pci_dev *pdev, const struct pci_device_id *id)
 #endif
 #endif
 
-	wq_pcie->core.band = wq_band_pick();
-	WQ_DBG(DM_TRBUS, DL_WRN, "%s:core.band=%d\n", __func__, wq_pcie->core.band);
-
 	//3. create wlan interface;
 	ret = wq_wlan_create(&wq_pcie->core, 0, 0);
 	if (ret)
@@ -2143,8 +2482,7 @@ static int wq_pcie_probe(struct pci_dev *pdev, const struct pci_device_id *id)
 	wq_core_rfkill_config(&wq_pcie->core);
 
 	// wq_pcie_enable_L1ss(pdev, 0);
-	// enable ASPM after fw download compelte
-	wq_pcie_enable_aspm(pdev);
+        wq_pcie_enable_aspm(pdev);
 
 	LEAVE();
 #endif /* CONFIG_PCIE_UNIT_TEST */
@@ -2158,16 +2496,14 @@ err_res_release:
 	wq_pcie_ce_task_stop(wq_pcie);
 #endif
 
-#if defined(CONFIG_WQ_DTOP) && !defined(CONFIG_WQ_GKI)
+#ifdef CONFIG_WQ_DTOP
 	wq_pcie_app_deinit(wq_pcie);
 #endif
 
 #ifdef CONFIG_RK3588_ENABLE_WAKEUP_OOB
 	wq_core_unregister_oob_wakeup_host(&wq_pcie->core);
 #endif
-#if !defined(CONFIG_WQ_GKI)
 err_ce_deinit:
-#endif
 	wq_pcie_ce_deinit(wq_pcie);
 err_deinit_irq:
 	wq_pcie_deinit_irq(wq_pcie);
@@ -2199,6 +2535,10 @@ static void wq_pcie_remove(struct pci_dev *pdev)
 	wq_pcie_test_stop(wq_pcie);
 #endif
 
+#ifdef CONFIG_PM
+	wq_pcie_runtime_deinit(wq_pcie->core.dev);
+#endif
+
 	wq_wlan_unregister(&wq_pcie->core);
 	wq_wlan_destroy(&wq_pcie->core);
 
@@ -2206,7 +2546,10 @@ static void wq_pcie_remove(struct pci_dev *pdev)
 	wq_pcie_ce_task_stop(wq_pcie);
 #endif
 
-#if defined(CONFIG_WQ_DTOP) && !defined(CONFIG_WQ_GKI)
+        if (!wq_pcie->bus_dead) {
+                wq_pcie_clr_bypass_perst_flag(wq_pcie);
+        }
+#ifdef CONFIG_WQ_DTOP
 	wq_pcie_app_deinit(wq_pcie);
 #endif
 
@@ -2248,6 +2591,8 @@ static void wq_pcie_shutdown(struct pci_dev *pdev)
 #ifndef CONFIG_PCIE_UNIT_TEST
 	wq_pcie_ce_task_stop(wq_pcie);
 #endif
+        wq_pcie_clr_bypass_perst_flag(wq_pcie);
+        wq_pcie_force_reset_device(wq_pcie);
 
 	WQ_DBG(DM_TRBUS, DL_INF, "PCIE device restart...\n");
 
@@ -2406,12 +2751,12 @@ static __maybe_unused int wq_pcie_pm_suspend(struct device *dev)
 	if (!pm_runtime_active(dev)) {
 		WQ_DBG(DM_TRBUS, DL_WRN,
 		       "pcie rpm not active at system suspend\n");
-		wq_pcie->pm_status = PCIE_RESUMING;
+		atomic_set(&wq_pcie->pm_status, PCIE_RESUMING);
 		wq_pcie_write_and_sync_with_target(
 			wq_pcie, PCIE_PM_MSG_REQ_RESUME, SCRATCH_PCIE_ACK_BIT);
 		pm_runtime_set_active(dev);
 		pm_runtime_mark_last_busy(dev);
-		wq_pcie->pm_status = PCIE_ACTIVE;
+		atomic_set(&wq_pcie->pm_status, PCIE_ACTIVE);
 	}
 
 	ret = wq_wlan_suspend(&wq_pcie->core);
@@ -2432,7 +2777,7 @@ static __maybe_unused int wq_pcie_pm_suspend(struct device *dev)
 	wq_pcie_write32(wq_pcie, HOST_W_AHB_REG_BASEADDR + 0xD8, data);
 
 	// ask fw goto sys suspend
-	wq_pcie->pm_status = PCIE_SYS_SUSPENDING;
+	atomic_set(&wq_pcie->pm_status, PCIE_SYS_SUSPENDING);
 	do {
 		sync_val = wq_pcie_read32(wq_pcie, WIFI_SCRATCH1_ADDR);
 		udelay(100);
@@ -2445,7 +2790,7 @@ static __maybe_unused int wq_pcie_pm_suspend(struct device *dev)
 	sync_val &= ~(1 << SCRATCH_PCIE_ACK_BIT);
 	sync_val |= (1 << SCRATCH_PCIE_NOT_REBOOT_BIT);
 	wq_pcie_write32(wq_pcie, WIFI_SCRATCH1_ADDR, sync_val);
-	wq_pcie->pm_status = PCIE_SYS_SUSPENDED;
+	atomic_set(&wq_pcie->pm_status, PCIE_SYS_SUSPENDED);
 
 	wq_pcie_disable_aspm(pdev);
 	wq_pcie_deinit_irq(wq_pcie);
@@ -2492,10 +2837,10 @@ static __maybe_unused int wq_pcie_pm_resume(struct device *dev)
 		goto failed;
 	}
 
-	wq_pcie->pm_status = PCIE_RESUMING;
+	atomic_set(&wq_pcie->pm_status, PCIE_RESUMING);
 	wq_pcie_write_and_sync_with_target(wq_pcie, PCIE_PM_MSG_REQ_RESUME,
 					   SCRATCH_PCIE_ACK_BIT);
-	wq_pcie->pm_status = PCIE_ACTIVE;
+	atomic_set(&wq_pcie->pm_status, PCIE_ACTIVE);
 
 	/* set wow wakeup flag */
 	data = wq_pcie_read32(wq_pcie, HOST_W_AHB_REG_BASEADDR + 0xD8);
@@ -2528,6 +2873,13 @@ failed:
 }
 
 #ifdef CONFIG_PM
+static int wq_pcie_pm_prepare(struct device *dev)
+{
+	if (pm_runtime_active(dev))
+		return 0;
+	return pm_runtime_resume(dev);
+}
+
 static __maybe_unused int wq_pcie_runtime_suspend(struct device *dev)
 {
 	int ret = 0;
@@ -2540,12 +2892,12 @@ static __maybe_unused int wq_pcie_runtime_suspend(struct device *dev)
 		       __func__);
 		ret = -EBUSY;
 	} else {
-		wq_pcie->pm_status = PCIE_RPM_SUSPENDING;
+		atomic_set(&wq_pcie->pm_status, PCIE_RPM_SUSPENDING);
 		pci_save_state(pdev);
 		wq_pcie_mailbox_send_msg(wq_pcie, PCIE_MBOX_PM_CTRL,
 					 PCIE_PM_MSG_REQ_RPM_SUSPEND);
 		wq_pcie_sync_with_target(wq_pcie, SCRATCH_PCIE_ACK_BIT);
-		wq_pcie->pm_status = PCIE_RPM_SUSPENDED;
+		atomic_set(&wq_pcie->pm_status, PCIE_RPM_SUSPENDED);
 		WQ_DBG(DM_TRBUS, DL_WRN, "runtime suspend end\n");
 	}
 
@@ -2558,11 +2910,11 @@ static __maybe_unused int wq_pcie_runtime_resume(struct device *dev)
 	struct wq_pcie *wq_pcie = dev_get_drvdata(dev);
 	struct pci_dev *pdev = to_pci_dev(dev);
 	WQ_DBG(DM_TRBUS, DL_WRN, "runtime resume enter\n");
-	wq_pcie->pm_status = PCIE_RESUMING;
+	atomic_set(&wq_pcie->pm_status, PCIE_RESUMING);
 	pci_restore_state(pdev);
 	wq_pcie_write_and_sync_with_target(wq_pcie, PCIE_PM_MSG_REQ_RESUME,
 					   SCRATCH_PCIE_ACK_BIT);
-	wq_pcie->pm_status = PCIE_ACTIVE;
+	atomic_set(&wq_pcie->pm_status, PCIE_ACTIVE);
 	pm_runtime_mark_last_busy(dev);
 	htc_retrigger_tx_task(&wq_pcie->core);
 	WQ_DBG(DM_TRBUS, DL_WRN, "runtime resume end\n");
@@ -2571,9 +2923,10 @@ static __maybe_unused int wq_pcie_runtime_resume(struct device *dev)
 
 static const struct dev_pm_ops wq_pcie_pm_ops = {
 	SET_SYSTEM_SLEEP_PM_OPS(wq_pcie_pm_suspend, wq_pcie_pm_resume)
+	.prepare = wq_pcie_pm_prepare,
 #ifdef CONFIG_WQ_WLAN_PM
-		SET_RUNTIME_PM_OPS(wq_pcie_runtime_suspend,
-				   wq_pcie_runtime_resume, NULL)
+	SET_RUNTIME_PM_OPS(wq_pcie_runtime_suspend, wq_pcie_runtime_resume,
+			   NULL)
 #endif
 };
 #endif
@@ -2616,9 +2969,9 @@ static struct pci_driver wq_pcie_driver = {
 int __init wq_pcie_init(void)
 {
 	int ret;
-#ifdef WQ_WLAN_ALL_IN_ONE
+
 	wq_module_init();
-#endif
+
 	ret = pci_register_driver(&wq_pcie_driver);
 	if (ret)
 		WQ_DBG(DM_TRBUS, DL_INF, "PCIE Driver Registration Failed\n");
@@ -2629,9 +2982,7 @@ int __init wq_pcie_init(void)
 void __exit wq_pcie_exit(void)
 {
 	pci_unregister_driver(&wq_pcie_driver);
-#ifdef WQ_WLAN_ALL_IN_ONE
 	wq_module_exit();
-#endif
 }
 
 #ifndef WQ_WLAN_ALL_IN_ONE

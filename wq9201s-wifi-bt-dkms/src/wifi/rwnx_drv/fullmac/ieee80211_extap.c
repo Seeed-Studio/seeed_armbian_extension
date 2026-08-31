@@ -87,7 +87,7 @@ void extap_tbl_del(uint8_t *mac)
     return;
 }
 
-void extap_tbl_dump()
+void extap_tbl_dump(void)
 {
     int i;
 
@@ -103,7 +103,7 @@ void extap_tbl_dump()
     return;
 }
 
-void extap_tbl_clear()
+void extap_tbl_clear(void)
 {
     int i;
 
@@ -118,8 +118,7 @@ void extap_tbl_clear()
 int ieee80211_extap_input(struct ethhdr *eh, const uint8_t *myaddr)
 {
     uint8_t *mac;
-    uint8_t *sip __maybe_unused;
-    uint8_t *dip;
+    uint8_t *sip, *dip;
     struct iphdr *iphdr;
     eth_arphdr_t *arp = NULL;
 

@@ -286,8 +286,6 @@ struct tx_cfm_tag {
  ******************************************************************************/
 
 int rwnx_machw_type(uint32_t machw_version_2);
-void rwnx_rx_vector_convert(int machw_type, struct rx_vec_detail_1 *rx_vect1,
-			    struct rx_vec_detail_2 *rx_vect2);
 void rwnx_rx_status_convert(int machw_type, struct mpdu_status *status);
 
 /******************************************************************************

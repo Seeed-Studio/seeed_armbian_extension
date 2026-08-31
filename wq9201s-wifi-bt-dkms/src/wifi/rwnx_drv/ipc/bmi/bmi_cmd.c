@@ -7,9 +7,6 @@
 #include "bmi_core.h"
 #include "wq_fw.h"
 
-// #define BMI_RETRY_TEST
-#define BMI_RETRY_TEST_TIMES 3
-
 int bmi_get_sys_state(struct wq_core *core, WQ_FW_TYPE fw_type, u32 *run_state)
 {
 	int ret;
@@ -54,37 +51,15 @@ int bmi_finish_load(struct wq_core *core)
 int bmi_get_chip_info(struct wq_core *core, struct wq_chip_info *info)
 {
 	int ret;
-	int loop = 0;
-#ifdef BMI_RETRY_TEST
-	int retry_test_cnt = BMI_RETRY_TEST_TIMES;
-#endif
 
-	do {
-		ret = bmi_cmd_exchange(core, WQ_BMI_CMD_GET_CHIP_INFO, NULL, 0, info,
-					sizeof(struct wq_chip_info),
-					BMI_EXCHANGE_TIMEOUT_MS);
+	ret = bmi_cmd_exchange(core, WQ_BMI_CMD_GET_CHIP_INFO, NULL, 0, info,
+			       sizeof(struct wq_chip_info),
+			       BMI_EXCHANGE_TIMEOUT_MS);
 
-		if (ret < 0) {
-			WQ_DBG(DM_GENERIC, DL_ERR, "%s: get chip info error %d\n", __func__, ret);
-		} else {
-#ifdef BMI_RETRY_TEST
-			if (retry_test_cnt--) {
-				WQ_DBG(DM_GENERIC, DL_ERR, "%s: get chip info retry_test_cnt %d\n", __func__, retry_test_cnt);
-				continue;
-			}
-#endif
-			break;
-		}
+	if (ret < 0)
+		return ret;
 
-		msleep(1);
-		loop++;
-		if (loop > BMI_CMD_RETRY_TIMES) {
-			WQ_DBG(DM_GENERIC, DL_ERR, "%s: get chip info timeout\n", __func__);
-			break;
-		}
-	} while (1);
-
-	return ret;
+	return 0;
 }
 
 static int bmi_read_efuse(struct wq_core *core, WQ_BMI_RW_EFUSE_TYPE_e type, u32 offset, u32 len, u8 *efuse_data)
@@ -185,87 +160,40 @@ WQ_BMI_API(bmi_write_reg);
 int bmi_set_fw_info(struct wq_core *core, const wq_fw_info_t *fw_info)
 {
 	int ret;
-	int loop = 0;
 
-	do {
-		ret = bmi_cmd_exchange(core, WQ_BMI_CMD_SET_FW_INFO, fw_info,
-					sizeof(wq_fw_info_t), NULL, 0,
-					BMI_EXCHANGE_TIMEOUT_MS);
+	ret = bmi_cmd_exchange(core, WQ_BMI_CMD_SET_FW_INFO, fw_info,
+			       sizeof(wq_fw_info_t), NULL, 0,
+			       BMI_EXCHANGE_TIMEOUT_MS);
 
-		if (ret < 0) {
-			WQ_DBG(DM_GENERIC, DL_ERR, "%s: set fw info error %d\n", __func__, ret);
-		} else {
-			break;
-		}
-
-		msleep(1);
-		loop++;
-		if (loop > BMI_CMD_RETRY_TIMES) {
-			WQ_DBG(DM_GENERIC, DL_ERR, "%s: set fw info timeout\n", __func__);
-			break;
-		}
-	} while (1);
+	if (ret < 0)
+		return ret;
 
 	return 0;
-}
-
-static int bmi_dnld_fw_data(struct wq_core *core, uint8_t frag, const void *data, size_t size)
-{
-	int ret;
-	int loop = 0;
-#ifdef BMI_RETRY_TEST
-	int retry_test_cnt = BMI_RETRY_TEST_TIMES;
-#endif
-
-	do {
-		ret = bmi_cmd_exchange_frag(core, WQ_BMI_CMD_DNLD_FW, frag,
-					data, size,
-					NULL, 0, BMI_EXCHANGE_TIMEOUT_MS);
-		if (ret < 0) {
-			WQ_DBG(DM_GENERIC, DL_ERR, "%s: fw dnld frag %d error %d\n", __func__, frag, ret);
-		} else {
-#ifdef BMI_RETRY_TEST
-			if (retry_test_cnt--) {
-				continue;
-			}
-#endif
-			break;
-		}
-
-		msleep(1);
-		loop++;
-		if (loop > BMI_CMD_RETRY_TIMES) {
-			WQ_DBG(DM_GENERIC, DL_ERR, "%s: fw dnld timeout\n", __func__);
-			break;
-		}
-	} while (1);
-
-	return ret;
 }
 
 int bmi_dnld_fw(struct wq_core *core, const void *data, size_t size)
 {
 	int ret;
 	size_t i, last;
-	uint8_t frag = 0;
 
 	last = size % BMI_DATA_SIZE_MAX;
 	size -= last;
 
 	for (i = 0; i < size; i += BMI_DATA_SIZE_MAX) {
-		ret = bmi_dnld_fw_data(core, frag, (uint8_t *)data + i, BMI_DATA_SIZE_MAX);
+		ret = bmi_cmd_exchange(core, WQ_BMI_CMD_DNLD_FW,
+				       (uint8_t *)data + i, BMI_DATA_SIZE_MAX,
+				       NULL, 0, BMI_EXCHANGE_TIMEOUT_MS);
 		if (ret < 0)
 			return ret;
-		frag++;
 	}
 
 	if (last) {
-		ret = bmi_dnld_fw_data(core, frag, (uint8_t *)data + i, last);
+		ret = bmi_cmd_exchange(core, WQ_BMI_CMD_DNLD_FW,
+				       (uint8_t *)data + size, last, NULL, 0,
+				       BMI_EXCHANGE_TIMEOUT_MS);
 		if (ret < 0)
 			return ret;
 	}
-
-	WQ_DBG(DM_GENERIC, DL_ERR, "%s: last frag %d\n", __func__, frag);
 
 	return 0;
 }
@@ -286,53 +214,27 @@ int bmi_verify_fw(struct wq_core *core)
 int bmi_start_dtop_sys(struct wq_core *core)
 {
 	int ret;
-	int loop = 0;
 
-	do {
-		ret = bmi_cmd_exchange(core, WQ_BMI_CMD_START_DTOP_SYS, NULL, 0, NULL,
-					0, BMI_EXCHANGE_TIMEOUT_MS);
-		if (ret < 0) {
-			WQ_DBG(DM_GENERIC, DL_ERR, "%s: start dtop sys error %d\n", __func__, ret);
-		} else {
-			break;
-		}
+	ret = bmi_cmd_exchange(core, WQ_BMI_CMD_START_DTOP_SYS, NULL, 0, NULL,
+			       0, BMI_EXCHANGE_TIMEOUT_MS);
 
-		msleep(1);
-		loop++;
-		if (loop > BMI_CMD_RETRY_TIMES) {
-			WQ_DBG(DM_GENERIC, DL_ERR, "%s: start dtop sys timeout\n", __func__);
-			break;
-		}
+	if (ret < 0)
+		return ret;
 
-	} while (1);
-
-	return ret;
+	return 0;
 }
 
 int bmi_start_wifi_sys(struct wq_core *core)
 {
 	int ret;
-	int loop = 0;
 
-	do {
-		ret = bmi_cmd_exchange(core, WQ_BMI_CMD_START_WIFI_SYS, NULL, 0, NULL,
-					0, BMI_EXCHANGE_TIMEOUT_MS);
+	ret = bmi_cmd_exchange(core, WQ_BMI_CMD_START_WIFI_SYS, NULL, 0, NULL,
+			       0, BMI_EXCHANGE_TIMEOUT_MS);
 
-		if (ret < 0) {
-			WQ_DBG(DM_GENERIC, DL_ERR, "%s: start wifi sys error %d\n", __func__, ret);
-		} else {
-			break;
-		}
+	if (ret < 0)
+		return ret;
 
-		msleep(1);
-		loop++;
-		if (loop > BMI_CMD_RETRY_TIMES) {
-			WQ_DBG(DM_GENERIC, DL_ERR, "%s: start wifi sys timeout\n", __func__);
-			break;
-		}
-	} while (1);
-
-	return ret;
+	return 0;
 }
 
 int bmi_start_bt_sys(struct wq_core *core)
@@ -414,28 +316,8 @@ int bmi_log_ctrl(struct wq_core *core, void *data, size_t size)
 
 int bmi_ps_mode_config(struct wq_core *core, void *data, size_t size)
 {
-	int ret = 0;
-	int loop = 0;
-
-	do {
-		ret = bmi_cmd_exchange(core, WQ_BMI_CMD_PS_MODE_CFG, data, size, NULL,
-					0, BMI_EXCHANGE_TIMEOUT_MS);
-
-		if (ret < 0) {
-			WQ_DBG(DM_GENERIC, DL_ERR, "%s: ps mode config error %d\n", __func__, ret);
-		} else {
-			break;
-		}
-
-		msleep(1);
-		loop++;
-		if (loop > BMI_CMD_RETRY_TIMES) {
-			WQ_DBG(DM_GENERIC, DL_ERR, "%s: ps mode config timeout\n", __func__);
-			break;
-		}
-	} while (1);
-
-	return ret;
+	return bmi_cmd_exchange(core, WQ_BMI_CMD_PS_MODE_CFG, data, size, NULL,
+				0, BMI_EXCHANGE_TIMEOUT_MS);
 }
 
 int bmi_system_suspend(struct wq_core *core)

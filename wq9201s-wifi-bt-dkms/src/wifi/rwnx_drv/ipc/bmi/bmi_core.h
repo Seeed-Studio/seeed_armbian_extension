@@ -10,7 +10,6 @@
 #include "hif_api.h"
 
 #define BMI_EXCHANGE_TIMEOUT_MS 1500
-#define BMI_CMD_RETRY_TIMES     10
 
 /*
 ASCII:
@@ -59,9 +58,6 @@ static inline int bmi_xfer(struct wq_core *core, enum wq_bmi_xfer_type type,
 }
 
 int bmi_cmd_exchange(struct wq_core *core, uint8_t cmd, const void *req,
-		     size_t req_len, void *rsp, size_t rsp_len_max,
-		     int timeout);
-int bmi_cmd_exchange_frag(struct wq_core *core, uint8_t cmd, uint8_t frag, const void *req,
 		     size_t req_len, void *rsp, size_t rsp_len_max,
 		     int timeout);
 

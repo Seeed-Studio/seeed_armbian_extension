@@ -16,7 +16,6 @@
 #include "rwnx_tdls.h"
 #include "rwnx_compat.h"
 #include "wq_log.h"
-#include "core.h"
 
 /**
  * FUNCTION DEFINITIONS
@@ -30,8 +29,11 @@ static u16 rwnx_get_tdls_sta_capab(struct rwnx_vif *rwnx_vif, u16 status_code)
 	/* The capability will be 0 when sending a failure code */
 	if (status_code != 0)
 		return capab;
-
+#if LINUX_VERSION_CODE <= KERNEL_VERSION(4,6,7)
+	if (rwnx_vif->sta.ap->band != IEEE80211_BAND_2GHZ)
+#else
 	if (rwnx_vif->sta.ap->band != NL80211_BAND_2GHZ)
+#endif
 		return capab;
 
 	capab |= WLAN_CAPABILITY_SHORT_SLOT_TIME;
@@ -449,7 +451,7 @@ bool ieee80211_chandef_to_operating_class(struct cfg80211_chan_def *chandef,
 	/* not supported yet */
 	return false;
 }
-WQ_TDLS_API(ieee80211_chandef_to_operating_class);
+EXPORT_SYMBOL(ieee80211_chandef_to_operating_class);
 #endif
 
 static void rwnx_tdls_add_oper_classes(struct rwnx_vif *rwnx_vif,
@@ -504,16 +506,16 @@ static void rwnx_ie_build_ht_cap(struct sk_buff *skb,
 
 	/* MCS set */
 	memcpy(pos, &ht_cap->mcs, sizeof(ht_cap->mcs));
-	//pos += sizeof(ht_cap->mcs);
+	pos += sizeof(ht_cap->mcs);
 
 	/* extended capabilities */
-	//pos += sizeof(__le16);
+	pos += sizeof(__le16);
 
 	/* BF capabilities */
-	//pos += sizeof(__le32);
+	pos += sizeof(__le32);
 
 	/* antenna selection */
-	//pos += sizeof(u8);
+	pos += sizeof(u8);
 }
 
 static void rwnx_ie_build_vht_cap(struct sk_buff *skb,
@@ -536,7 +538,7 @@ static void rwnx_ie_build_vht_cap(struct sk_buff *skb,
 
 	/* VHT MCS set */
 	memcpy(pos, &vht_cap->vht_mcs, sizeof(vht_cap->vht_mcs));
-	//pos += sizeof(vht_cap->vht_mcs);
+	pos += sizeof(vht_cap->vht_mcs);
 }
 
 static void rwnx_tdls_add_bss_coex_ie(struct sk_buff *skb)

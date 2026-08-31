@@ -16,8 +16,12 @@
 
 #define WQ_USB_MTU_PKT		1664
 
+/* Maximum number of subpkt in bundle supported in reception */
+#define WQ_USB_MAX_BUNDLE_I			8
 /* Maximum size of A-MSDU supported in reception */
 #define WQ_USB_MAX_AMSDU_RX			8192
+/* Maximum size of bundle supported in reception */
+ #define WQ_USB_MTU_PKT_BUNDLE_I	WQ_USB_MAX_AMSDU_RX * WQ_USB_MAX_BUNDLE_I
 
 /* Control Path (message) */
 #define WQ_USB_EP_BI_MSG	2	/* bi-direction */

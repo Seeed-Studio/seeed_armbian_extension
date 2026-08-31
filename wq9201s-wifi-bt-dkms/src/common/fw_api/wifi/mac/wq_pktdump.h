@@ -28,7 +28,13 @@ typedef struct _wifi_dbg_pktdump {
 	uint16_t cindex : 6;
 	uint32_t rssi : 8;
 	uint32_t mac_id : 2;
-	uint32_t reserved2 : 4;
+	/*
+	* eth_hdr_flag:
+	*  1: pkt_data[PKT_COPY_LEN] start with eth hdr
+	*  0: pkt_data[PKT_COPY_LEN] start with mac hdr
+	*/
+	uint32_t eth_hdr_flag : 1; 
+	uint32_t reserved2 : 3;
 	uint32_t sn : 8;
 
 	uint32_t proto_ts;

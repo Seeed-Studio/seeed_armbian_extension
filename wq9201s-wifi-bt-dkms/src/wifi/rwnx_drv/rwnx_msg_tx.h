@@ -134,7 +134,7 @@ int rwnx_send_apm_stop_cac_req(struct rwnx_hw *rwnx_hw, struct rwnx_vif *vif);
 int rwnx_send_tdls_peer_traffic_ind_req(struct rwnx_hw *rwnx_hw,
 					struct rwnx_vif *rwnx_vif);
 int rwnx_send_config_monitor_req(struct rwnx_hw *rwnx_hw,
-				 struct cfg80211_chan_def *chandef,
+				 struct cfg80211_chan_def *chandef, u8 vif_index,
 				 struct me_config_monitor_cfm *cfm);
 int rwnx_send_mesh_start_req(struct rwnx_hw *rwnx_hw, struct rwnx_vif *vif,
 			     const struct mesh_config *conf,
@@ -313,65 +313,5 @@ int rwnx_send_set_vif_state_req(struct rwnx_hw *rwnx_hw, u8 vif_idx, u8 aid,
 				bool active);
 int rwnx_send_force_pcie_link_speed_req(struct rwnx_hw *rwnx_hw, u32 *cfm);
 int rwnx_send_ant_req(struct rwnx_hw *rwnx_hw, u32 ant);
-
-#ifdef CONFIG_SDR
-int rwnx_sdr_sap_set_sdr_cfg(struct rwnx_hw *rwnx_hw, u8 vif_idx, u8 sdr_en);
-
-int rwnx_sdr_sap_rst_sta_cache(struct rwnx_hw *rwnx_hw, u8 vif_idx);
-int rwnx_sdr_sap_add_sta_cfg(struct rwnx_hw *rwnx_hw,  u8 vif_idx, u8 *mac,
-	u8 pwr, u16 sap_rate, u16 sta_rate, u8 slot);
-int rwnx_sdr_sap_commit_sta_cfgs(struct rwnx_hw *rwnx_hw,
-    u8 vif_idx, u8 refresh_immediate);
-
-int rwnx_sdr_sap_get_sta_cfg(struct rwnx_hw *rwnx_hw, u8 sta_idx, u8 vif_idx,
-	struct sdr_sap_get_sta_cfg_t *p_sta_cfg);
-
-int rwnx_sdr_sap_set_sap_cfg(struct rwnx_hw *rwnx_hw, u8 vif_idx, u32 ctrl_flg,
-	u8 pwr, u8 slot, u8 bcn_extend_num);
-int rwnx_sdr_sap_get_sap_cfg(struct rwnx_hw *rwnx_hw, u8 vif_idx,
-	struct sdr_sap_get_sap_cfg_t *p_sap_cfg);
-
-int rwnx_sdr_sta_get_sap_cfg(struct rwnx_hw *rwnx_hw, u8 vif_idx,
-	struct sdr_sta_get_sap_cfg_t *p_sap_cfg);
-int rwnx_sdr_sta_get_sta_cfg(struct rwnx_hw *rwnx_hw, u8 vif_idx,
-	struct sdr_sta_get_sta_cfg_t *p_sta_cfg);
-
-int rwnx_sdr_sap_get_sdr_cfg(struct rwnx_hw *rwnx_hw, u8 vif_idx,
-	struct sdr_sap_get_sdr_cfg_t *p_sdr_cfg);
-int rwnx_sdr_sta_get_sdr_cfg(struct rwnx_hw *rwnx_hw, u8 vif_idx,
-	struct sdr_sta_get_sdr_cfg_t *p_sdr_cfg);
-int rwnx_std_sdr_cust_cmd(struct rwnx_hw *rwnx_hw, u8 vif_idx, 
-	u8 param_num, u8 *params);
-
-int rwnx_std_sdr_set_cco_mode(struct rwnx_hw *rwnx_hw, u8 vif_idx,
-	u8 cco_slot_tu, u8 bcn_extend_num);
-int rwnx_std_sdr_set_sta_mode(struct rwnx_hw *rwnx_hw, u8 vif_idx, u8 *p_cco_mac);
-int rwnx_std_sdr_set_monitor_mode(struct rwnx_hw *rwnx_hw, u8 vif_idx);
-int rwnx_std_sdr_cco_rst_cfg_cache(struct rwnx_hw *rwnx_hw, u8 vif_idx);
-int rwnx_std_sdr_cco_add_sta_cfg(struct rwnx_hw *rwnx_hw, u8 vif_idx,
-	u8 *mac, u8 pwr, u8 slot, u16 rate);
-int rwnx_std_sdr_cco_commit_cfg(struct rwnx_hw *rwnx_hw, u8 vif_idx,
-	u8 immediately_refresh);
-int rwnx_std_sdr_get_work_mode(struct rwnx_hw *rwnx_hw, u8 vif_idx,
-	struct std_sdr_get_work_mode_t *p_work_mode);
-int rwnx_std_sdr_cco_get_sta_cfg(struct rwnx_hw *rwnx_hw, u8 vif_idx,
-	uint8_t sta_idx, struct std_sdr_cco_get_sta_cfg_t *p_sta_cfg);
-int rwnx_std_sdr_sta_get_cfg(struct rwnx_hw *rwnx_hw, u8 vif_idx,
-	struct std_sdr_sta_get_cfg_t *p_sta_cfg);
-int rwnx_sdr_sap_set_sdrgi(struct rwnx_hw *rwnx_hw, u8 vif_idx, 
-	u8 guard_interval_ten_us);
-int rwnx_sdr_sap_update_sta_cfg(struct rwnx_hw *rwnx_hw, u8 vif_idx, u8 *mac,
-	u8 pwr, u16 sap_rate_cfg, u16 sta_rate_cfg);
-int rwnx_sdr_sap_set_exslot_sta_cfg(struct rwnx_hw *rwnx_hw, u8 vif_idx,
-	u8 ext_slot_tu, u8 ext_slot_num);
-int rwnx_sdr_sap_set_ack_timeout_cfg(struct rwnx_hw *rwnx_hw, u8 vif_idx, 
-	u8 ack_timeout);
-int rwnx_sdr_sap_set_sw_retry_cfg(struct rwnx_hw *rwnx_hw, u8 vif_idx, u8 sw_retry);
-#endif /* end of #ifdef CONFIG_SDR */
-
-#ifdef CONFIG_TRX_STAT
-int rwnx_get_trx_statistics(struct rwnx_hw *rwnx_hw, u8 req_tx_stat,
-	u8 sta_idx, u8 clear_stat, struct mm_trx_stat_cfm_param_t *p_trx_stat);
-#endif /* end of #ifdef CONFIG_TRX_STAT */
 
 #endif /* _RWNX_MSG_TX_H_ */

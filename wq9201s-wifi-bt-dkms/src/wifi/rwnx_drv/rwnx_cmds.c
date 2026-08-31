@@ -31,6 +31,7 @@
 #define cmd_mgr_is_timeout(tm_jf) time_after(jiffies, tm_jf)
 
 static void cmd_mgr_print(struct rwnx_cmd_mgr *cmd_mgr);
+void rwnx_monitor_rate_update(struct rwnx_hw *rwnx_hw);
 
 static void cmd_dump(const struct rwnx_cmd *cmd, int error)
 {
@@ -67,9 +68,6 @@ static void cmd_complete(struct rwnx_cmd_mgr *cmd_mgr, struct rwnx_cmd *cmd)
 	} else {
 		cmd_mgr->cmd_nonblock_size--;
 	}
-
-	WQ_DBG(DM_GENERIC, DL_WRN, "%s: block %d, nonblock %d\n", __func__,
-	       cmd_mgr->cmd_block_size, cmd_mgr->cmd_nonblock_size);
 
 	if (cmd->flags & RWNX_CMD_FLAG_AUTOPM_PUT)
 		hif_autopm_put(rwnx_hw->core);
@@ -195,7 +193,11 @@ int cmd_mgr_queue(struct rwnx_cmd_mgr *cmd_mgr, struct rwnx_cmd *cmd)
 			list_entry((&cmd_mgr->cmds)->prev, struct rwnx_cmd,
 				   list);
 #endif
-
+		if ((last->flags & RWNX_CMD_FLAG_WAIT_ACK) &&
+		    hif_bus_dead(rwnx_hw->core)) {
+			last->flags &= ~RWNX_CMD_FLAG_WAIT_ALL;
+			cmd_complete(cmd_mgr, last);
+		}
 		if (last->flags & RWNX_CMD_FLAG_WAIT_ALL && need_cfm) {
 			/* defer to push new command since the last one is not done */
 			cmd->flags |= RWNX_CMD_FLAG_WAIT_PUSH;
@@ -239,9 +241,6 @@ int cmd_mgr_queue(struct rwnx_cmd_mgr *cmd_mgr, struct rwnx_cmd *cmd)
 		cmd_mgr->cmd_nonblock_size++;
 	}
 
-	WQ_DBG(DM_GENERIC, DL_WRN, "%s: block %d, nonblock %d\n", __func__,
-	       cmd_mgr->cmd_block_size, cmd_mgr->cmd_nonblock_size);
-
 	cmd_dump(cmd, 0);
 
 	if (!(cmd->flags & RWNX_CMD_FLAG_WAIT_PUSH)) {
@@ -270,6 +269,7 @@ int cmd_mgr_queue(struct rwnx_cmd_mgr *cmd_mgr, struct rwnx_cmd *cmd)
 			//send trigger pattern
 			hif_send_trigger(rwnx_hw->core, WQ_USB_TRI_CMD_TIMEOUT,
 					 cmd->tkn + 1);
+			hif_bus_attempt_recovery(rwnx_hw->core);
 
 			/* cmd_mgr will recovery from crashed to ready by timer when cmd timeout */
 			if (cmd_mgr->timeout_cnt++ > RWNX_CMD_MAX_TIMEOUT_CNT) {
@@ -349,9 +349,7 @@ int cmd_mgr_msg_ack(struct rwnx_hw *rwnx_hw, struct ipc_e2a_msg *ack)
 		}
 
 		if (ack->id == ME_RC_SET_RATE_REQ) {
-			if (rwnx_hw->monitor_param.tmp_mcs_idx != 0xFF) {
-				rwnx_hw->monitor_param.tx_mcs_idx = rwnx_hw->monitor_param.tmp_mcs_idx;
-			}
+			rwnx_monitor_rate_update(rwnx_hw);
 		}
 
 		if ((cur->flags & RWNX_CMD_FLAG_WAIT_ACK) &&
@@ -373,11 +371,6 @@ int cmd_mgr_msg_ack(struct rwnx_hw *rwnx_hw, struct ipc_e2a_msg *ack)
 			if (!list_empty(&cmd_mgr->cmds)) {
 				struct rwnx_cmd *first = list_first_entry(
 					&cmd_mgr->cmds, struct rwnx_cmd, list);
-
-				WQ_DBG(DM_GENERIC, DL_WRN,
-				       "%s: first->id: %d, first->cfm_id: %d, first->flags: 0x%x\n",
-				       __func__, first->id, first->cfm_id,
-				       first->flags);
 
 				if (first->flags & RWNX_CMD_FLAG_WAIT_PUSH) {
 					cmd_push(cmd_mgr, first);

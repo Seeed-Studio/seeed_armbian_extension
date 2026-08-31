@@ -8,6 +8,6 @@
 #define MK_WQ_API_VERSION(a,b,c,d)     ((((a) & 0x7f) << 25) | (((b) & 0x1f) << 20) |  \
                                         (((c) & 0xff) << 12) | (((d) & 0xfff) << 0))
 
-#define WQ_API_VERSION MK_WQ_API_VERSION(2, 2, 1, 961)
+#define WQ_API_VERSION MK_WQ_API_VERSION(2, 2, 3, 94)
 
 #endif /* WQ_API_VERSION_H_ */

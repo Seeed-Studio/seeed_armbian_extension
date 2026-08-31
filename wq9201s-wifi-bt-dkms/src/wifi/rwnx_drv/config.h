@@ -23,6 +23,8 @@ typedef unsigned char byte;
 
 #define WQ_FW_LOG_PATH_DEF "/var/log/"
 #define WQ_FW_LOG_PATH_LEN 64
+#define PHY_CFG_NAME_DEF "wq9201_phy_1_1_20E0_0102.bin"
+#define PHY_CFG_NAME_LEN 32
 
 #define WQ_CONF_ITEM(_name, _type, _default, desc) _type _name;
 #define WQ_CONF_ARRAY_ITEM(_name, _type, _array_size, _default, desc)          \
@@ -105,7 +107,7 @@ enum wq_stats_dump_mask {
 	WQ_CONF_ITEM(                                                                       \
 		listen_bcmc, bool, true,                                                    \
 		"Wait for BC/MC traffic following DTIM beacon (Default: true)")             \
-	WQ_CONF_ITEM(tdls, bool, true, "Enable TDLS (Default: true)")                       \
+	WQ_CONF_ITEM(tdls, bool, false, "Disable TDLS (Default: false)")                       \
 	WQ_CONF_ITEM(uf, bool, true,                                                        \
 		     "Enable Unsupported HT Frame Logging (Default: true)")                 \
 	WQ_CONF_ITEM(dpsm, bool, true,                                                      \
@@ -140,8 +142,8 @@ enum wq_stats_dump_mask {
 	WQ_CONF_ITEM(phy_calib_mode, int, WQ_TXRX_CALIB_MODE,                               \
 		     "PHY TX/RX calibration mode(Default: 0xff)")                           \
 	WQ_CONF_ITEM(                                                                       \
-		uapsd_timeout, int, 300,                                                    \
-		"UAPSD Timer timeout, in ms (Default: 300). If 0, UAPSD is disabled")       \
+		uapsd_timeout, int, 0,                                                    \
+		"UAPSD Timer timeout, in ms (Default: 0). If 0, UAPSD is disabled")       \
 	WQ_CONF_ITEM(nss, int, 2,                                                           \
 		     "1 <= nss <= 2 : "                                                     \
 		     "Supported number of Spatial Streams (Default: 2)")                    \
@@ -227,35 +229,34 @@ enum wq_stats_dump_mask {
 		     "\t\t\tdefault = all.")                                                \
 	WQ_CONF_ITEM(fw_log_enable, int, 0,                                                 \
 		     "fw log enable: 0: disable, 1: enable")                                \
-	WQ_CONF_ITEM(fw_log_type, int, 2,                                                 \
-		     "fw log type: 1: tty, 2: file")                                \
+	WQ_CONF_ITEM(ant_mode, int, 0,                                                      \
+		     "antenna mode:\n"                                                      \
+		     "\t\t\t0: three antenna\n"                                             \
+		     "\t\t\t1: dual antenna\n"                                              \
+		     "\t\t\t2: signal antenna\n"                                            \
+		     "\t\t\tdefault = 0.")                                                  \
 	WQ_CONF_ITEM(coex_ant_mode, int, 0,                                                 \
 		     "coex antenna mode:\n"                                                 \
-		     "\t\t\t0: COEX_BT_BYPASS,\n"                                           \
-		     "\t\t\t1: COEX_BT_SHARE_WITH_SWITCH,\n"                                \
-		     "\t\t\t2: COEX_BT_SHARE_NO_SWITCH,\n"                                  \
+		     "\t\t\t0: coex bt use self antenna\n"                                  \
+		     "\t\t\t1: coex use extern rf switch\n"                                 \
+		     "\t\t\t2: coex bt use wifi antenna\n"                                  \
 		     "\t\t\tdefault = 0.")                                                  \
-	WQ_CONF_ITEM(coex_abort_prop_lv, int, 0,                                            \
+	WQ_CONF_ITEM(coex_mode, int, 0,                                                     \
+		     "coex mode:\n"                                                         \
+		     "\t\t\t0: default mode\n"                                              \
+		     "\t\t\t1: test mode\n"                                                 \
+		     "\t\t\tother: some special mode\n"                                     \
+		     "\t\t\tdefault = 0.")                                                  \
+	WQ_CONF_ITEM(coex_abort_prop_lv, int, 2,                                            \
 		     "coex abort prop level:\n"                                             \
-		     "\t\t\tdefault = 0.")                                                  \
-	WQ_CONF_ITEM(coex_abort_en, int, 0,                                                 \
-		     "coex bt rx can abort wifi tx:\n"                                      \
-		     "\t\t\tdefault = 0.")                                                  \
-	WQ_CONF_ITEM(coex_abort_rssi_thre, int, -60,                                        \
-		     "coex bt rx abort wifi tx if bt rssi less than this value:\n"          \
-		     "\t\t\tdefault = -60.")                                                \
-	WQ_CONF_ITEM(coex_bt_pwr_adj_en, int, 0,                                            \
-		     "coex bt tx pwr adj by tx retry count:\n"                              \
-		     "\t\t\tdefault = 0.")                                                  \
-	WQ_CONF_ITEM(coex_bt_pwr_adj_thre, int, 100,                                        \
-		     "coex bt tx pwr reduce if tx retry less than this value:\n"            \
-		     "\t\t\tdefault = 100.")                                                \
-	WQ_CONF_ITEM(coex_wifi_pwr_adj_en, int, 0,                                          \
-		     "coex wifi tx pwr adj if bt in high tp mode:\n"                        \
-		     "\t\t\tdefault = 0.")                                                  \
-	WQ_CONF_ITEM(coex_wifi_pwr_adj_value, int, 10,                                      \
-		     "coex wifi tx pwr adj value:\n"                                        \
-		     "\t\t\tdefault = 10.")                                                 \
+		     "\t\t\t0: isolation degree < 20db\n"                                   \
+		     "\t\t\t1: isolation degree < 25db\n"                                   \
+		     "\t\t\t2: isolation degree < 30db\n"                                   \
+		     "\t\t\t3: isolation degree < 35db\n"                                   \
+		     "\t\t\t4: isolation degree < 40db\n"                                   \
+		     "\t\t\t5: isolation degree < 45db\n"                                   \
+		     "\t\t\t6: isolation degree < 50db\n"                                   \
+		     "\t\t\tdefault = 2.")                                                  \
 	WQ_CONF_ITEM(rcu_pattern, int, 0,                                                   \
 		     "rcu pattern index:\n"                                                 \
 		     "\t\t\tdefault = 0.")                                                  \
@@ -284,6 +285,8 @@ enum wq_stats_dump_mask {
 	WQ_CONF_ARRAY_ITEM(ftl, byte, WQ_FW_LEVEL_LEN, WQ_FW_LEVEL_DEF,                     \
 			   "Firmware trace level")                                          \
 	WQ_CONF_ARRAY_ITEM(mac_addr, byte, ETH_ALEN, WQ_MAC_DEF, "mac addr")                \
+	WQ_CONF_ARRAY_ITEM(phy_cfg_name, byte, PHY_CFG_NAME_LEN,                            \
+			   PHY_CFG_NAME_DEF, "default bin name of wifi_phy")                \
 	WQ_CONF_ARRAY_ITEM(fw_log_path, byte, WQ_FW_LOG_PATH_LEN,                           \
 			   WQ_FW_LOG_PATH_DEF,                                              \
 			   "Path of fw log file, default is /var/log/ ")                    \
@@ -324,14 +327,9 @@ enum wq_stats_dump_mask {
 	WQ_CONF_ITEM(tx_ampdu_enable, bool, true, "Enable AMPDU in TX (Default: true)") \
 	WQ_CONF_ITEM(mmode, int, 0, "0 <= mmode <= 2 in TX (Default:0)") \
 	WQ_CONF_ITEM(sched_scan_enable, bool, false, "Enable Sched_scan (Default: false)") \
-	WQ_CONF_ITEM(dual_scan_enable, bool, true, "Enable Dual scan (Default: true)") \
-	WQ_CONF_ITEM(ht_only_ofdm, bool, false, "Only ofdm rate in ht mode(Default: false)") \
-	WQ_CONF_ITEM(default_txrate_6m, bool, false, "Use 6M as default tx rate(Default: false)") \
-	WQ_CONF_ITEM(update_agc_by_rssi, bool, false, "Adjust AGC parameters dynamically based on RSSI (Default: false)") \
 	WQ_CONF_ITEM(rt_sta_info_txrx_rate, bool, false, "Real-time Tx/Rx rate station_info (Default: false)") \
-	WQ_CONF_ITEM(extap_support, int, 0, "extAP support (Default: 0)") \
-	WQ_CONF_ITEM(noise_thr, byte, -65, "noise threshold in adaptivity(Default: -65)")\
-	WQ_CONF_ITEM(ds_when_suspend, bool, false, "enter deep sleep only when suspend") \
+	WQ_CONF_ITEM(extap_support, int, 0, "extAP support (Default: 0)")                  \
+	WQ_CONF_ITEM(extra_cred_num, int, 100, "extra credit number (Default: 100)")	\
 	WQ_CONF_ITEM(wlan_reg_on, byte, 0, 												\
 		     "reg_on acion on firmware:\n"                                          \
 		     "\t\t\t0x00: nothing to do,\n"                                         \
@@ -341,31 +339,25 @@ enum wq_stats_dump_mask {
 	WQ_CONF_ITEM(bt_reg_on, byte, 0, 												\
 		     "reg_on acion on firmware:\n"                                          \
 		     "\t\t\t0x00: nothing to do,\n"                                         \
-		     "\t\t\t0x01: deep sleep,\n"                                       		\
-		     "\t\t\t0x02: shutdown,\n"                                       		\
+		     "\t\t\t0x01: deep sleep,\n"                                            \
+		     "\t\t\t0x02: shutdown,\n"                                              \
 		     "\t\t\tdefault = 0.")                                                  \
-	WQ_CONF_ITEM(usb_max_bundle_in, byte, 4,                                            \
-		     "1 <= usb_max_bundle_in <= 8, for usb2 (Default: 4)")                  \
-	WQ_CONF_ITEM(skip_scan_thres, int, 0xffff,                                          \
-		     "threshold of Tx/Rx throughput for skip scan")                         \
-	WQ_CONF_ITEM(tx_ipi_cpu, int, 3, "tx ipi cpu number(Default: 3)")                   \
-	WQ_CONF_ITEM(extra_cred_num, int, 100,                                              \
-		     "extra credit number (Default: 100)")                                  \
-	WQ_CONF_ITEM(enable_extra_crdit, int, 0,                                            \
-		     "enable extra crdit(Default: 0)")                                      \
-	WQ_CONF_ITEM(                                                                       \
-		recovery_level, byte, 2,                                                    \
+	WQ_CONF_ITEM(disable_mcs_0_4, int, 1, "disable mcs0-4 (Default: 1)")                \
+	WQ_CONF_ITEM(force_enable_11n_sgi, int, 1,                                          \
+		     "force enable 11n sgi (Default: 1)")                                   \
+	WQ_CONF_ITEM(force_2g_max_amsdu_2, int, 1,                                          \
+		     "set 2g max amsdu cnt to 2 (Default: 1)")                              \
+	WQ_CONF_ITEM(rx_ipi_cpu, int, 3, "rx ipi cpu number(Default: 3)")                   \
+	WQ_CONF_ITEM(recovery_level, byte, 2,                                               \
 		"device self recovery level control\n"                                      \
 		"\t\t\t0x00: no self recovery,\n"                                           \
 		"\t\t\t0x01: only recover the bus with device; restart wlan manually,\n"    \
 		"\t\t\t0x02: a top-down wlan selfrecovery, restart wlan automatically.\n"   \
-		"\t\t\tdefault = 2.")                                                       \
+		"\t\t\tdefault = 2.") \
+	WQ_CONF_ITEM(skip_scan_thres, int, 0xffff, "threshold of Tx/Rx throughput for skip scan") \
+	WQ_CONF_ITEM(noise_thr, byte, -65, "noise threshold in adaptivity(Default: -65)")   \
 	WQ_CONF_ITEM(retry_more, int, 0,                                                \
-	     "enable more retry cnt(Default: 0)")                                       \
-	WQ_CONF_ITEM(chip_reset_task, int, 0, "enable issue chip reset when some thing error(Default: 0)")    \
-	WQ_CONF_ITEM(mcc_sta_bias_level, byte, 0,                                       \
-	     "MCC STA airtime ratio (Default: 0=50/50, 1=60/40, 2=70/30, 3=80/20)")     \
-	WQ_CONF_ITEM(skip_dtim, int, 0, "skip_dtim:N, N means keep 1 every (N+1) beacons (Default: 0)")
+	     "enable more retry cnt(Default: 0)")
 
 struct wq_conf {
 	WQ_CONF_ITEMS

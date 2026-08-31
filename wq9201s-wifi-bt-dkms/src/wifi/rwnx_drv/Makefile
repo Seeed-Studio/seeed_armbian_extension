@@ -35,28 +35,6 @@ CONFIG_RWNX_USE_HRT ?= n
 # set support 5G channel
 CONFIG_SUPPORT_5G_BAND ?= y
 
-# Enable dual-sdio chip support
-CONFIG_DUAL_SDIO_SUPPORT ?= n
-
-# Enable dual-usb chip support
-CONFIG_DUAL_USB_SUPPORT ?= n
-
-# Amlogic-T982 platform compilation compatibility:
-## this kernel is Linux 5.15.78, but with backward porting of Linux 6.0+, 
-## so add this config macro support it.
-CONFIG_AMLOGIC_BUILD_COMPATIBLE ?= n
-
-# Android GKI version compatible
-CONFIG_WQ_GKI ?= n
-
-ifeq ($(CONFIG_WQ_WLAN_ALL_IN_ONE), n)
- ifeq ($(CONFIG_DUAL_SDIO_SUPPORT), y)
- CONFIG_EXT_NAME = "_1"
- else
- CONFIG_EXT_NAME = ""
- endif
-endif
-
 # Enable BFMER support (need FW support)
 CONFIG_RWNX_BFMER ?= n
 
@@ -66,12 +44,6 @@ CONFIG_RWNX_MUMIMO_TX ?= n
 else
 CONFIG_RWNX_MUMIMO_TX = n
 endif
-
-# Enable SDR support (need FW support)
-CONFIG_SDR ?= n
-
-# Enable statistics of trx for each sta and each tid (need FW support)
-CONFIG_TRX_STAT ?= n
 
 # Enable handling of radar event
 CONFIG_RWNX_RADAR ?= n
@@ -110,17 +82,17 @@ CONFIG_RX_THREAD ?= y
 ## NAPI support
 CONFIG_RWNX_NAPI ?= y
 
-## tx IPI support
-CONFIG_RWNX_TX_IPI ?= n
+## RX IPI support, currently RX IPI depends on NAPI enable
+CONFIG_RWNX_RX_IPI ?= y
 
 ## WQ PM support
 CONFIG_WQ_WLAN_PM ?= m
 
-## TX bus qos support
-CONFIG_TX_BUS_QOS ?= n
+## COMPAT mode support
+CONFIG_COMPAT_MODE_ENABLE ?= n
 
-## cpu bind or not
-CONFIG_WQ_CPU_UNBIND ?= n
+## PCIe only support Latency interrupt
+CONFIG_WQ_PCIE_ONLY_SUP_LATENCY_INTX ?= n
 
 # contains common defintions between host and firmware
 SRC_COMMON := ../../common
@@ -132,7 +104,6 @@ OBJ_APP := app/
 OBJ_IPC := ipc/
 OBJ_BMI := ipc/bmi/
 OBJ_HTC := ipc/htc/
-OBJ_HIF := ipc/hif/
 OBJ_PCIE := ipc/hif/pcie/
 OBJ_SDIO := ipc/hif/sdio/
 OBJ_USB := ipc/hif/usb/
@@ -160,16 +131,14 @@ wq_wlan_core-y += $(OBJ_MAC)rwnx_rx.o
 wq_wlan_core-y += $(OBJ_MAC)rwnx_tdls.o
 wq_wlan_core-y += $(OBJ_MAC)rwnx_tx.o
 wq_wlan_core-y += $(OBJ_MAC)wq_pkt_classify.o
+wq_wlan_core-y += $(OBJ_MAC)wq_pktlog.o
 wq_wlan_core-y += $(OBJ_MAC)wq_rx_defrag.o
 wq_wlan_core-y += $(OBJ_MAC)wlan_ioctl.o
 wq_wlan_core-y += $(OBJ_MAC)country.o
 wq_wlan_core-$(CONFIG_WQ_DTOP) += $(OBJ_MISC)coex.o
-ifeq ($(CONFIG_WQ_GKI), n)
-wq_wlan_core-y += $(OBJ_MAC)wq_pktlog.o
 wq_wlan_core-$(CONFIG_WQ_DTOP) += $(OBJ_MISC)dtop_main.o
 wq_wlan_core-$(CONFIG_WQ_DTOP) += $(OBJ_APP)fw_dbg.o
 wq_wlan_core-y += $(OBJ_APP)fw_log.o
-endif
 wq_wlan_core-y += $(OBJ_MISC)proc.o
 wq_wlan_core-y += $(OBJ_MISC)mp_test.o
 wq_wlan_core-y += $(OBJ_MISC)wq_crc.o
@@ -187,7 +156,7 @@ wq_wlan_core-$(CONFIG_SOC_SPACEMIT_K1) += $(OBJ_PLAT)plat_spacemit_k1.o
 
 wq_wlan_core-y += $(OBJ_MAC)rwnx_rx_ll.o
 
-wq_wlan_core-$(CONFIG_RWNX_RADAR)       += $(OBJ_ROOT)rwnx_radar.o
+wq_wlan_core-$(CONFIG_RWNX_RADAR)       += $(OBJ_MAC)rwnx_radar.o
 wq_wlan_core-$(CONFIG_DEBUG_WQ_PRIV)    += $(OBJ_MISC)wq_wifi_priv.o
 wq_wlan_core-$(CONFIG_DEBUG_FS)         += $(OBJ_ROOT)rwnx_debugfs.o
 wq_wlan_core-$(CONFIG_DEBUG_FS)         += $(OBJ_ROOT)rwnx_fw_dump.o
@@ -198,63 +167,46 @@ wq_wlan_core-$(CONFIG_RWNX_MUMIMO_TX)   += $(OBJ_ROOT)rwnx_mu_group.o
 #
 # wq_wlan_xxxx for specific H/W bus
 #
-ifeq ($(CONFIG_WQ_GKI), n)
 wq_wlan_usb-$(CONFIG_WQ_DTOP) += $(OBJ_USB)usb_dtop.o
-endif
 wq_wlan_usb-y += $(OBJ_USB)usb.o
 wq_wlan_usb-y += $(OBJ_USB)urb_ctx.o
 wq_wlan_usb-y += $(OBJ_USB)usb_bundle.o
 wq_wlan_usb-y += $(OBJ_USB)usb_dnld.o
 
-wq_wlan_sdio$(CONFIG_EXT_NAME)-y += $(OBJ_SDIO)sdio.o
-wq_wlan_sdio$(CONFIG_EXT_NAME)-y += $(OBJ_SDIO)sdio_adma.o
-wq_wlan_sdio$(CONFIG_EXT_NAME)-y += $(OBJ_SDIO)skbreq_queue.o
-wq_wlan_sdio$(CONFIG_EXT_NAME)-y += $(OBJ_SDIO)sdio_dnld.o
-wq_wlan_sdio$(CONFIG_EXT_NAME)-y += $(OBJ_SDIO)sdio_test.o
+wq_wlan_sdio-y += $(OBJ_SDIO)sdio.o
+wq_wlan_sdio-y += $(OBJ_SDIO)sdio_adma.o
+wq_wlan_sdio-y += $(OBJ_SDIO)skbreq_queue.o
+wq_wlan_sdio-y += $(OBJ_SDIO)sdio_dnld.o
+wq_wlan_sdio-y += $(OBJ_SDIO)sdio_test.o
 
 wq_wlan_pcie-y += $(OBJ_PCIE)ce.o
 wq_wlan_pcie-y += $(OBJ_PCIE)pcie_dnld.o
 wq_wlan_pcie-y += $(OBJ_PCIE)pcie.o
-ifeq ($(CONFIG_WQ_GKI), n)
 wq_wlan_pcie-$(CONFIG_WQ_DTOP) += $(OBJ_PCIE)pcie_dtop.o
-endif
 wq_wlan_pcie-$(CONFIG_PCIE_UNIT_TEST) += $(OBJ_PCIE)ce_test.o
 wq_wlan_pcie-$(CONFIG_PCIE_UNIT_TEST) += $(OBJ_PCIE)pcie_test.o
 
 ifeq ($(CONFIG_WQ_WLAN_ALL_IN_ONE), m)
-obj-$(CONFIG_WQ_WLAN_ALL_IN_ONE) += wq_wlan$(MULTI_KO).o
-wq_wlan$(MULTI_KO)-y := main.o $(wq_wlan_core-y)
-wq_wlan$(MULTI_KO)-y += $(OBJ_HIF)hif_comm.o
+obj-$(CONFIG_WQ_WLAN_ALL_IN_ONE) += wq_wlan.o
+wq_wlan-y := main.o $(wq_wlan_core-y)
 ccflags-y += -DWQ_WLAN_ALL_IN_ONE
 ifeq ($(CONFIG_WQ_WLAN_USB), m)
-wq_wlan$(MULTI_KO)-y += $(wq_wlan_usb-y)
+wq_wlan-y += $(wq_wlan_usb-y)
 ccflags-y += -DCONFIG_WQ_WLAN_USB
 endif
 ifeq ($(CONFIG_WQ_WLAN_SDIO), m)
-wq_wlan$(MULTI_KO)-y += $(wq_wlan_sdio-y)
+wq_wlan-y += $(wq_wlan_sdio-y)
 ccflags-y += -DCONFIG_WQ_WLAN_SDIO
 endif
 ifeq ($(CONFIG_WQ_WLAN_PCIE), m)
-wq_wlan$(MULTI_KO)-y += $(wq_wlan_pcie-y)
+wq_wlan-y += $(wq_wlan_pcie-y)
 ccflags-y += -DCONFIG_WQ_WLAN_PCIE
 endif
 else
 obj-$(CONFIG_WQ_WLAN_CORE) += wq_wlan_core.o
 obj-$(CONFIG_WQ_WLAN_USB) += wq_wlan_usb.o
-obj-$(CONFIG_WQ_WLAN_SDIO) += wq_wlan_sdio$(CONFIG_EXT_NAME).o
+obj-$(CONFIG_WQ_WLAN_SDIO) += wq_wlan_sdio.o
 obj-$(CONFIG_WQ_WLAN_PCIE) += wq_wlan_pcie.o
-wq_wlan_usb-y += $(OBJ_HIF)hif_comm.o
-wq_wlan_pcie-y += $(OBJ_HIF)hif_comm.o
-wq_wlan_sdio$(CONFIG_EXT_NAME)-y += $(OBJ_HIF)hif_comm.o
-
-endif
-
-ifeq ($(CONFIG_SDR), y)
-ccflags-y += -DCONFIG_SDR
-endif
-
-ifeq ($(CONFIG_TRX_STAT), y)
-ccflags-y += -DCONFIG_TRX_STAT
 endif
 
 # include files
@@ -281,16 +233,7 @@ ccflags-$(CONFIG_WQ_WLAN_FPGA) += -DWQ_WLAN_FPGA
 # USB options
 ccflags-y += -DWQ_MSG_EP_TYPE=3		# EP_TYPE: 2(BULK), 3(INT)
 
-# Multi wlan chips support
-ifneq (,$(filter 1 0, $(MULTI_KO)))
-ccflags-y += -DMULTI_CHIP=$(MULTI_KO)
-endif
-
 # features
-ccflags-$(CONFIG_AMLOGIC_BUILD_COMPATIBLE) += -DAMLOGIC_BUILD_COMPATIBLE
-ccflags-$(CONFIG_WQ_GKI) += -DCONFIG_WQ_GKI
-ccflags-$(CONFIG_DUAL_SDIO_SUPPORT) += -DDUAL_SDIO_SUPPORT
-ccflags-$(CONFIG_DUAL_USB_SUPPORT) += -DDUAL_USB_SUPPORT
 ccflags-$(CONFIG_SUPPORT_5G_BAND) += -DSUPPORT_5G_BAND
 ccflags-$(CONFIG_RWNX_RADAR) += -DCONFIG_RWNX_RADAR
 ccflags-$(CONFIG_RWNX_MON_DATA) += -DCONFIG_RWNX_MON_DATA
@@ -320,10 +263,10 @@ endif
 
 ifeq ($(CONFIG_RWNX_NAPI), y)
 ccflags-y += -DNAPI_SUPPORT
-endif
 
-ifeq ($(CONFIG_RWNX_TX_IPI), y)
-ccflags-y += -DTX_IPI_SUPPORT
+ifeq ($(CONFIG_RWNX_RX_IPI), y)
+ccflags-y += -DRX_IPI_SUPPORT
+endif
 endif
 
 ifeq ($(CONFIG_RWNX_USE_HRT), y)
@@ -338,8 +281,12 @@ ifeq ($(CONFIG_WQ_WLAN_PM), m)
 ccflags-y += -DCONFIG_WQ_WLAN_PM
 endif
 
-ifeq ($(CONFIG_TX_BUS_QOS), y)
-ccflags-y += -DCONFIG_TX_BUS_QOS
+ifeq ($(CONFIG_COMPAT_MODE_ENABLE), y)
+ccflags-y += -DCOMPAT_MODE_ENABLE
+endif
+
+ifeq ($(CONFIG_WQ_PCIE_ONLY_SUP_LATENCY_INTX), y)
+ccflags-y += -DWQ_PCIE_ONLY_SUP_LATENCY_INTX
 endif
 
 ccflags-$(CONFIG_DEBUG_WQ_PRIV) += -DDEBUG_WQ_PRIV
@@ -353,7 +300,6 @@ ccflags-$(CONFIG_SOC_SPACEMIT_K1) += -DCONFIG_SPACEMIT_K1_SDIO_WAR
 ccflags-$(CONFIG_SOC_AML) += -DCONFIG_SOC_AML
 
 ccflags-$(CONFIG_WAR_CE_INTR_FAST_THAN_DATA) += -DCONFIG_WAR_CE_INTR_FAST_THAN_DATA
-ccflags-$(CONFIG_WQ_CPU_UNBIND) += -DWQ_CPU_UNBIND
 
 # FW VARS
 #ccflags-y += -DNX_VIRT_DEV_MAX=4
@@ -405,12 +351,12 @@ DIR_SMOKE ?= ../smoke
 multi_ko:
 	mkdir -p $(DIR_SMOKE)/multi_ko
 	@cp -ra . $(SRC_COMMON) $(DIR_SMOKE)/multi_ko
-	$(MAKE) -j4 -C $(KERNELDIR) O=$(KBUILDDIR) M=$(PWD)/$(DIR_SMOKE)/multi_ko CONFIG_WQ_WLAN_ALL_IN_ONE=n modules
+	$(MAKE) -j4 -C $(KERNELDIR) O=$(KBUILDDIR) M=$(CURDIR)/$(DIR_SMOKE)/multi_ko CONFIG_WQ_WLAN_ALL_IN_ONE=n modules
 
 all_in_one:
 	@mkdir -p $(DIR_SMOKE)/all_in_one
 	@cp -ra . $(SRC_COMMON) $(DIR_SMOKE)/all_in_one
-	$(MAKE) -j4 -C $(KERNELDIR) O=$(KBUILDDIR) M=$(PWD)/$(DIR_SMOKE)/all_in_one modules
+	$(MAKE) -j4 -C $(KERNELDIR) O=$(KBUILDDIR) M=$(CURDIR)/$(DIR_SMOKE)/all_in_one modules
 
 smoke_build: multi_ko all_in_one
 	@echo WuQi wlan all-in-one driver: $(shell readlink -f "$(DIR_SMOKE)/all_in_one/wq_wlan.ko")

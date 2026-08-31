@@ -60,8 +60,6 @@ struct fw_log {
 	spinlock_t lock;
 	struct semaphore sem;
 
-	char tty_name[128];
-
 	u32 module;
 	u8 level;
 	u8 type;
@@ -101,10 +99,9 @@ struct fw_log {
 	struct tty_port tty_port;
 	int tty_open_cnt;
 };
-#ifndef CONFIG_WQ_GKI
+
 int wq_fw_log_proc_init(struct wq_core *core);
 int wq_fw_log_proc_deinit(struct wq_core *core);
-#endif
 int wq_fw_log_push(struct wq_core *core, struct sk_buff *skb, uint32_t size);
 
 int fw_log_file_check_exist(const char *path);

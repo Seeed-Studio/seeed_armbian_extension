@@ -565,7 +565,7 @@ void rwnx_tx_push_prepare(struct rwnx_hw *rwnx_hw,
 void rwnx_tx_refill_hostdesc(struct sk_buff_head *skbq)
 {
 	struct sk_buff *skb;
-	struct wq_skb_txcb *txcb __maybe_unused;
+	struct wq_skb_txcb *txcb;
 	int qlen;
 	struct txdesc_host *txdesc_host;
 	//struct txdesc_host *txdesc_host_tmp;
@@ -681,6 +681,11 @@ netdev_tx_t rwnx_prepare_xmit(struct sk_buff *skb, struct rwnx_vif *rwnx_vif,
 			if (host->tid != 0xff) {
 				host->tid = TID_6;
 			}
+		}
+
+		if (rwnx_vif->extAP_supp) {
+			txcb->pkt_cls |= BIT(WQ_PKT_CLS_FORCE_TX_HIGH);
+			WQ_DBG(DM_TX, DL_WRN, "%s: xmit in high queue\n", __func__);
 		}
 	}
 	if (rwnx_hw->core->config.tx_bundle_max) {
@@ -865,7 +870,7 @@ static struct sk_buff *rwnx_tx_small_skb_bundle(struct rwnx_hw *rwnx_hw,
 	uint8_t *p;
 	int headroom = txq->ndev->needed_headroom;
 	u16 skb_index = 0;
-	struct rwnx_tx_bundle_head *bundle_head = NULL;
+	struct rwnx_tx_bundle_head *bundle_head;
 	unsigned int pad_len = 0;
 	u16 avail_data_len = 0;
 	struct wq_skb_txcb *txcb;
@@ -904,7 +909,7 @@ static struct sk_buff *rwnx_tx_small_skb_bundle(struct rwnx_hw *rwnx_hw,
 
 			/* add payload */
 			p = (uint8_t *)skb_put(bundle_skb, skb->len);
-			skb_copy_bits(skb, 0, p, skb->len);
+			memcpy(p, skb->data, skb->len);
 
 			pad_len = AMSDU_PADDING(skb->len);
 			//WQ_DBG(DM_TX, DL_ERR, "%s::index=%d, amsdu_len=%d,pad_len=%d\n",
@@ -941,14 +946,13 @@ void amsdu_task(unsigned long data)
 {
 	struct rwnx_hw *rwnx_hw = (struct rwnx_hw *)data;
 	struct rwnx_txq *txq, *next;
-	unsigned long flags;
 
-	spin_lock_irqsave(&rwnx_hw->tx_lock, flags);
 	list_for_each_entry_safe(txq, next, &rwnx_hw->amsdu_list_head, amsdu_sched_list) {
 		struct net_device *ndev = txq->ndev;
 		struct rwnx_vif *rwnx_vif = netdev_priv(ndev);
 		struct sk_buff *bundle_skb = NULL;
 
+		spin_lock_bh(&rwnx_hw->tx_lock);
 		if (skb_queue_len(&txq->amsdu_list)) {
 			if (rwnx_hw->core->hif_ops->hif == WQ_HIF_USB ||
 			    rwnx_hw->core->hif_ops->hif == WQ_HIF_SDIO) {
@@ -956,6 +960,7 @@ void amsdu_task(unsigned long data)
 			} else
 				bundle_skb = rwnx_form_amsdu(rwnx_hw, txq);
 		}
+		spin_unlock_bh(&rwnx_hw->tx_lock);
 
 		if (bundle_skb) {
 			u8 tid;
@@ -975,7 +980,6 @@ void amsdu_task(unsigned long data)
 		list_del(&txq->amsdu_sched_list);
 		txq->txq_in_amsdu_list = false;
 	}
-	spin_unlock_irqrestore(&rwnx_hw->tx_lock, flags);
 }
 
 enum hrtimer_restart rwnx_tx_amsdu_timeout_cb(struct hrtimer *t)
@@ -1112,17 +1116,26 @@ static struct sk_buff *rwnx_bundle_skb_add_subframe(struct rwnx_hw *rwnx_hw,
 						    struct rwnx_txq *txq)
 {
 	struct sk_buff *new_skb = NULL;
+	struct rwnx_vif *rwnx_vif;
 
 	/* Adjust the maximum number of MSDU allowed in A-MSDU */
 	rwnx_adjust_amsdu_maxnb(rwnx_hw);
 
 	/* immediately return if amsdu are not allowed for this sta */
 	if (rwnx_hw->amsdu_param.max_packets_num <= 0 ||
-	    rwnx_hw->amsdu_param.enable == false || (rwnx_hw->rx_throughput < 120) ||
+	    rwnx_hw->amsdu_param.enable == false || (rwnx_hw->rx_throughput < 120) || !txq->amsdu_allow ||
 	    !rwnx_amsdu_is_aggregable(skb))
 		return skb;
 
 	spin_lock_bh(&rwnx_hw->tx_lock);
+
+	/* For extAP interface, we need to translate the source MAC */
+	rwnx_vif = netdev_priv(txq->ndev);
+	if (rwnx_vif && rwnx_vif->extAP_supp) {
+		struct ethhdr *eth = (struct ethhdr *)skb->data;
+		ieee80211_extap_output(eth, rwnx_vif->ndev->dev_addr);
+	}
+
 	if (skb_queue_len(&txq->amsdu_list)) {
 		/* queue packet into amsdu_list */
 		skb_queue_tail(&txq->amsdu_list, skb);
@@ -1246,38 +1259,6 @@ u8 rwnx_xmit_multicast_to_unicast(struct sk_buff *skb, struct net_device *dev)
 }
 #endif
 
-#ifdef TX_IPI_SUPPORT
-
-#if LINUX_VERSION_CODE > KERNEL_VERSION(4, 13, 16)
-	struct __call_single_data csd;
-#else
-	struct call_single_data csd;
-#endif
-
-static void wq_schedule_wrapper(void *param)
-{
-	struct rwnx_hw *rwnx_hw = param;
-
-	tasklet_schedule(&rwnx_hw->xmit_task);
-}
-
-netdev_tx_t rwnx_start_xmit_wrap(struct sk_buff *skb, struct net_device *dev)
-{
-	struct rwnx_vif *rwnx_vif = netdev_priv(dev);
-	struct rwnx_hw *rwnx_hw = rwnx_vif->rwnx_hw;
-
-	skb_queue_tail(&rwnx_hw->xmit_ipi_queue, skb);
-
-	csd.func = wq_schedule_wrapper;
-	csd.info = rwnx_hw;
-
-	smp_call_function_single_async(wq_conf.tx_ipi_cpu, &csd);
-
-	return NETDEV_TX_OK;
-}
-
-#endif
-
 netdev_tx_t rwnx_start_xmit(struct sk_buff *skb, struct net_device *dev)
 {
 	struct rwnx_vif *rwnx_vif = netdev_priv(dev);
@@ -1290,59 +1271,44 @@ netdev_tx_t rwnx_start_xmit(struct sk_buff *skb, struct net_device *dev)
 	struct ethhdr *eth;
 #endif
 	netdev_tx_t ret;
+	u64 time_start_us = 0, time_end_us = 0;
 
 	PROFILING_SET(SW_PROF_START_XMIT);
+
+	/* if shutdown, all skb need to free */
+	if (rwnx_hw->core->flags.is_shutdown) {
+		WQ_DBG(DM_TX, DL_ERR, "%s: shutdown!\n", __func__);
+		goto free;
+	}
+
+	if (rwnx_hw->time_dump_enable) {
+		time_start_us = (u64)ktime_to_us(ktime_get());
+	}
 
 #if MEM_RECORED_CHECK
 	add_mem_record(skb->truesize, __func__, __LINE__, skb);
 #endif
 
-	if (rwnx_hw->disconnecting_in_progress) {
-		WQ_DBG(DM_TX, DL_ERR, "%s: disconnecting in progress\n", __func__);
-		goto free;
-	}
-
 	sk_pacing_shift_update(skb->sk, rwnx_hw->tcp_pacing_shift);
 
 	// If buffer is shared (or may be used by another interface) need to make a
 	// copy as TX infomration is stored inside buffer's headroom
-	if (rwnx_hw->core->hif_ops->hif == WQ_HIF_USB) {
-		//For USB, skip the tailroom check when deciding on skb_copy_expand.
-		if (skb_shared(skb) || (skb_headroom(skb) < IPC_TX_MAX_HEADROOM) ||
-	    (skb_cloned(skb) && (dev->priv_flags & IFF_BRIDGE_PORT))) 
-	    {
-			struct sk_buff *newskb = skb_copy_expand(
-				skb, IPC_TX_MAX_HEADROOM,
-				(RWNX_TX_ALIGN_SIZE + WQ_HIF_TRAILER_SPACE_RSVD),
-				GFP_ATOMIC);
-			if (unlikely(newskb == NULL)) {
-				WQ_DBG(DM_TX, DL_ERR, "%s: null newskb\n", __func__);
-				goto free;
-			}
-
-			dev_kfree_skb_any(skb);
-			skb = newskb;
+	if (skb_shared(skb) || (skb_headroom(skb) < IPC_TX_MAX_HEADROOM) ||
+	    (skb_tailroom(skb) <
+	     (RWNX_TX_ALIGN_SIZE + WQ_HIF_TRAILER_SPACE_RSVD)) ||
+	    (skb_cloned(skb) && (dev->priv_flags & IFF_BRIDGE_PORT))) {
+		struct sk_buff *newskb = skb_copy_expand(
+			skb, IPC_TX_MAX_HEADROOM,
+			(RWNX_TX_ALIGN_SIZE + WQ_HIF_TRAILER_SPACE_RSVD),
+			GFP_ATOMIC);
+		if (unlikely(newskb == NULL)) {
+			WQ_DBG(DM_TX, DL_ERR, "%s: null newskb\n", __func__);
+			goto free;
 		}
-		
-	} else {
-		if (skb_shared(skb) || (skb_headroom(skb) < IPC_TX_MAX_HEADROOM) ||
-	    (skb_tailroom(skb) < (RWNX_TX_ALIGN_SIZE + WQ_HIF_TRAILER_SPACE_RSVD)) ||
-	    (skb_cloned(skb) && (dev->priv_flags & IFF_BRIDGE_PORT))) 
-	    {
-			struct sk_buff *newskb = skb_copy_expand(
-				skb, IPC_TX_MAX_HEADROOM,
-				(RWNX_TX_ALIGN_SIZE + WQ_HIF_TRAILER_SPACE_RSVD),
-				GFP_ATOMIC);
-			if (unlikely(newskb == NULL)) {
-				WQ_DBG(DM_TX, DL_ERR, "%s: null newskb\n", __func__);
-				goto free;
-			}
 
-			dev_kfree_skb_any(skb);
-			skb = newskb;
-		}
+		dev_kfree_skb_any(skb);
+		skb = newskb;
 	}
-	
 #ifdef CONFIG_HML
 	eth = (struct ethhdr *)skb->data;
 	if (rwnx_vif->is_hml && is_multicast_ether_addr(eth->h_dest)) {
@@ -1378,40 +1344,6 @@ netdev_tx_t rwnx_start_xmit(struct sk_buff *skb, struct net_device *dev)
 	}
 #endif
 
-	if (rwnx_hw->large_ap_mode) {
-		eth = (struct ethhdr *)skb->data;
-		if (ntohs(eth->h_proto) == ETH_P_IP) {
-			struct iphdr *ip_hdr = (struct iphdr *)(eth + 1);
-			if (ip_hdr->protocol == IPPROTO_UDP) {
-				struct credit_mgmt *crdt_mgmt = &rwnx_hw->crdt_mgmt;
-				struct udphdr *udp;
-				uint16_t udp_len;
-				uint8_t *udp_hdr_ptr =
-					(uint8_t *)ip_hdr + (ip_hdr->ihl << 2);
-				udp = (struct udphdr *)udp_hdr_ptr;
-				udp_len = ntohs(udp->len);
-
-				// iperf UDP connection packet size is 4
-				if (udp_len == 12) {
-					uint32_t msg = *(uint32_t *)(udp_hdr_ptr + sizeof(struct udphdr));
-
-					if (msg == 123456789) {
-						//iperf packet, do nothing
-					}
-					else if (msg == 987654321) {
-						//iperf packet, do nothing
-					}
-					else if (crdt_mgmt->drv_crdt_num <= ((crdt_mgmt->dev_credit_sz/2)))
-					{
-						//unidentified 4B udp payload, drop it
-						WQ_DBG(DM_TX, DL_ERR, "%s: unidentified 4B udp, crdt_num=%u\n", __func__, crdt_mgmt->drv_crdt_num);
-						goto free;
-					}
-				}
-			}
-		}
-	}
-
 	rwnx_hw->hard_start_xmit_cnt++;
 
 	if (rwnx_hw->core->hif_ops->hif == WQ_HIF_USB ||
@@ -1424,6 +1356,11 @@ netdev_tx_t rwnx_start_xmit(struct sk_buff *skb, struct net_device *dev)
 	ret = rwnx_prepare_xmit(new_skb, rwnx_vif, txq, sta, tid,
 				(new_skb != skb));
 	PROFILING_CLR(SW_PROF_START_XMIT);
+
+	if (rwnx_hw->time_dump_enable) {
+		time_end_us = (u64)ktime_to_us(ktime_get());
+		atomic_add((u32)(time_end_us - time_start_us), &rwnx_hw->tx_xmit_time);
+	}
 
 	return ret;
 
@@ -1462,9 +1399,9 @@ int rwnx_start_mgmt_xmit(struct rwnx_vif *vif, struct rwnx_sta *sta,
 	int ret = 0;
 	struct ieee80211_mgmt *mgmt = (void *)params->buf;
 
-	if (rwnx_hw->disconnecting_in_progress) {
-		WQ_DBG(DM_TX, DL_ERR, "%s: disconnecting in progress\n", __func__);
-		return 0;
+	if (rwnx_hw->core->flags.is_shutdown) {
+		WQ_DBG(DM_TX, DL_ERR, "%s: shutdown!\n", __func__);
+		return -EBUSY;
 	}
 
 	headroom = IPC_TX_MAX_HEADROOM;
