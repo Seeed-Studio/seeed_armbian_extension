@@ -1,0 +1,10 @@
+pcie-rkep-dkms (1.0.4-1) stable; urgency=medium
+
+  * Initial DKMS package: driver source (DRV_VERSION 0x00030300) synced
+    from the RK1820/RK1828 AI SDK V1.0.4, verified working against the
+    SDK V1.0.4 userspace (rknn3 firmware download + rknn-smi Online)
+  * postinst installs modules-load.d boot autoload: the upstream
+    MODULE_DEVICE_TABLE declares a wrong bus name ("pcie_rkep" instead
+    of "pci"), so udev PCI modalias autoload never fires
+
+ -- Seeed Studio <techsupport@seeed.cc>  Mon, 31 Aug 2026 17:00:00 +0800
