@@ -4,18 +4,31 @@
 #
 # Cloned images on several disks expose duplicate PARTLABEL/UUID values, so the
 # default /dev/disk symlink resolution races and may assemble the root from a
-# different disk than the one that supplied the kernel and boot script. This
-# script is sourced by initramfs-tools /init before scripts/local runs; when
-# the tokens are present it rewrites ROOT to the concrete partition on the
-# boot disk. Without tokens (or without a match) ROOT stays untouched, so
-# single-disk and legacy boots behave exactly as before.
+# different disk than the one that supplied the kernel and boot script.
+#
+# initramfs-tools runs init-top scripts as child processes: cache_run_scripts
+# (hook-functions) emits an ORDER file whose lines execute each script, and
+# /init merely sources that file. Variables assigned here would die with the
+# child; the only channel back into /init is /conf/param.conf, which
+# run_scripts sources right after every script. When the tokens are present
+# and the ROOT uuid resolves on the token disk, the concrete partition is
+# exported through param.conf. Without tokens (or without a match) ROOT stays
+# untouched, so single-disk and legacy boots behave exactly as before.
+
+# Standard initramfs-tools prereqs protocol: mkinitramfs executes this script
+# with $1=prereqs while generating ORDER and expects the prerequisite list on
+# stdout; running the real logic there would parse the build host's cmdline.
+case "${1:-}" in
+prereqs)
+    echo
+    exit 0
+    ;;
+esac
 
 log_step() {
     echo "[bootdev-root] $*"
     [ -e /dev/kmsg ] && echo "[bootdev-root] $*" > /dev/kmsg 2>/dev/null || true
 }
-
-# Sourced, never executed: bail out with return, not exit.
 
 bootdev_type=""
 bootdev_num=""
@@ -26,22 +39,22 @@ for x in $(cat /proc/cmdline 2>/dev/null); do
     esac
 done
 
-[ -n "${bootdev_type}" ] || return 0
+[ -n "${bootdev_type}" ] || exit 0
 
 case "${bootdev_type}" in
     mmc) bootdev_disk="/dev/mmcblk${bootdev_num}" ;;
     nvme) bootdev_disk="/dev/nvme${bootdev_num}n1" ;;
-    *) return 0 ;;
+    *) exit 0 ;;
 esac
 
 case ${ROOT:-} in
     UUID=*|PARTUUID=*) ;;
-    *) return 0 ;;
+    *) exit 0 ;;
 esac
 
 [ -b "${bootdev_disk}" ] || {
     log_step "token disk ${bootdev_disk} not present, leaving root unchanged"
-    return 0
+    exit 0
 }
 
 blkid_match="${ROOT}"
@@ -67,9 +80,12 @@ done
 
 if [ -n "${anchored}" ]; then
     log_step "anchored ${ROOT} on ${bootdev_disk} -> ${anchored}"
-    ROOT="${anchored}"
+    # Append, never truncate: earlier init-top scripts may have exported their
+    # own variables through the same file.
+    printf "ROOT='%s'\n" "${anchored}" >> /conf/param.conf ||
+        log_step "cannot write /conf/param.conf; root left unchanged"
 else
     log_step "no ${blkid_match} match on ${bootdev_disk}, leaving root unchanged"
 fi
 
-return 0
+exit 0
