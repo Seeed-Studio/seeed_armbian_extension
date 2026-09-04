@@ -42,7 +42,7 @@ function ota_uboot_env_prefill_mkenvimage() {
 function ota_uboot_env_prefill_compose() {
     local final_env="$1"
     local default_env="${UBOOT_CHROOT_DIR}/u-boot-default.env"
-    local src_env bootcmd_value override_env
+    local src_env bootcmd_value override_env raw_override_env
 
     if [[ "${AB_PART_OTA:-}" == "yes" ]]; then
         src_env="${MOUNT}/etc/u-boot-initial-env"
@@ -50,7 +50,23 @@ function ota_uboot_env_prefill_compose() {
             exit_with_error "A/B initial env missing" "${src_env} not generated"
         grep -q '^bootcmd=.*armbian\.bootdev' "${src_env}" ||
             exit_with_error "A/B initial env lacks bootdev token" "${src_env}"
-        ota_ab_merge_uboot_env_files "${final_env}" "${src_env}"
+
+        if ota_raw_boot_enabled; then
+            # Raw-FIT images must take the bootcmd's raw-fit branch from the
+            # very first boot. The else-branch runs distro_bootcmd first, and
+            # its per-device boot_android calls repoint android_get_bootdev()
+            # at whatever device was scanned last (the SPI mtd on boards with
+            # NOR flash), so the trailing boot_fit then searches the wrong
+            # device and dies with "No boot partition" (RK3588 SD boot,
+            # 2026-09-03). ota-init only sets this mode after a bootstrapped
+            # first boot, which never happens without this injection.
+            raw_override_env="$(mktemp)" || exit_with_error "mktemp failed"
+            printf 'ab_boot_mode=raw-fit\n' > "${raw_override_env}"
+            ota_ab_merge_uboot_env_files "${final_env}" "${src_env}" "${raw_override_env}"
+            rm -f "${raw_override_env}"
+        else
+            ota_ab_merge_uboot_env_files "${final_env}" "${src_env}"
+        fi
         return 0
     fi
 

@@ -198,6 +198,11 @@ assert_eq "merge keeps novel keys" "$(grep -c '^novel_key=1$' <<< "${merged}")" 
 PREFILL_TMP="$(mktemp -d)"
 exit_with_error() { echo "EXIT_WITH_ERROR: $*"; exit 23; }
 # shellcheck source=/dev/null
+# partitions.sh provides ota_raw_boot_enabled, which the build sources via
+# ota-support.sh before this module.
+# shellcheck source=/dev/null
+source "${EXT_ROOT}/armbian-ota/common/build-hooks/partitions.sh"
+# shellcheck source=/dev/null
 source "${EXT_ROOT}/armbian-ota/common/build-hooks/uboot-env-prefill.sh"
 
 # Recovery: default env gets the token prefix in front of the compiled bootcmd.
@@ -241,6 +246,28 @@ mkdir -p "${MOUNT}/etc"
 printf '%s\n' "bootcmd=boot_fit;" > "${MOUNT}/etc/u-boot-initial-env"
 AB_PART_OTA=yes out="$(ota_uboot_env_prefill_compose "${PREFILL_TMP}/ab2.env" 2>&1; echo rc=$?)"
 assert_contains "ab token enforcement" "${out}" "EXIT_WITH_ERROR"
+unset AB_PART_OTA MOUNT
+
+# A/B raw-fit builds must inject the boot mode so first boot takes the
+# raw-fit branch and never runs the distro scan (android_dev_desc poison).
+MOUNT="${PREFILL_TMP}/rootfs3"
+mkdir -p "${MOUNT}/etc"
+printf '%s\n' "bootdelay=1" \
+    'bootcmd=run ab_preboot; setenv bootargs "${bootargs} armbian.bootdev=${devtype} armbian.bootdevnum=${devnum}"; boot_fit;' \
+    > "${MOUNT}/etc/u-boot-initial-env"
+AB_PART_OTA=yes BOOT_RAW_MODE=yes ota_uboot_env_prefill_compose "${PREFILL_TMP}/ab3.env"
+assert_eq "ab raw-fit mode injected" "$(grep -c '^ab_boot_mode=raw-fit$' "${PREFILL_TMP}/ab3.env")" "1"
+unset AB_PART_OTA BOOT_RAW_MODE MOUNT
+
+# Plain A/B (BOOT_RAW_MODE unset) must NOT carry the mode: first boot needs
+# the distro scan to reach boot.scr on the ext4 boot_a partition.
+MOUNT="${PREFILL_TMP}/rootfs4"
+mkdir -p "${MOUNT}/etc"
+printf '%s\n' \
+    'bootcmd=run ab_preboot; setenv bootargs "${bootargs} armbian.bootdev=${devtype}"; boot_fit;' \
+    > "${MOUNT}/etc/u-boot-initial-env"
+AB_PART_OTA=yes ota_uboot_env_prefill_compose "${PREFILL_TMP}/ab4.env"
+assert_eq "plain ab keeps distro path" "$(grep -c '^ab_boot_mode=' "${PREFILL_TMP}/ab4.env")" "0"
 unset AB_PART_OTA MOUNT
 
 # ── mkenvimage round-trip ────────────────────────────────────────────────────
