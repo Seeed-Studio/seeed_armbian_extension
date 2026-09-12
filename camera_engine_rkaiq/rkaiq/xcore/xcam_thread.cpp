@@ -155,8 +155,21 @@ bool Thread::start ()
     }
 
     if (pthread_create(&_thread_id, &attr, (void* (*)(void*))thread_func, this) != 0) {
+        /* When realtime scheduling is denied by the environment (cgroup
+         * policy, EPERM even for root), retry with default scheduling;
+         * otherwise the 3A stats thread dies silently and AE runs
+         * open-loop with exposure frozen at its initial value. */
         pthread_attr_destroy(&attr);
-        return false;
+        if (pthread_attr_init(&attr) != 0) {
+            return false;
+        }
+        pthread_attr_setstacksize(&attr, stacksize ? stacksize : 2048 * 1024);
+        if (pthread_create(&_thread_id, &attr, (void* (*)(void*))thread_func, this) != 0) {
+            pthread_attr_destroy(&attr);
+            return false;
+        }
+        XCAM_LOG_WARNING("Thread(%s) RT sched denied, fallback to SCHED_OTHER",
+                         XCAM_STR(_name));
     }
 
     pthread_attr_destroy(&attr);

@@ -188,9 +188,23 @@ bool aiqThread_start(AiqThread_t* thread) {
     }
 
     if (pthread_create(&thread->_thread_id, &attr, (void* (*)(void*))thread_func, thread) != 0) {
+        /* When realtime scheduling is denied by the environment (cgroup
+         * policy, EPERM even for root), retry with default scheduling;
+         * otherwise the 3A stats thread dies silently and AE runs
+         * open-loop with exposure frozen at its initial value. */
         pthread_attr_destroy(&attr);
-        aiqMutex_unlock(&thread->_mutex);
-        return false;
+        if (pthread_attr_init(&attr) != 0) {
+            aiqMutex_unlock(&thread->_mutex);
+            return false;
+        }
+        pthread_attr_setstacksize(&attr, stacksize ? stacksize : 2048 * 1024);
+        if (pthread_create(&thread->_thread_id, &attr, (void* (*)(void*))thread_func, thread) != 0) {
+            pthread_attr_destroy(&attr);
+            aiqMutex_unlock(&thread->_mutex);
+            return false;
+        }
+        XCAM_LOG_WARNING("Thread(%s) RT sched denied, fallback to SCHED_OTHER",
+                         XCAM_STR(thread->_name));
     }
 
     pthread_attr_destroy(&attr);

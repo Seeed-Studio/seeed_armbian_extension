@@ -7,6 +7,9 @@ Type=simple
 ExecStart=/usr/bin/rkaiq_3A_server
 Restart=on-failure
 RestartSec=2
+# The server blocks in an infinite stream-event wait and never exits on
+# SIGTERM; cap the stop timeout instead of waiting the 90s default.
+TimeoutStopSec=3
 
 [Install]
 WantedBy=multi-user.target
