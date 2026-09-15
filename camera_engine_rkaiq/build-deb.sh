@@ -45,7 +45,7 @@ LIBDRM_DEV_SHA256="dbbbc3d05b470d6d35b5f2daed4be893e41b74f9c7e58bf5be3d18849b14f
 
 # Host gcc builds the j2s/iq_check parser tools; m4 feeds iq_parser_v2's header generation (ninja step 'Generating
 # RkAiqCalibDbTypesV2_M4.h'); without it the build dies mid-ninja.
-for tool in cmake ninja m4 gcc xz curl sha256sum dpkg-deb; do
+for tool in cmake ninja m4 gcc xxd xz curl sha256sum dpkg-deb; do
     command -v "${tool}" >/dev/null 2>&1 || { echo "ERROR: missing tool: ${tool}"; exit 1; }
 done
 
