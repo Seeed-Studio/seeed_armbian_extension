@@ -43,9 +43,9 @@ LIBDRM_BASE_URL="https://deb.debian.org/debian/pool/main/libd/libdrm"
 LIBDRM2_SHA256="1dc606aa361307a8c5277c2a5ddedea40a4125874e887c98e82b33dacaa853b0"
 LIBDRM_DEV_SHA256="dbbbc3d05b470d6d35b5f2daed4be893e41b74f9c7e58bf5be3d18849b14f78a"
 
-# m4 is needed by iq_parser_v2's header generation (ninja step 'Generating
+# Host gcc builds the j2s/iq_check parser tools; m4 feeds iq_parser_v2's header generation (ninja step 'Generating
 # RkAiqCalibDbTypesV2_M4.h'); without it the build dies mid-ninja.
-for tool in cmake ninja m4 xz curl sha256sum dpkg-deb; do
+for tool in cmake ninja m4 gcc xz curl sha256sum dpkg-deb; do
     command -v "${tool}" >/dev/null 2>&1 || { echo "ERROR: missing tool: ${tool}"; exit 1; }
 done
 
