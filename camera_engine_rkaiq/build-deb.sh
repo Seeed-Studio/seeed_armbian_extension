@@ -10,7 +10,7 @@
 # make-Makefiles-aarch64.bash so both sides of the link come from the same
 # Arm GNU toolchain family.
 #
-# Usage: ./build-deb.sh <rk3576|rk3588>
+# Usage: ./build-deb.sh <rk3576|rk3588|rk356x>
 #
 # Environment:
 #   DEB_RELEASE   — debian revision suffix (default: 1)
@@ -21,11 +21,12 @@
 
 set -euo pipefail
 
-SOC="${1:?Usage: $0 <rk3576|rk3588>}"
+SOC="${1:?Usage: $0 <rk3576|rk3588|rk356x>}"
 case "${SOC}" in
     rk3576) IQDIR="isp39"; ISPVER="-DISP_HW_V39"; MINKVER="6.1.115"; EXTRA_DEPENDS="" ;;
     rk3588) IQDIR="isp3x"; ISPVER="-DISP_HW_V30"; MINKVER="6.1.115"; EXTRA_DEPENDS="libstdc++6," ;;
-    *) echo "ERROR: Unsupported SoC: ${SOC}. Use rk3576 or rk3588."; exit 1 ;;
+    rk356x) IQDIR="isp21"; ISPVER="-DISP_HW_V21"; MINKVER="6.1.115"; EXTRA_DEPENDS="" ;;
+    *) echo "ERROR: Unsupported SoC: ${SOC}. Use rk3576, rk3588 or rk356x."; exit 1 ;;
 esac
 
 SCRIPT_DIR=$(cd "$(dirname "$0")" && pwd)
