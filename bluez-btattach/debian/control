@@ -1,0 +1,24 @@
+Source: bluez-btattach
+Section: admin
+Priority: optional
+Maintainer: Seeed Studio <techsupport@seeed.cc>
+Build-Depends: debhelper (>= 11~), gcc, make
+Standards-Version: 4.6.2.1
+
+Package: bluez-btattach
+Architecture: arm64
+Depends: bluez, libc6, ${misc:Depends}
+Description: btattach from bluez 5.87 source (UART H4 attach workaround)
+ Workaround for a btattach regression in resolute (26.04) bluez 5.85:
+ the -S baud rate value is OR'd raw into termios c_cflag, so the speed
+ field reads B0 (hangup), RTS gets deasserted and CTS-gated H4
+ controllers never attach. All standard baud rates are even numbers,
+ the low speed bits are therefore always zero - there is no
+ argument-level workaround.
+ .
+ This package builds btattach from the bluez 5.87 release source
+ (with the upstream glibc 2.42 fix) and installs it as /usr/bin/btattach
+ via dpkg-divert; the distro binary is kept at /usr/bin/btattach.distrib
+ and restored automatically when this package is removed.
+ .
+ Remove this package once the distribution ships a fixed btattach.
