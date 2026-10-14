@@ -1,0 +1,14 @@
+#!/bin/sh
+# Register the diversion BEFORE our /usr/bin/btattach is unpacked:
+# dpkg moves bluez's binary to btattach.distrib (--rename) and, from
+# now on, redirects every future bluez upgrade there as well.
+set -e
+
+case "$1" in
+	install|upgrade)
+		dpkg-divert --package bluez-btattach --add --rename \
+			--divert /usr/bin/btattach.distrib /usr/bin/btattach
+		;;
+esac
+
+exit 0

@@ -1,0 +1,24 @@
+#!/usr/bin/make -f
+
+# Cross builds (-aarm64 on amd64 hosts): route CC to the cross compiler.
+ifneq ($(DEB_HOST_GNU_TYPE),$(DEB_BUILD_GNU_TYPE))
+	CC := $(DEB_HOST_GNU_TYPE)-gcc
+	export CC
+endif
+
+%:
+	dh $@
+
+# Single-binary build via the package Makefile; nothing to configure or test.
+override_dh_auto_configure:
+override_dh_auto_test:
+override_dh_auto_install:
+
+# Keep dpkg-shlibdeps out: cross builds (-aarm64) cannot resolve foreign-arch
+# libc and the runtime dep is statically known (libc only, see debian/control).
+override_dh_shlibdeps:
+
+# dh_fixperms resets regular files to 0644; keep the binary executable.
+override_dh_fixperms:
+	dh_fixperms
+	chmod 0755 debian/bluez-btattach/usr/bin/btattach
