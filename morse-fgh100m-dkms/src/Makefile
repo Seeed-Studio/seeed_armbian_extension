@@ -34,6 +34,9 @@ ccflags-$(CONFIG_MORSE_MONITOR) += "-DCONFIG_MORSE_MONITOR"
 ccflags-$(CONFIG_MORSE_PAGESET_TRACE) += "-DCONFIG_MORSE_PAGESET_TRACE"
 ccflags-$(CONFIG_MORSE_BUS_TRACE) += "-DCONFIG_MORSE_BUS_TRACE"
 ccflags-$(CONFIG_ANDROID) += "-DCONFIG_ANDROID"
+# Set by the DKMS wrapper when the target kernel's cfg80211.h carries the
+# cfg80211_port_authorized() td_bitmap backport (see ../Makefile).
+ccflags-$(CONFIG_MORSE_PORT_AUTH_TD_BITMAP) += "-DCFG80211_PORT_AUTH_TD_BITMAP"
 
 ifneq ($(CONFIG_BACKPORT_VERSION),)
 # Convert a version string from "vX.Y.Z-stuff" into an integer for comparison with KERNEL_VERSION
