@@ -2004,7 +2004,8 @@ void morse_wiphy_connected(struct morse *mors, const u8 *bssid,
 
 /* TODO: this should only be called if we connected with SAE (or OWE?) */
 #if (KERNEL_VERSION(6, 2, 0) <= MAC80211_VERSION_CODE) || \
-	(defined(CONFIG_ANDROID) && (KERNEL_VERSION(6, 1, 25) <= LINUX_VERSION_CODE))
+	(defined(CONFIG_ANDROID) && (KERNEL_VERSION(6, 1, 25) <= LINUX_VERSION_CODE)) || \
+	defined(CFG80211_PORT_AUTH_TD_BITMAP)
 	cfg80211_port_authorized(ndev, bssid, NULL, 0, GFP_KERNEL);
 #elif KERNEL_VERSION(4, 15, 0) <= LINUX_VERSION_CODE
 	cfg80211_port_authorized(ndev, bssid, GFP_KERNEL);

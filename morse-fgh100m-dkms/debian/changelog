@@ -1,3 +1,14 @@
+morse-fgh100m-dkms (1.16.4-3) stable; urgency=medium
+
+  * Detect the 5-arg cfg80211_port_authorized() by probing the target
+    kernel headers: newer Rockchip vendor 6.1 trees (still reporting
+    LINUX_VERSION_CODE 6.1.172) backported the td_bitmap/td_bitmap_len
+    parameters without bumping MAC80211_VERSION_CODE, so the existing
+    version guards picked the removed 3-arg call and the build failed
+    with "too few arguments to function 'cfg80211_port_authorized'"
+
+ -- Seeed Studio <techsupport@seeed.cc>  Tue, 20 Oct 2026 18:00:00 +0800
+
 morse-fgh100m-dkms (1.16.4-2) stable; urgency=medium
 
   * Extend the IEEE80211_CHAN_IGNORE compat shim to aarch64: the stock
