@@ -2376,7 +2376,10 @@ int rwnx_send_apm_start_req(struct rwnx_hw *rwnx_hw, struct rwnx_vif *vif,
 		if (!buf_new) {
 			need_swt_ch = false;
 		} else {
-#if LINUX_VERSION_CODE >= KERNEL_VERSION(6, 3, 0)
+#if LINUX_VERSION_CODE >= KERNEL_VERSION(6, 9, 0)
+			cfg80211_ch_switch_notify(vif->ndev, &vif->ap.chandef,
+						  0);
+#elif LINUX_VERSION_CODE >= KERNEL_VERSION(6, 3, 0)
 			cfg80211_ch_switch_notify(vif->ndev, &vif->ap.chandef,
 						  0, 0);
 #elif LINUX_VERSION_CODE >= KERNEL_VERSION(6, 1, 0)

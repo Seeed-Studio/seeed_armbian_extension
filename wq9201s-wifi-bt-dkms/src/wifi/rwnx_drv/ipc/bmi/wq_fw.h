@@ -45,7 +45,7 @@ typedef struct fw_bin_header_ver_detail {
 	u32 rever : 8;
 	u32 build : 12;
 } fw_bin_ver_t;
-static void inline wq_fw_get_ver_detail(u32 version, fw_bin_ver_t *p_dver)
+static inline void wq_fw_get_ver_detail(u32 version, fw_bin_ver_t *p_dver)
 {
 	p_dver->major = (version >> 25) & 0x7F;
 	p_dver->minor = (version >> 20) & 0x1F;

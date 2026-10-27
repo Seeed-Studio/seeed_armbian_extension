@@ -21,6 +21,7 @@
  */
 
 #include <linux/of_gpio.h>
+#include <linux/sched/clock.h>
 #ifdef CONFIG_RK3588_ENABLE_WAKEUP_OOB
 #include <linux/wakelock.h>
 #endif

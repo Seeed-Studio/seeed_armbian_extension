@@ -209,6 +209,9 @@ obj-$(CONFIG_WQ_WLAN_SDIO) += wq_wlan_sdio.o
 obj-$(CONFIG_WQ_WLAN_PCIE) += wq_wlan_pcie.o
 endif
 
+# 6.12+ kbuild enables these by default (CONFIG_WERROR); legacy vendor code trips them
+ccflags-y += -Wno-missing-prototypes -Wno-missing-declarations -Wno-old-style-declaration
+
 # include files
 ccflags-y += -I$(src)
 ccflags-y += -I$(src)/$(SRC_COMMON)

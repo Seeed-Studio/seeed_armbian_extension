@@ -1196,7 +1196,9 @@ static void rwnx_csa_finish(struct work_struct *ws)
 		} else
 			rwnx_txq_vif_stop(vif, RWNX_TXQ_STOP_CHAN, rwnx_hw);
 		spin_unlock_bh(&rwnx_hw->cb_lock);
-#if LINUX_VERSION_CODE >= KERNEL_VERSION(6, 3, 0)
+#if LINUX_VERSION_CODE >= KERNEL_VERSION(6, 9, 0)
+		cfg80211_ch_switch_notify(vif->ndev, &csa->chandef, 0);
+#elif LINUX_VERSION_CODE >= KERNEL_VERSION(6, 3, 0)
 		cfg80211_ch_switch_notify(vif->ndev, &csa->chandef, 0, 0);
 #elif LINUX_VERSION_CODE >= KERNEL_VERSION(6, 1, 0)
 		cfg80211_ch_switch_notify(vif->ndev, &csa->chandef, 0);
@@ -5048,7 +5050,12 @@ send_frame:
 /**
  * @start_radar_detection: Start radar detection in the driver.
  */
-#if LINUX_VERSION_CODE >= KERNEL_VERSION(3, 15, 0)
+#if LINUX_VERSION_CODE >= KERNEL_VERSION(6, 12, 0)
+static int
+rwnx_cfg80211_start_radar_detection(struct wiphy *wiphy, struct net_device *dev,
+				    struct cfg80211_chan_def *chandef,
+				    u32 cac_time_ms, int link_id)
+#elif LINUX_VERSION_CODE >= KERNEL_VERSION(3, 15, 0)
 static int
 rwnx_cfg80211_start_radar_detection(struct wiphy *wiphy, struct net_device *dev,
 				    struct cfg80211_chan_def *chandef,
@@ -5352,7 +5359,10 @@ static int rwnx_cfg80211_channel_switch(struct wiphy *wiphy,
 		goto end;
 	} else {
 		WQ_INIT_WORK(&csa->work, rwnx_csa_finish);
-#if LINUX_VERSION_CODE >= KERNEL_VERSION(6, 3, 0)
+#if LINUX_VERSION_CODE >= KERNEL_VERSION(6, 9, 0)
+		cfg80211_ch_switch_started_notify(dev, &csa->chandef, 0,
+						  params->count, false);
+#elif LINUX_VERSION_CODE >= KERNEL_VERSION(6, 3, 0)
 		cfg80211_ch_switch_started_notify(dev, &csa->chandef, 0,
 						  params->count, false, 0);
 #elif LINUX_VERSION_CODE >= KERNEL_VERSION(6, 1, 0)

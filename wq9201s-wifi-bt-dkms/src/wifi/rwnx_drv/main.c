@@ -15,7 +15,10 @@ void __exit wq_sdio_exit(void);
 int __init wq_usb_init(void);
 void __exit wq_usb_exit(void);
 
-#if LINUX_VERSION_CODE >= KERNEL_VERSION(4, 5, 0)
+#if LINUX_VERSION_CODE >= KERNEL_VERSION(6, 4, 0)
+	#define MOD_BASE(m) ((m)->mem[MOD_TEXT].base)
+	#define MOD_SIZE(m) ((m)->mem[MOD_TEXT].size)
+#elif LINUX_VERSION_CODE >= KERNEL_VERSION(4, 5, 0)
 	#define MOD_BASE(m) ((m)->core_layout.base)
 	#define MOD_SIZE(m) ((m)->core_layout.size)
 #else

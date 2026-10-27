@@ -1016,7 +1016,9 @@ void rwnx_bcn_change_done_task(struct work_struct *w)
 	rwnx_chanctx_unlink(vif);
 	rwnx_chanctx_link(vif, ch_index, &vif->ap.chandef);
 
-#if LINUX_VERSION_CODE >= KERNEL_VERSION(6, 3, 0)
+#if LINUX_VERSION_CODE >= KERNEL_VERSION(6, 9, 0)
+	cfg80211_ch_switch_notify(vif->ndev, &vif->ap.chandef, 0);
+#elif LINUX_VERSION_CODE >= KERNEL_VERSION(6, 3, 0)
 	cfg80211_ch_switch_notify(vif->ndev, &vif->ap.chandef, 0, 0);
 #elif LINUX_VERSION_CODE >= KERNEL_VERSION(6, 1, 0) || defined(AMLOGIC_BUILD_COMPATIBLE)
 	cfg80211_ch_switch_notify(vif->ndev, &vif->ap.chandef, 0);
