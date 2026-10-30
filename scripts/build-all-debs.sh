@@ -14,9 +14,10 @@ mkdir -p "${OUTPUT_DIR}"
 
 PACKAGES=(
     "FCS960K-aic-bluz"
-    "hostapd_morse_tools"
-    "morsectrl_tools"
-    "wpa_supplicant_morese_tools"
+    "morse-halow/hostapd_morse_tools"
+    "morse-halow/morsectrl_tools"
+    "morse-halow/wpa_supplicant_morse_tools"
+    "morse-halow/morse-firmware"
     "rk35xx_usb_gadget"
 )
 

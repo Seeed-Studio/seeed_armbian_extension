@@ -107,17 +107,17 @@ jobs:
             build_cmd: DEB_BUILD_OPTIONS="noddebs" dpkg-buildpackage -us -uc -b
 
           - name: hostapd-morse-tools
-            source_dir: hostapd_morse_tools
+            source_dir: morse-halow/hostapd_morse_tools
             build_deps: libnl-3-dev libnl-genl-3-dev libnl-route-3-dev libssl-dev libdbus-1-dev
             build_cmd: make deb
 
           - name: morsectrl-tools
-            source_dir: morsectrl_tools
+            source_dir: morse-halow/morsectrl_tools
             build_deps: quilt pkg-config libnl-3-dev libnl-genl-3-dev libnl-route-3-dev gcc-aarch64-linux-gnu
             build_cmd: DEB_BUILD_OPTIONS="noddebs" dpkg-buildpackage -us -uc -b
 
           - name: wpa-supplicant-morse-tools
-            source_dir: wpa_supplicant_morese_tools
+            source_dir: morse-halow/wpa_supplicant_morse_tools
             build_deps: libnl-3-dev libnl-genl-3-dev libnl-route-3-dev libssl-dev libdbus-1-dev
             build_cmd: make deb
 
@@ -126,9 +126,19 @@ jobs:
             build_deps: dh-sequence-dkms
             build_cmd: DEB_BUILD_OPTIONS="noddebs" dpkg-buildpackage -us -uc -b
 
+          - name: morse-firmware
+            source_dir: morse-halow/morse-firmware
+            build_deps: ''
+            build_cmd: DEB_BUILD_OPTIONS="noddebs" dpkg-buildpackage -us -uc -b
+
           - name: morse-fgh100m-dkms
-            source_dir: morse-fgh100m-dkms
+            source_dir: morse-halow/morse-fgh100m-dkms
             build_deps: dh-sequence-dkms
+            build_cmd: DEB_BUILD_OPTIONS="noddebs" dpkg-buildpackage -us -uc -b
+
+          - name: morse-halow
+            source_dir: morse-halow/morse-halow
+            build_deps: ''
             build_cmd: DEB_BUILD_OPTIONS="noddebs" dpkg-buildpackage -us -uc -b
 
           - name: realtek-r8125-dkms
