@@ -1,0 +1,27 @@
+Format: https://www.debian.org/doc/packaging-manuals/copyright-format/1.0/
+Upstream-Name: morse-firmware
+Source: https://github.com/MorseMicro/morse-firmware
+
+Files: firmware/mm6108.bin
+Copyright: 2025 Morse Micro Pty. Ltd.
+License: Morse-Micro-Binary-SLA
+ Morse Micro Binary Distribution License Agreement: free of charge for
+ use and redistribution in conjunction with Morse Micro products. See
+ firmware/LICENSE in the upstream repository at commit 974c7744.
+
+Files: firmware/bcf_default.bin
+Copyright: 2025 Quectel
+License: unknown
+ Retrieved from the Quectel SDK on 25 August 2025 (per upstream
+ WHENCE.md); no license file accompanies the Quectel BCF binaries.
+
+Files: debian/*
+Copyright: 2026 Seeed Studio <techsupport@seeed.cc>
+License: GPL-2+
+ This program is free software; you can redistribute it and/or modify it
+ under the terms of the GNU General Public License as published by the
+ Free Software Foundation; either version 2 of the License, or (at your
+ option) any later version.
+ .
+ On Debian systems, the complete text of the GNU General Public License
+ Version 2 can be found in `/usr/share/common-licenses/GPL-2'.

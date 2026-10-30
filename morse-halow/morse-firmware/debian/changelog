@@ -1,0 +1,15 @@
+morse-firmware (20251207-1) stable; urgency=medium
+
+  * Initial packaging: snapshot MorseMicro/morse-firmware commit
+    974c7744263ffb56a1c8678962e740fdcb3428f7 ("Update Makefile to also
+    install symlinks", 2025-12-07) — the same pin the image build
+    previously fetched at build time via fetch_from_repo in
+    recomputer-rk35xx-common.inc.
+  * Ships morse/mm6108.bin (MM6108 standard firmware) and
+    morse/bcf_default.bin (Quectel FGH100M-H US BCF, Wio-WM6108).
+  * Replaces: armbian-bsp-* — the firmware files were previously baked
+    into the BSP deb by post_family_tweaks_bsp__recomputer_fgh100m_
+    morse_firmware; this package takes over those paths so existing
+    images can apt-install it without a file conflict.
+
+ -- Seeed Studio <techsupport@seeed.cc>  Fri, 30 Oct 2026 10:00:00 +0800

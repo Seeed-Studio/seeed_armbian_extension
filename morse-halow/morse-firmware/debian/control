@@ -1,0 +1,27 @@
+Source: morse-firmware
+Section: non-free-firmware
+Priority: optional
+Maintainer: Seeed Studio <techsupport@seeed.cc>
+Build-Depends: debhelper (>= 11~)
+Standards-Version: 4.6.2.1
+
+Package: morse-firmware
+Architecture: all
+Multi-Arch: foreign
+Replaces: armbian-bsp-cli-recomputer-rk3576-devkit,
+ armbian-bsp-desktop-recomputer-rk3576-devkit,
+ armbian-bsp-cli-recomputer-rk3576-industrial,
+ armbian-bsp-desktop-recomputer-rk3576-industrial,
+ armbian-bsp-cli-recomputer-rk3576-module-devkit,
+ armbian-bsp-desktop-recomputer-rk3576-module-devkit,
+ armbian-bsp-cli-recomputer-rk3588-devkit,
+ armbian-bsp-desktop-recomputer-rk3588-devkit
+Depends: ${misc:Depends}
+Description: Morse Micro FGH100M HaLow (802.11ah) firmware
+ Firmware for the Morse Micro MM6108 HaLow chip used on the Wio-WM6108
+ module (Quectel FGH100M-H).
+ .
+ Installs /lib/firmware/morse/mm6108.bin (MM6108 standard firmware) and
+ /lib/firmware/morse/bcf_default.bin (Quectel FGH100M-H US BCF board
+ configuration), as loaded by the morse-fgh100m-dkms driver.
+ Snapshot of MorseMicro/morse-firmware commit 974c7744.
