@@ -1,0 +1,19 @@
+morse-halow (1.0-1) stable; urgency=medium
+
+  * Initial metapackage: version-locked Morse HaLow stack for the
+    Wio-WM6108 module (Quectel FGH100M-H).
+  * Pins morse-fgh100m-dkms (= 1.16.4-3), morse-firmware (= 20251207-1),
+    hostapd-morse-tools (= 1.0-1), wpa-supplicant-morse-tools (= 1.0-1)
+    and morsectrl-tools (= 1.0-1).
+  * The image build (recomputer-rk35xx-common.inc SEEED_MORSE_ENABLE)
+    installs this single package; exact (=) pins keep driver, firmware
+    and userspace tools upgrading in lockstep.
+  * The driver deliberately carries no Depends on morse-firmware:
+    image builds still running the previous .inc bake the firmware
+    into armbian-bsp-cli and install it AFTER the Seeed packages
+    (install_distribution_agnostic follows install_distribution_
+    specific) with no reverse Replaces, so that edge would abort those
+    builds on a dpkg file conflict. Driver/firmware coupling lives in
+    this metapackage only.
+
+ -- Seeed Studio <techsupport@seeed.cc>  Fri, 30 Oct 2026 12:00:00 +0800
