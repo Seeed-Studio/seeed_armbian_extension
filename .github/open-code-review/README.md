@@ -27,11 +27,14 @@ default disabled-thinking body. Never put credentials in variables or PR content
 
 The CLI is fixed to `1.13.6`, and the Action to its release commit
 `891df1b63f380845d882a289a67a6e36c331120c`; self-update is disabled.
-Review effort is medium, concurrency two, per-task timeout 15 minutes and job
-timeout 30 minutes. The total token stopping threshold is 1,200,000 input/output
-tokens per review. OCR checks it between rounds; concurrent work and the final
-submission round can exceed it. It is not a hard spending cap. Provider-side
-limits are needed for a hard monetary cap.
+Review effort is medium, concurrency two, per-task timeout 120 minutes and job
+timeout 360 minutes. No `max_tokens_budget` aggregate token limit is configured.
+
+GitHub-confirmed renames with zero additions and deletions are deduplicated by
+content. Directory migrations are added to the review background so path
+references, package discovery, build and install behavior remain in scope.
+The workflow summary reports completed coverage and lists automatically
+excluded files. Redacted diagnostics include a policy and file-scope manifest.
 
 ## Request a review
 
