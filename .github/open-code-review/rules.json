@@ -1,7 +1,7 @@
 {
   "include": ["**/*"],
   "exclude": [
-    "**/*.{deb,udeb,rpm,o,ko,a,so,bin,dtb,dtbo,elf,img,iso,pyc}",
+    "**/*.{udeb,rpm,o,ko,a,so,bin,dtb,dtbo,elf,img,iso,pyc}",
     "**/*.so.*",
     "**/*.{gz,xz,zst,bz2,zip,7z,png,jpg,jpeg,gif,ico,pdf}",
     "**/__pycache__/**"
