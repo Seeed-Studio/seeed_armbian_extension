@@ -4,7 +4,7 @@
     "prebuilt/**",
     "camera_engine_rkaiq/build/**",
     "camera_engine_rkaiq/IspFec/src/gen_mesh/android/**",
-    "**/*.{deb,udeb,rpm,o,ko,a,so,bin,dtb,dtbo,elf,img,iso,pyc}",
+    "**/*.{udeb,rpm,o,ko,a,so,bin,dtb,dtbo,elf,img,iso,pyc}",
     "**/*.so.*",
     "**/*.{gz,xz,zst,bz2,zip,7z,png,jpg,jpeg,gif,ico,pdf}",
     "**/__pycache__/**"
