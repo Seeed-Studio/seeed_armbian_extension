@@ -282,7 +282,7 @@ jobs:
           effort: medium
           review_concurrency: '2'
           review_task_timeout: '15'
-          max_tokens_budget: '200000'
+          max_tokens_budget: '1200000'
           sticky_summary: 'false'
           incremental: 'true'
           route_severity_below: low
