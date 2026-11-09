@@ -1,0 +1,49 @@
+{
+  "include": ["**/*"],
+  "exclude": [
+    "prebuilt/**",
+    "camera_engine_rkaiq/build/**",
+    "camera_engine_rkaiq/IspFec/src/gen_mesh/android/**",
+    "**/*.{deb,udeb,rpm,o,ko,a,so,bin,dtb,dtbo,elf,img,iso,pyc}",
+    "**/*.so.*",
+    "**/*.{gz,xz,zst,bz2,zip,7z,png,jpg,jpeg,gif,ico,pdf}",
+    "**/__pycache__/**"
+  ],
+  "rules": [
+    {
+      "path": ".github/**",
+      "rule": "rules/ci.md",
+      "merge_system_rule": true
+    },
+    {
+      "path": "**/debian/**",
+      "rule": "rules/packaging.md",
+      "merge_system_rule": true
+    },
+    {
+      "path": "{maxio-phy-dkms,pcie-rkep-dkms,realtek-r8125-dkms,wq9201s-wifi-bt-dkms}/**",
+      "rule": "rules/drivers.md",
+      "merge_system_rule": true
+    },
+    {
+      "path": "morse-halow/morse-fgh100m-dkms/**",
+      "rule": "rules/drivers.md",
+      "merge_system_rule": true
+    },
+    {
+      "path": "camera_engine_rkaiq/**",
+      "rule": "rules/camera.md",
+      "merge_system_rule": true
+    },
+    {
+      "path": "**/*.{patch,diff,c,h,cpp,cc,cxx,hpp,hxx}",
+      "rule": "rules/native.md",
+      "merge_system_rule": true
+    },
+    {
+      "path": "**",
+      "rule": "rules/runtime.md",
+      "merge_system_rule": true
+    }
+  ]
+}
