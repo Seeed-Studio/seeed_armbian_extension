@@ -145,7 +145,7 @@ jobs:
             const policySha = targetBranch.commit.sha;
             if (process.env.FORCE_REVIEW !== 'true') {
               const receipt = `ocr-completed-${pr.number}-${policySha}-${pr.head.sha}`;
-              const artifacts = await github.paginate(github.rest.actions.listArtifacts, {
+              const artifacts = await github.paginate(github.rest.actions.listArtifactsForRepo, {
                 ...context.repo, name: receipt, per_page: 100,
               });
               let prior;
