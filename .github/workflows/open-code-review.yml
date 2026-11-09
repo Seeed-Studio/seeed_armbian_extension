@@ -139,8 +139,12 @@ jobs:
             if (process.env.EXPECTED_HEAD && process.env.EXPECTED_HEAD !== pr.head.sha) {
               throw new Error(`PR moved before review started (expected ${process.env.EXPECTED_HEAD}, found ${pr.head.sha}); request the new commit.`);
             }
+            const { data: targetBranch } = await github.rest.repos.getBranch({
+              ...context.repo, branch: pr.base.ref,
+            });
+            const policySha = targetBranch.commit.sha;
             if (process.env.FORCE_REVIEW !== 'true') {
-              const receipt = `ocr-completed-${pr.number}-${pr.base.sha}-${pr.head.sha}`;
+              const receipt = `ocr-completed-${pr.number}-${policySha}-${pr.head.sha}`;
               const artifacts = await github.paginate(github.rest.actions.listArtifacts, {
                 ...context.repo, name: receipt, per_page: 100,
               });
@@ -170,7 +174,7 @@ jobs:
                 const comments = await github.paginate(github.rest.issues.listComments, {
                   ...context.repo, issue_number: pr.number, per_page: 100,
                 });
-                const marker = `<!-- ocr-skipped: ${pr.base.sha}:${pr.head.sha} -->`;
+                const marker = `<!-- ocr-skipped: ${policySha}:${pr.head.sha} -->`;
                 if (!comments.some(comment => comment.user?.type === 'Bot' &&
                     comment.user.login === 'github-actions[bot]' &&
                     (comment.body || '').split('\n').includes(marker))) {
@@ -185,7 +189,7 @@ jobs:
               }
             }
             core.setOutput('base', pr.base.ref);
-            core.setOutput('base_sha', pr.base.sha);
+            core.setOutput('base_sha', policySha);
             core.setOutput('head', pr.head.sha);
 
       - name: Load target-branch review policy
