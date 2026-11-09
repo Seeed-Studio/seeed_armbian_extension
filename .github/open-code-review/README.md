@@ -28,7 +28,7 @@ default disabled-thinking body. Never put credentials in variables or PR content
 The CLI is fixed to `1.13.6`, and the Action to its release commit
 `891df1b63f380845d882a289a67a6e36c331120c`; self-update is disabled.
 Review effort is medium, concurrency two, per-task timeout 15 minutes and job
-timeout 30 minutes. The total token stopping threshold is 200,000 input/output
+timeout 30 minutes. The total token stopping threshold is 1,200,000 input/output
 tokens per review. OCR checks it between rounds; concurrent work and the final
 submission round can exceed it. It is not a hard spending cap. Provider-side
 limits are needed for a hard monetary cap.
