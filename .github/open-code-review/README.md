@@ -1,10 +1,10 @@
 # Open Code Review
 
 Status: trial operation on `main`. Original business code is restored; new PRs
-use coverage-first review and high/critical-only publication.
+use coverage-first review and medium/high/critical-only publication.
 
 This workflow reviews PRs targeting `main` with Alibaba OpenCodeReview.
-Only high/critical findings are published, including in summaries. Medium/low
+Only medium/high/critical findings are published, including in summaries. Low
 findings remain in diagnostic results; overlapping inline findings are not posted again.
 `deb_source` has no OCR workflow or policy and is not a protected branch. It does not approve, request changes, or merge. The coverage job supplies the required exact-head check before model review.
 
@@ -157,9 +157,9 @@ streamed to the Actions console and retained in the diagnostic log, while the
 original CLI exit status is preserved. Existing secret/endpoint masks apply.
 Raw response/thinking captures are separate from this progress stream and are
 not echoed. Public error comments contain only workflow status and a run link. The publisher receives a separate allowlisted
-JSON view containing only high/critical findings; it never reads the full result.
+JSON view containing only medium/high/critical findings; it never reads the full result.
 Unknown severities are withheld. An empty published set is explicitly described
-as no publishable high/critical findings, not proof that the PR has no defects.
+as no publishable medium/high/critical findings, not proof that the PR has no defects.
 The publication audit records severity counts without finding text.
 The existing `coverage_gate.py` provides `coverage` and `publication` subcommands
 for both deterministic checks.

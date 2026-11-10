@@ -88,7 +88,7 @@ def publication_view(result):
     for comment in comments:
         severity = str(comment.get('severity') or '').strip().lower()
         counts[severity if severity in {'critical', 'high', 'medium', 'low'} else 'unknown'] += 1
-        if severity in {'high', 'critical'}:
+        if severity in {'medium', 'high', 'critical'}:
             clean = {k: v for k, v in comment.items() if k in PUBLIC_COMMENT_FIELDS}
             clean['severity'] = severity
             kept.append(clean)
@@ -97,7 +97,7 @@ def publication_view(result):
         raise ValueError('Missing exact reviewed head')
     public = {'status': result['status'], 'comments': kept,
               'manifest': {'input': {'resolved_head': head}},
-              'message': '本轮没有可发布的 high/critical 意见。其他严重度未发布；这不代表没有其他问题。'}
+              'message': '本轮没有可发布的 medium/high/critical 意见。其他严重度未发布；这不代表没有其他问题。'}
     audit = {'generated': len(comments), 'published_candidates': len(kept),
              'withheld': len(comments) - len(kept), 'by_severity': dict(counts)}
     return public, audit
@@ -111,7 +111,7 @@ def main():
     coverage.add_argument('preview', type=pathlib.Path)
     coverage.add_argument('output', type=pathlib.Path)
     coverage.add_argument('--head', required=True)
-    publish = commands.add_parser('publication', help='Select high/critical findings for the official publisher')
+    publish = commands.add_parser('publication', help='Select medium/high/critical findings for the official publisher')
     publish.add_argument('source', type=pathlib.Path)
     publish.add_argument('publication', type=pathlib.Path)
     publish.add_argument('audit', type=pathlib.Path)
