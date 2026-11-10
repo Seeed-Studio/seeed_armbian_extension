@@ -3,13 +3,12 @@
 This workflow reviews PRs targeting `main` and `deb_source` with Alibaba
 OpenCodeReview. It posts Chinese findings and a new summary per review. Low
 severity findings go to the summary; overlapping inline findings are not posted
-again. It does not approve, request changes, or merge. The separate coverage gate supplies
-a required exact-head check once branch protection is activated.
+again. It does not approve, request changes, or merge. The coverage job supplies the required exact-head check before model review.
 
 ## Enable after model configuration
 
-The workflow is disabled until repository variable `OCR_ENABLED` is exactly
-`true`. The initial CI change does not configure credentials or call a model.
+Model review is disabled unless repository variable `OCR_ENABLED` is exactly
+`true`. Request validation and the coverage gate still run when it is false.
 Set the following in Settings → Secrets and variables → Actions before enabling:
 
 | Kind | Name | Value |
@@ -49,7 +48,7 @@ excluded files. Redacted diagnostics include a policy and file-scope manifest.
 
 - Same-repository PRs are reviewed when opened, reopened or marked ready.
   Draft and closed PRs are skipped. Automatic fork reviews are skipped.
-- New pushes do not trigger review. Comment `/ocr` on its own line to review
+- New pushes run the coverage gate but do not trigger model review. Comment `/ocr` on its own line to review
   the latest revision. The commenter must have repository write, maintain or
   admin permission; bot comments are ignored. Authorized users can review forks.
 - `/ocr force` reruns a previously completed revision.
@@ -195,8 +194,11 @@ with repository-specific rules, explicit protocol selection and deferred enablem
 
 ## Large-file coverage merge gate
 
-`ocr-coverage.yml` runs the pinned official OCR 1.13.6 preview on every PR
-update, independently of `OCR_ENABLED`, with no model credentials or calls.
+`open-code-review.yml` has a serial job chain: request validation → OCR coverage
+gate → Open Code Review. The review job depends on a successful coverage job;
+coverage failure prevents any model call. Different PRs can run concurrently.
+The coverage job runs the pinned official OCR 1.13.6 preview on every PR update,
+independently of `OCR_ENABLED`, with no model credentials or calls.
 It checks out only the trusted target branch, fetches PR objects without executing
 them, and previews the full merge-base-to-head range with that branch's rules.
 The input ceiling comes from the same OCR configuration as the review; the
@@ -224,16 +226,20 @@ check is not model-review acceptance. Model runs must also pass their existing
 completion checks and the current-head coverage check before recording a success
 receipt. No new model filter or cross-group semantic merge is implemented.
 
-Deployment order: merge the workflow into each target branch, run its manual
-coverage check on existing PRs, then add `OCR large-file coverage` from GitHub
-Actions to the branch's required checks with up-to-date branches required.
-Preserve all existing protections. Do not activate the requirement before the
-trusted base contains the workflow: that would deadlock its own installation PR.
-New PR commits trigger the gate automatically; a target-policy change requires
-updating the PR branch or rerunning the gate. Do not treat an old-head pass as a
-pass for new commits. Oversized source/code diffs must be brought within OCR's supported input
-coverage before merging; exclusions or renaming to a documentation suffix are not
-an accepted workaround.
+`OCR large-file coverage` from GitHub Actions is required on both target branches,
+with up-to-date branches required and existing protections preserved. The status
+name stays unchanged when moving the gate into this workflow. To check an
+existing PR without a model call, dispatch Open Code Review while `OCR_ENABLED`
+is false. New commits run coverage automatically; synchronize/edited events do
+not request model review even when the switch is enabled. Fork PRs get automatic
+coverage, but model review still requires an authorized command.
+
+The review job checks that the PR head and target-policy commit still match its
+preceding gate before calling the model. Its completion receipt references that
+same gate's check ID, not an unrelated/latest concurrent run. A changed head or
+policy requires a new pipeline run. Oversized source/code diffs must be brought
+within OCR's supported input coverage before merging; exclusions or renaming to
+a documentation suffix are not an accepted workaround.
 
 ## Review quality limits and recall acceptance
 
