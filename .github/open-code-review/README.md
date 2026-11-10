@@ -3,7 +3,8 @@
 This workflow reviews PRs targeting `main` and `deb_source` with Alibaba
 OpenCodeReview. It posts Chinese findings and a new summary per review. Low
 severity findings go to the summary; overlapping inline findings are not posted
-again. It does not approve, request changes, merge, or add a required status check.
+again. It does not approve, request changes, or merge. The separate coverage gate supplies
+a required exact-head check once branch protection is activated.
 
 ## Enable after model configuration
 
@@ -186,3 +187,45 @@ live scenarios until exercised; offline checks are not evidence of a real-model 
 This integration follows the trusted-trigger, receipt and diagnostic design in
 [Omnigent's workflow](https://github.com/omnigent-ai/omnigent/blob/65005d459e2771bf64253fa5b8254073ae0b37f2/.github/workflows/open-code-review.yml),
 with repository-specific rules, explicit protocol selection and deferred enablement.
+
+## Large-file coverage merge gate
+
+`ocr-coverage.yml` runs the pinned official OCR 1.13.6 preview on every PR
+update, independently of `OCR_ENABLED`, with no model credentials or calls.
+It checks out only the trusted target branch, fetches PR objects without executing
+them, and previews the full merge-base-to-head range with that branch's rules.
+The input ceiling comes from the same OCR configuration as the review; the
+per-response `max_completion_tokens` setting does not change this selection limit.
+
+An official `too_large` exclusion for source code or code diffs is
+**critical: review coverage missing**, and fails `OCR large-file coverage` on the
+exact PR head. Source extensions, executable build-language filenames and patch
+files are recognized explicitly; extensionless scripts are identified by a
+bounded shebang read from the pinned Git blob without executing it.
+JSON, binary assets and other hosted data/configuration files are not source
+code and do not trigger this critical gate. Oversized non-source omissions remain
+visible, but nonblocking. This includes the two ISP JSON files from PR #17.
+
+The trigger is OCR's official per-file `too_large` result, including a source
+file's oversized diff; total PR size alone is not a reason to block. This gate
+does not invent an aggregate diff threshold or claim OCR can split an oversized
+single-file diff. Binary/user-excluded files are not reclassified as oversized
+source. This gate checks size exclusions, not all review coverage or semantic
+correctness. Preview/schema/tool failures also block. OCR 1.13.6 preview does not
+expose per-file token estimates, so none are invented.
+
+All evidence is shown in the GitHub check and workflow summary. Passing this
+check is not model-review acceptance. Model runs must also pass their existing
+completion checks and the current-head coverage check before recording a success
+receipt. No new model filter or cross-group semantic merge is implemented.
+
+Deployment order: merge the workflow into each target branch, run its manual
+coverage check on existing PRs, then add `OCR large-file coverage` from GitHub
+Actions to the branch's required checks with up-to-date branches required.
+Preserve all existing protections. Do not activate the requirement before the
+trusted base contains the workflow: that would deadlock its own installation PR.
+New PR commits trigger the gate automatically; a target-policy change requires
+updating the PR branch or rerunning the gate. Do not treat an old-head pass as a
+pass for new commits. Oversized source/code diffs must be brought within OCR's supported input
+coverage before merging; exclusions or renaming to a documentation suffix are not
+an accepted workaround.
