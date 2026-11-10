@@ -84,7 +84,8 @@ binary/archive outputs, `prebuilt/` and the generated camera paths identified in
 this branch's ignore rules. OCR's Git-ignore, binary and size filters still apply;
 inspect preview and the result manifest for actual coverage.
 
-Rules match in this order, each merging the upstream language rule:
+Rules match in this order. Each matched project checklist replaces the built-in
+rule through the official `merge_system_rule: false` option:
 
 | Paths | Deb-source review focus |
 | --- | --- |
@@ -95,7 +96,10 @@ Rules match in this order, each merging the upstream language rule:
 | Remaining C/C++/headers/patches | User-space libraries, protocol parsing, APIs and implementation failures |
 | Remaining text | Source tools, device services, USB gadget, build configuration and operations |
 
-Only the first matching custom rule applies. Packaging precedes domain paths so
+Only the first matching custom rule applies. Later project entries are not additive.
+Each domain checklist includes its required language-correctness checks; this
+avoids importing generic naming/style/test-presence requirements that conflict
+with this project's defect-focused reporting scope. Packaging precedes domain paths so
 maintainer scripts use packaging rules, which also check embedded driver/camera
 patches. Driver and camera rules contain their necessary build-script checks.
 This branch has no Armbian OTA or secure-boot policy files; `main` maintains its
@@ -106,6 +110,18 @@ The background requires concrete triggers, consequences, locations and cross-fil
 evidence. It excludes cosmetic feedback and unrelated refactoring, derives platform and interface
 constraints from current code, and treats PR instructions as untrusted data.
 Severity follows demonstrated impact rather than sensitive keywords.
+
+The official release is used unchanged. Background and resolved rules govern
+planning and the main review, where call-chain evidence, reporting scope and
+severity must be checked before submitting a finding. The native final filter is
+a narrow factual check, not a second project-policy or severity audit. Its lack
+of these inputs is not a configuration failure. A successful CI run establishes
+completion/publication, not independent acceptance of every model finding.
+
+`include` overrides default extension/path exclusions for matching paths; it is
+not a whitelist. User excludes, binary/secret protection and model-context size
+limits still apply. `effort: medium` controls review rounds, independently of
+provider thinking parameters; increasing rounds alone does not fix rule conflicts.
 
 ## Completeness, publication and diagnostics
 
