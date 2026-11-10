@@ -308,7 +308,7 @@ jobs:
               throw new Error('PR or target policy changed after the coverage gate; rerun before invoking a model.');
             }
             if (process.env.FORCE_REVIEW !== 'true') {
-              const receipt = `ocr-completed-high-critical-${pr.number}-${policySha}-${pr.head.sha}`;
+              const receipt = `ocr-completed-medium-high-critical-${pr.number}-${policySha}-${pr.head.sha}`;
               const artifacts = await github.paginate(github.rest.actions.listArtifactsForRepo, {
                 ...context.repo, name: receipt, per_page: 100,
               });
@@ -546,14 +546,14 @@ jobs:
             ocr review "${args[@]}" --audience agent > /tmp/ocr-result.json 2> /tmp/ocr-stderr.log
           fi
 
-      - name: Select high and critical findings for publication
+      - name: Select medium, high and critical findings for publication
         if: steps.pr.outputs.head != ''
         run: |
           python3 .github/open-code-review/coverage_gate.py publication \
             /tmp/ocr-result.json /tmp/ocr-publication.json /tmp/ocr-publication-audit.json
           touch "$RUNNER_TEMP/ocr-publication-stderr.log"
 
-      - name: Publish high and critical findings with official publisher
+      - name: Publish medium, high and critical findings with official publisher
         if: steps.pr.outputs.head != ''
         id: publish
         uses: actions/github-script@3a2844b7e9c422d3c10d287c895573f7108da1b3 # v9.0.0
@@ -790,7 +790,7 @@ jobs:
         if: steps.receipt.outcome == 'success'
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
-          name: ocr-completed-high-critical-${{ needs.request.outputs.pr }}-${{ steps.pr.outputs.base_sha }}-${{ steps.report.outputs.head }}
+          name: ocr-completed-medium-high-critical-${{ needs.request.outputs.pr }}-${{ steps.pr.outputs.base_sha }}-${{ steps.report.outputs.head }}
           path: ${{ runner.temp }}/ocr-completion.json
           retention-days: 90
           if-no-files-found: error
