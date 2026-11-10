@@ -321,7 +321,7 @@ jobs:
           language: Chinese
           rule: ${{ steps.policy.outputs.rule }}
           background: ${{ steps.policy.outputs.background }}
-          effort: medium
+          effort: high
           review_concurrency: '2'
           review_task_timeout: '120'
           sticky_summary: 'false'
