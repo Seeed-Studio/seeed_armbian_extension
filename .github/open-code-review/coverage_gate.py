@@ -1,5 +1,6 @@
-"""Classify official OCR preview exclusions; never execute PR content."""
+"""Check OCR coverage and select public findings; never execute PR content."""
 import argparse
+import collections
 import json
 import pathlib
 import subprocess
@@ -71,17 +72,61 @@ def evaluate(preview, read_prefix=None):
             'findings': findings, 'oversized_non_source': non_source}
 
 
+
+PUBLIC_COMMENT_FIELDS = {'path', 'content', 'existing_code', 'suggestion_code',
+                         'start_line', 'end_line', 'category', 'severity'}
+
+
+def publication_view(result):
+    if result.get('status') not in {'complete', 'skipped'}:
+        raise ValueError('Cannot publish an incomplete OCR result as an accepted review')
+    comments = result.get('comments')
+    if not isinstance(comments, list) or not all(isinstance(c, dict) for c in comments):
+        raise ValueError('Expected an OCR comments array')
+    counts = collections.Counter()
+    kept = []
+    for comment in comments:
+        severity = str(comment.get('severity') or '').strip().lower()
+        counts[severity if severity in {'critical', 'high', 'medium', 'low'} else 'unknown'] += 1
+        if severity in {'high', 'critical'}:
+            clean = {k: v for k, v in comment.items() if k in PUBLIC_COMMENT_FIELDS}
+            clean['severity'] = severity
+            kept.append(clean)
+    head = result.get('manifest', {}).get('input', {}).get('resolved_head')
+    if not isinstance(head, str) or len(head) != 40 or any(c not in '0123456789abcdef' for c in head):
+        raise ValueError('Missing exact reviewed head')
+    public = {'status': result['status'], 'comments': kept,
+              'manifest': {'input': {'resolved_head': head}},
+              'message': '本轮没有可发布的 high/critical 意见。其他严重度未发布；这不代表没有其他问题。'}
+    audit = {'generated': len(comments), 'published_candidates': len(kept),
+             'withheld': len(comments) - len(kept), 'by_severity': dict(counts)}
+    return public, audit
+
+
+
 def main():
     parser = argparse.ArgumentParser()
-    parser.add_argument('preview', type=pathlib.Path)
-    parser.add_argument('output', type=pathlib.Path)
-    parser.add_argument('--head', required=True)
+    commands = parser.add_subparsers(dest='command', required=True)
+    coverage = commands.add_parser('coverage', help='Classify official preview size exclusions')
+    coverage.add_argument('preview', type=pathlib.Path)
+    coverage.add_argument('output', type=pathlib.Path)
+    coverage.add_argument('--head', required=True)
+    publish = commands.add_parser('publication', help='Select high/critical findings for the official publisher')
+    publish.add_argument('source', type=pathlib.Path)
+    publish.add_argument('publication', type=pathlib.Path)
+    publish.add_argument('audit', type=pathlib.Path)
     args = parser.parse_args()
-    head = subprocess.check_output(['git', 'rev-parse', '--verify', '--end-of-options',
-                                    args.head + '^{commit}'], text=True).strip()
-    result = evaluate(json.loads(args.preview.read_text()), lambda path: git_prefix(head, path))
-    args.output.write_text(json.dumps(result, ensure_ascii=False, indent=2) + '\n')
-    # The workflow publishes the exact-head check before failing the job.
+    if args.command == 'publication':
+        public, audit = publication_view(json.loads(args.source.read_text()))
+        args.publication.write_text(json.dumps(public, ensure_ascii=False) + '\n')
+        args.audit.write_text(json.dumps(audit, ensure_ascii=False) + '\n')
+        print(json.dumps(audit))
+    else:
+        head = subprocess.check_output(['git', 'rev-parse', '--verify', '--end-of-options',
+                                        args.head + '^{commit}'], text=True).strip()
+        result = evaluate(json.loads(args.preview.read_text()), lambda path: git_prefix(head, path))
+        args.output.write_text(json.dumps(result, ensure_ascii=False, indent=2) + '\n')
+        # The workflow publishes the exact-head check before failing the job.
 
 
 if __name__ == '__main__':

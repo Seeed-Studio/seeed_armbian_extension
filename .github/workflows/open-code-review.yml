@@ -193,7 +193,7 @@ jobs:
             --from "$(cat "$RUNNER_TEMP/ocr-coverage-base")" --to "$REVIEW_HEAD" \
             --rule "$GITHUB_WORKSPACE/.github/open-code-review/rules.json" \
             > "$RUNNER_TEMP/ocr-preview.json"
-          python3 .github/open-code-review/coverage_gate.py \
+          python3 .github/open-code-review/coverage_gate.py coverage \
             "$RUNNER_TEMP/ocr-preview.json" "$RUNNER_TEMP/ocr-coverage.json" --head "$REVIEW_HEAD"
 
       - name: Publish critical coverage failures
@@ -524,7 +524,7 @@ jobs:
       - name: Select high and critical findings for publication
         if: steps.pr.outputs.head != ''
         run: |
-          python3 .github/open-code-review/publication_filter.py \
+          python3 .github/open-code-review/coverage_gate.py publication \
             /tmp/ocr-result.json /tmp/ocr-publication.json /tmp/ocr-publication-audit.json
           touch "$RUNNER_TEMP/ocr-publication-stderr.log"
 

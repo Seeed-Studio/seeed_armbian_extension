@@ -153,6 +153,8 @@ JSON view containing only high/critical findings; it never reads the full result
 Unknown severities are withheld. An empty published set is explicitly described
 as no publishable high/critical findings, not proof that the PR has no defects.
 The publication audit records severity counts without finding text.
+The existing `coverage_gate.py` provides `coverage` and `publication` subcommands
+for both deterministic checks.
 
 ## Validate without a model
 
