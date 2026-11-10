@@ -1,0 +1,132 @@
+name: OCR coverage gate
+
+on:
+  pull_request_target:
+    branches: [main, deb_source]
+    types: [opened, reopened, synchronize, ready_for_review, edited]
+  workflow_dispatch:
+    inputs:
+      pr:
+        description: PR number to check without invoking a model
+        required: true
+        type: string
+
+permissions:
+  contents: read
+
+jobs:
+  coverage:
+    name: Inspect OCR file coverage
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    permissions:
+      contents: read
+      checks: write
+      pull-requests: read
+    env:
+      OCR_NO_UPDATE: '1'
+    steps:
+      - name: Resolve current PR and start exact-head check
+        id: pr
+        uses: actions/github-script@3a2844b7e9c422d3c10d287c895573f7108da1b3 # v9.0.0
+        env:
+          INPUT_PR: ${{ inputs.pr }}
+        with:
+          script: |
+            const number = context.payload.pull_request?.number || process.env.INPUT_PR;
+            if (!/^[1-9][0-9]*$/.test(String(number))) throw new Error('Invalid PR number');
+            const { data: pr } = await github.rest.pulls.get({ ...context.repo, pull_number: Number(number) });
+            if (pr.state !== 'open' || !['main', 'deb_source'].includes(pr.base.ref)) {
+              throw new Error('Expected an open PR targeting main or deb_source');
+            }
+            const { data: branch } = await github.rest.repos.getBranch({ ...context.repo, branch: pr.base.ref });
+            const { data: check } = await github.rest.checks.create({
+              ...context.repo, name: 'OCR large-file coverage', head_sha: pr.head.sha,
+              external_id: `${branch.commit.sha}:${pr.head.sha}`,
+              status: 'in_progress', details_url: `${context.serverUrl}/${context.repo.owner}/${context.repo.repo}/actions/runs/${context.runId}`,
+              output: { title: 'Checking OCR input coverage', summary: 'Official OCR preview only; no model calls.' },
+            });
+            core.setOutput('number', String(pr.number));
+            core.setOutput('head', pr.head.sha);
+            core.setOutput('base', branch.commit.sha);
+            core.setOutput('check', String(check.id));
+
+      # Read policy and executable helpers only from the trusted target branch.
+      - name: Checkout trusted target
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+        with:
+          ref: ${{ steps.pr.outputs.base }}
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: Fetch PR objects without checking out or executing PR code
+        env:
+          GH_TOKEN: ${{ github.token }}
+          PR_NUMBER: ${{ steps.pr.outputs.number }}
+          REVIEW_HEAD: ${{ steps.pr.outputs.head }}
+          REVIEW_BASE: ${{ steps.pr.outputs.base }}
+        run: |
+          auth="$(printf 'x-access-token:%s' "$GH_TOKEN" | base64 -w0)"
+          echo "::add-mask::$auth"
+          git -c "http.extraheader=AUTHORIZATION: basic $auth" fetch origin "refs/pull/${PR_NUMBER}/head"
+          test "$(git rev-parse FETCH_HEAD)" = "$REVIEW_HEAD"
+          git merge-base "$REVIEW_BASE" "$REVIEW_HEAD" > "$RUNNER_TEMP/ocr-coverage-base"
+
+      - name: Install pinned official OCR
+        run: |
+          npm install -g @alibaba-group/open-code-review@1.13.6
+          ocr version
+
+      - name: Preview full PR using target policy
+        env:
+          REVIEW_HEAD: ${{ steps.pr.outputs.head }}
+        run: |
+          ocr review --preview --format json \
+            --from "$(cat "$RUNNER_TEMP/ocr-coverage-base")" --to "$REVIEW_HEAD" \
+            --rule "$GITHUB_WORKSPACE/.github/open-code-review/rules.json" \
+            > "$RUNNER_TEMP/ocr-preview.json"
+          python3 .github/open-code-review/coverage_gate.py \
+            "$RUNNER_TEMP/ocr-preview.json" "$RUNNER_TEMP/ocr-coverage.json" --head "$REVIEW_HEAD"
+
+      - name: Publish critical coverage failures
+        if: ${{ always() && steps.pr.outputs.check != '' }}
+        uses: actions/github-script@3a2844b7e9c422d3c10d287c895573f7108da1b3 # v9.0.0
+        env:
+          CHECK_ID: ${{ steps.pr.outputs.check }}
+          REVIEW_HEAD: ${{ steps.pr.outputs.head }}
+          REVIEW_BASE: ${{ steps.pr.outputs.base }}
+          PR_NUMBER: ${{ steps.pr.outputs.number }}
+          JOB_STATUS: ${{ job.status }}
+        with:
+          script: |
+            const fs = require('node:fs');
+            const path = require('node:path');
+            let conclusion = 'failure';
+            let summary = 'Coverage could not be established. Inspect workflow logs; merging remains blocked.';
+            const resultFile = path.join(process.env.RUNNER_TEMP, 'ocr-coverage.json');
+            if (process.env.JOB_STATUS === 'success' && fs.existsSync(resultFile)) {
+              const result = JSON.parse(fs.readFileSync(resultFile, 'utf8'));
+              conclusion = result.status === 'success' ? 'success' : 'failure';
+              const safe = value => String(value).replace(/[&<>]/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;'}[c])).replace(/`/g, '&#96;').replace(/[\r\n]/g, ' ');
+              summary = `Head: ${process.env.REVIEW_HEAD}\n\nPolicy base: ${process.env.REVIEW_BASE}\n\n`;
+              summary += result.findings.length
+                ? '**CRITICAL — 审查覆盖缺失，阻塞合并。** 这不是已证实的代码漏洞。\n\n' +
+                  result.findings.map(f => `- **critical** \`${safe(f.path)}\`: OCR \`too_large\`，未审查。`).join('\n')
+                : 'No source-code files or code diffs excluded by OCR as `too_large`. This check does not certify model review completion.';
+              if (result.oversized_non_source.length) {
+                summary += '\n\nOversized non-source files (not model-reviewed; nonblocking):\n' + result.oversized_non_source.map(p => `- \`${safe(p)}\``).join('\n');
+              }
+              summary += '\n\nOCR v1.13.6 preview does not expose per-file token estimates; no estimates are fabricated.';
+            }
+            const { data: pr } = await github.rest.pulls.get({ ...context.repo, pull_number: Number(process.env.PR_NUMBER) });
+            const { data: branch } = await github.rest.repos.getBranch({ ...context.repo, branch: pr.base.ref });
+            if (pr.head.sha !== process.env.REVIEW_HEAD || branch.commit.sha !== process.env.REVIEW_BASE) {
+              conclusion = 'failure';
+              summary += '\n\nPR head or target policy changed during inspection; rerun for the current revision.';
+            }
+            await github.rest.checks.update({
+              ...context.repo, check_run_id: Number(process.env.CHECK_ID), status: 'completed', conclusion,
+              output: { title: conclusion === 'success' ? 'OCR large-file coverage passed' : 'OCR coverage blocked', summary: summary.slice(0, 60000) },
+            });
+            await core.summary.addRaw(summary).write();
+            if (conclusion !== 'success') core.setFailed('OCR coverage gate failed; see exact-head check.');

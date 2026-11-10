@@ -109,6 +109,7 @@ jobs:
     timeout-minutes: 360
     permissions:
       actions: read
+      checks: read
       contents: read
       pull-requests: write
     concurrency:
@@ -320,7 +321,7 @@ jobs:
           language: Chinese
           rule: ${{ steps.policy.outputs.rule }}
           background: ${{ steps.policy.outputs.background }}
-          effort: medium
+          effort: high
           review_concurrency: '2'
           review_task_timeout: '120'
           sticky_summary: 'false'
@@ -528,6 +529,25 @@ jobs:
               with open(os.environ['GITHUB_OUTPUT'], 'a') as output:
                   output.write(f'head={head}\n')
           PY
+
+      - name: Require current large-file coverage before recording completion
+        if: steps.report.outputs.head != ''
+        uses: actions/github-script@3a2844b7e9c422d3c10d287c895573f7108da1b3 # v9.0.0
+        env:
+          REVIEW_HEAD: ${{ steps.report.outputs.head }}
+          REVIEW_BASE: ${{ steps.pr.outputs.base_sha }}
+        with:
+          script: |
+            const checks = await github.paginate(github.rest.checks.listForRef, {
+              ...context.repo, ref: process.env.REVIEW_HEAD,
+              check_name: 'OCR large-file coverage', filter: 'latest', per_page: 100,
+            });
+            const owned = checks.filter(check => check.app?.slug === 'github-actions')
+              .sort((a, b) => b.id - a.id);
+            if (!owned.length || owned[0].status !== 'completed' || owned[0].conclusion !== 'success' ||
+                owned[0].external_id !== `${process.env.REVIEW_BASE}:${process.env.REVIEW_HEAD}`) {
+              core.setFailed('CRITICAL: current-head OCR large-file coverage has not passed; no completion receipt will be recorded.');
+            }
 
       - name: Record successfully published review
         id: receipt
