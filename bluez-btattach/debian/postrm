@@ -1,0 +1,14 @@
+#!/bin/sh
+# On real removal (not upgrade): drop the diversion and move the distro
+# binary back to /usr/bin/btattach. Runs in postrm because our own
+# /usr/bin/btattach must already be deleted for the --rename to succeed.
+set -e
+
+case "$1" in
+	remove|purge)
+		dpkg-divert --package bluez-btattach --remove --rename \
+			--divert /usr/bin/btattach.distrib /usr/bin/btattach
+		;;
+esac
+
+exit 0

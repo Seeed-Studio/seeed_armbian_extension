@@ -1,0 +1,29 @@
+morse-fgh100m-dkms (1.16.4-3) stable; urgency=medium
+
+  * Detect the 5-arg cfg80211_port_authorized() by probing the target
+    kernel headers: newer Rockchip vendor 6.1 trees (still reporting
+    LINUX_VERSION_CODE 6.1.172) backported the td_bitmap/td_bitmap_len
+    parameters without bumping MAC80211_VERSION_CODE, so the existing
+    version guards picked the removed 3-arg call and the build failed
+    with "too few arguments to function 'cfg80211_port_authorized'"
+
+ -- Seeed Studio <techsupport@seeed.cc>  Tue, 20 Oct 2026 18:00:00 +0800
+
+morse-fgh100m-dkms (1.16.4-2) stable; urgency=medium
+
+  * Extend the IEEE80211_CHAN_IGNORE compat shim to aarch64: the stock
+    shim (mapping to IEEE80211_CHAN_DISABLED on unpatched kernels) only
+    guarded __x86_64__, leaving arm64 builds against vendor 6.1 headers
+    with an undeclared identifier
+  * Add BUILT_MODULE_LOCATION to dkms.conf: the modules are built under
+    src/ and src/dot11ah/, but DKMS only checked the build root and
+    failed with "Build of morse.ko failed" after a successful make
+
+ -- Seeed Studio <techsupport@seeed.cc>  Wed, 26 Aug 2026 16:00:00 +0800
+
+morse-fgh100m-dkms (1.16.4-1) stable; urgency=medium
+
+  * Initial DKMS package for Morse Micro FG-H100M HaLow WiFi driver
+  * Driver version rel_1_16_4_2025_Sep_18
+
+ -- Seeed Studio <techsupport@seeed.cc>  Mon, 26 May 2026 10:00:00 +0800

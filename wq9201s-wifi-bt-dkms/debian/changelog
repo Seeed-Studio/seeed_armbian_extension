@@ -1,3 +1,18 @@
+wq9201s-wifi-bt-dkms (2.2.3.94-2) stable; urgency=medium
+
+  * Add Linux 6.12 (vendor-next) support:
+    - cfg80211_ch_switch_notify 3-arg / ch_switch_started_notify 5-arg
+      signatures (6.9+), start_radar_detection ops link_id param (6.12+)
+    - module core_layout -> mem[MOD_TEXT] (6.4+), explicit
+      linux/sched/clock.h include for local_clock()
+    - Makefile: silence -Wmissing-prototypes/-Wmissing-declarations/
+      -Wold-style-declaration (6.12 kbuild enables them via WERROR)
+    - verified: dkms build + module load on 6.1.172 and 6.12.69
+  * prerm: drop hardcoded DKMS version 2.2.1.961 (broke remove/purge
+    since the 2.2.3.94 rebase)
+
+ -- Seeed Studio <techsupport@seeed.cc>  Tue, 27 Oct 2026 14:00:00 +0800
+
 wq9201s-wifi-bt-dkms (2.2.3.94-1) stable; urgency=medium
 
   * Update driver + firmware to vendor release v2.2.3.94 (from 2.2.1.961)

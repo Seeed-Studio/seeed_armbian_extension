@@ -1,0 +1,23 @@
+Source: morse-halow
+Section: metapackages
+Priority: optional
+Maintainer: Seeed Studio <techsupport@seeed.cc>
+Build-Depends: debhelper (>= 11~)
+Standards-Version: 4.6.2.1
+
+Package: morse-halow
+Architecture: all
+Depends: morse-fgh100m-dkms (= 1.16.4-3),
+ morse-firmware (= 20251207-1),
+ hostapd-morse-tools (= 1.0-1),
+ wpa-supplicant-morse-tools (= 1.0-1),
+ morsectrl-tools (= 1.0-1)
+Description: Morse Micro Wi-Fi HaLow stack for Wio-WM6108 (metapackage)
+ Pulls in the complete, version-locked HaLow (IEEE 802.11ah) stack for
+ the Wio-WM6108 module (Quectel FGH100M-H): the morse-fgh100m-dkms
+ kernel driver, morse-firmware, morsectrl-tools and the patched
+ hostapd/wpa_supplicant builds.
+ .
+ Exact (=) pins keep the family in lockstep — the driver and its
+ firmware must upgrade together, along with the matching userspace
+ tools. Bump this package whenever any pinned version moves.

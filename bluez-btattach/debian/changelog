@@ -1,0 +1,23 @@
+bluez-btattach (5.87-1) stable; urgency=medium
+
+  * Build btattach from the current bluez release source (5.87 tarball).
+  * Carry upstream fix commit 12f5eb726c6e as debian/patches: set the
+    speed via cfsetspeed() instead of OR-ing B-constants into c_cflag.
+    glibc 2.42 redefined the Bxxxx constants to raw baud numbers, so the
+    old idiom compiles into B0 (hangup) on 26.04-class toolchains; with
+    the patch the build is correct under any glibc.
+  * Minimal link closure determined by the linker: btattach.c +
+    mainloop/mainloop-notify/io-mainloop/timeout-mainloop/util/queue/
+    hci from src/shared, upstream paths preserved (headers resolved via
+    -Ilib). Device A/B on glibc 2.43: unpatched build writes the broken
+    raw-value c_cflag, patched build writes B1500000|CS8|CREAD|CLOCAL.
+  * Removal condition: remove this source dir and its CI matrix entry
+    once the distribution ships a fixed btattach. Removing the installed
+    package auto-restores the distro binary - no other coordination
+    needed.
+  * Naming note: if Debian/Ubuntu ever ships an official
+    bluez-btattach package, rename or retire this one first (apt
+    would pick the higher version across repos and silently evict
+    the fix).
+
+ -- Seeed Studio <techsupport@seeed.cc>  Wed, 15 Oct 2026 15:10:00 +0800

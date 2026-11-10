@@ -1,0 +1,7 @@
+# dpkg-buildpackage residue
+debian/.debhelper*
+debian/debhelper-build-stamp
+debian/morse-halow/
+debian/files
+debian/*.log
+debian/*.substvars
