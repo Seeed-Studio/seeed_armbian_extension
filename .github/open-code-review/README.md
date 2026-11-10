@@ -3,7 +3,8 @@
 This workflow reviews PRs targeting `main` and `deb_source` with Alibaba
 OpenCodeReview. It posts Chinese findings and a new summary per review. Low
 severity findings go to the summary; overlapping inline findings are not posted
-again. It does not approve, request changes, merge, or add a required status check.
+again. It does not approve, request changes, or merge. The separate coverage gate supplies
+a required exact-head check once branch protection is activated.
 
 ## Enable after model configuration
 
@@ -27,7 +28,7 @@ default disabled-thinking body. Never put credentials in variables or PR content
 
 The CLI is fixed to `1.13.6`, and the Action to its release commit
 `891df1b63f380845d882a289a67a6e36c331120c`; self-update is disabled.
-Review effort is medium, concurrency two, per-task timeout 120 minutes and job
+Review effort is high (three review rounds), concurrency two, per-task timeout 120 minutes and job
 timeout 360 minutes. No `max_tokens_budget` aggregate token limit is configured.
 
 For `deepseek-v4.1-flash-1017` over Chat Completions, the workflow supplies
@@ -191,3 +192,74 @@ live scenarios until exercised; offline checks are not evidence of a real-model 
 This integration follows the trusted-trigger, receipt and diagnostic design in
 [Omnigent's workflow](https://github.com/omnigent-ai/omnigent/blob/65005d459e2771bf64253fa5b8254073ae0b37f2/.github/workflows/open-code-review.yml),
 with repository-specific rules, explicit protocol selection and deferred enablement.
+
+## Large-file coverage merge gate
+
+`ocr-coverage.yml` runs the pinned official OCR 1.13.6 preview on every PR
+update, independently of `OCR_ENABLED`, with no model credentials or calls.
+It checks out only the trusted target branch, fetches PR objects without executing
+them, and previews the full merge-base-to-head range with that branch's rules.
+The input ceiling comes from the same OCR configuration as the review; the
+per-response `max_completion_tokens` setting does not change this selection limit.
+
+An official `too_large` exclusion for source code or code diffs is
+**critical: review coverage missing**, and fails `OCR large-file coverage` on the
+exact PR head. Source extensions, executable build-language filenames and patch
+files are recognized explicitly; extensionless scripts are identified by a
+bounded shebang read from the pinned Git blob without executing it.
+JSON, binary assets and other hosted data/configuration files are not source
+code and do not trigger this critical gate. Oversized non-source omissions remain
+visible, but nonblocking. This includes the two ISP JSON files from PR #17.
+
+The trigger is OCR's official per-file `too_large` result, including a source
+file's oversized diff; total PR size alone is not a reason to block. This gate
+does not invent an aggregate diff threshold or claim OCR can split an oversized
+single-file diff. Binary/user-excluded files are not reclassified as oversized
+source. This gate checks size exclusions, not all review coverage or semantic
+correctness. Preview/schema/tool failures also block. OCR 1.13.6 preview does not
+expose per-file token estimates, so none are invented.
+
+All evidence is shown in the GitHub check and workflow summary. Passing this
+check is not model-review acceptance. Model runs must also pass their existing
+completion checks and the current-head coverage check before recording a success
+receipt. No new model filter or cross-group semantic merge is implemented.
+
+Deployment order: merge the workflow into each target branch, run its manual
+coverage check on existing PRs, then add `OCR large-file coverage` from GitHub
+Actions to the branch's required checks with up-to-date branches required.
+Preserve all existing protections. Do not activate the requirement before the
+trusted base contains the workflow: that would deadlock its own installation PR.
+New PR commits trigger the gate automatically; a target-policy change requires
+updating the PR branch or rerunning the gate. Do not treat an old-head pass as a
+pass for new commits. Oversized source/code diffs must be brought within OCR's supported input
+coverage before merging; exclusions or renaming to a documentation suffix are not
+an accepted workaround.
+
+## Review quality limits and recall acceptance
+
+OCR `effort: high` raises the official review-round preset from two to three.
+It is independent of the provider's `reasoning_effort`/thinking configuration;
+output-token settings, concurrency and timeouts remain unchanged. An additional
+round gives the reviewer another opportunity to inspect omissions; it is not a
+guarantee of improved recall or precision.
+
+Two v1.13.6 limits remain unresolved:
+
+- Project background and path rules guide planning and review, but the embedded
+  group filter receives only group paths, diffs and candidate comments. It does
+  not receive project constraints. Existing pre-submission evidence checks are
+  mitigation, not a repair of the filter's context boundary.
+- The Action's enabled incremental deduplication suppresses overlapping comments
+  on the same path/line ranges. It does not merge a shared root cause reported
+  against different files/groups. No extra model-based merge stage is added.
+
+Compare high effort against the existing medium runs on the same business heads
+of PR #16 and #17 using result artifacts, not newly posted comment counts (the
+publisher may suppress overlaps). Freeze the model, extra_body, rules and input
+heads; record any policy/base changes separately. Count each confirmed root cause
+once, and evaluate known false positives, severity inflation and cross-file
+duplicates as well as recall. Unverified candidates are excluded from the known
+bug denominator. Check completion and filtering errors before interpreting an
+absence as a missed defect. A single comparison measures that run only, not
+long-term stability. Real-model acceptance must run through GitHub PR workflows;
+static checks do not establish review-quality improvement.
