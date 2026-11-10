@@ -94,7 +94,7 @@ rule through the official `merge_system_rule: false` option:
 | `.github/patchs/**` | Build-script patches and their application/caller contracts |
 | `.github/**` | Trusted automation, board/build matrix and image/OTA/APT publication |
 | `armbian-ota/**`, `initramfs/**` | Device/partition identity, update state, power loss and rollback |
-| `rk_secure-disk-encryption/**` | Key flow, encryption, automatic unlock and verified boot |
+| `rk_secure-disk-encryption/**`, `rk-uboot-postprocess/**` | Key flow, encryption, automatic unlock and verified boot |
 | Remaining text | Armbian hooks, system services, scripts, configuration and operational commands |
 
 Only the first matching custom rule applies. Later project entries are not additive.
