@@ -25,7 +25,7 @@
       "merge_system_rule": false
     },
     {
-      "path": "rk_secure-disk-encryption/**",
+      "path": "{rk_secure-disk-encryption,rk-uboot-postprocess}/**",
       "rule": "rules/secure-boot.md",
       "merge_system_rule": false
     },
