@@ -4,7 +4,7 @@ run-name: "OCR #${{ github.event.pull_request.number || github.event.issue.numbe
 on:
   # Use trusted base-branch configuration for automatic reviews.
   pull_request_target:
-    branches: [main, deb_source]
+    branches: [main]
     types: [opened, reopened, synchronize, ready_for_review, edited]
   issue_comment:
     types: [created]
@@ -43,6 +43,7 @@ jobs:
       pr: ${{ steps.request.outputs.pr }}
       force: ${{ steps.request.outputs.force }}
       review: ${{ steps.request.outputs.review }}
+      skip_reason: ${{ steps.request.outputs.skip_reason }}
     steps:
       - name: Authorize trigger
         id: request
@@ -57,14 +58,15 @@ jobs:
             let number;
             let force = false;
             let review = process.env.OCR_ENABLED === 'true';
+            let skipReason = review ? '' : 'OCR_ENABLED=false：模型审查被主动停用，覆盖门禁仍运行。';
             if (context.eventName === 'pull_request_target') {
               const pr = context.payload.pull_request;
               if (pr.draft || pr.state !== 'open') return;
               if (pr.head.repo?.full_name !== `${owner}/${repo}`) {
                 core.notice('Fork PR: coverage only; model review requires an authorized /ocr command.');
                 review = false;
+                skipReason = 'Fork PR：覆盖门禁通过后，仍需有写权限的用户通过 /ocr 授权模型审查。';
               }
-              if (['synchronize', 'edited'].includes(context.payload.action)) review = false;
               number = pr.number;
             } else if (context.eventName === 'issue_comment') {
               const comment = context.payload.comment;
@@ -89,6 +91,12 @@ jobs:
               return;
             }
             if (!/^[1-9][0-9]*$/.test(String(number))) throw new Error('Expected a positive PR number');
+            const { data: target } = await github.rest.pulls.get({ ...context.repo, pull_number: Number(number) });
+            if (target.base.ref !== 'main') {
+              core.notice('OCR is disabled for this target branch; only main is reviewed.');
+              return;
+            }
+            core.setOutput('skip_reason', skipReason);
             core.setOutput('pr', String(number));
             core.setOutput('review', String(review));
             if (force) core.setOutput('force', 'true');
@@ -118,7 +126,7 @@ jobs:
     permissions:
       contents: read
       checks: write
-      pull-requests: read
+      pull-requests: write
     env:
       OCR_NO_UPDATE: '1'
     steps:
@@ -133,8 +141,8 @@ jobs:
             const number = context.payload.pull_request?.number || process.env.INPUT_PR;
             if (!/^[1-9][0-9]*$/.test(String(number))) throw new Error('Invalid PR number');
             const { data: pr } = await github.rest.pulls.get({ ...context.repo, pull_number: Number(number) });
-            if (pr.state !== 'open' || !['main', 'deb_source'].includes(pr.base.ref)) {
-              throw new Error('Expected an open PR targeting main or deb_source');
+            if (pr.state !== 'open' || pr.base.ref !== 'main') {
+              throw new Error('Expected an open PR targeting main');
             }
             if (process.env.EXPECTED_HEAD && pr.head.sha !== process.env.EXPECTED_HEAD) {
               throw new Error('PR moved before coverage inspection; request its current head.');
@@ -197,6 +205,8 @@ jobs:
           REVIEW_BASE: ${{ steps.pr.outputs.base }}
           PR_NUMBER: ${{ steps.pr.outputs.number }}
           JOB_STATUS: ${{ job.status }}
+          REVIEW_REQUESTED: ${{ needs.request.outputs.review }}
+          SKIP_REASON: ${{ needs.request.outputs.skip_reason }}
         with:
           script: |
             const fs = require('node:fs');
@@ -204,9 +214,9 @@ jobs:
             let conclusion = 'failure';
             let summary = 'Coverage could not be established. Inspect workflow logs; merging remains blocked.';
             const resultFile = path.join(process.env.RUNNER_TEMP, 'ocr-coverage.json');
-            if (process.env.JOB_STATUS === 'success' && fs.existsSync(resultFile)) {
+            if (fs.existsSync(resultFile)) {
               const result = JSON.parse(fs.readFileSync(resultFile, 'utf8'));
-              conclusion = result.status === 'success' ? 'success' : 'failure';
+              conclusion = process.env.JOB_STATUS === 'success' && result.status === 'success' ? 'success' : 'failure';
               const safe = value => String(value).replace(/[&<>]/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;'}[c])).replace(/`/g, '&#96;').replace(/[\r\n]/g, ' ');
               summary = `Head: ${process.env.REVIEW_HEAD}\n\nPolicy base: ${process.env.REVIEW_BASE}\n\n`;
               summary += result.findings.length
@@ -228,6 +238,24 @@ jobs:
               ...context.repo, check_run_id: Number(process.env.CHECK_ID), status: 'completed', conclusion,
               output: { title: conclusion === 'success' ? 'OCR large-file coverage passed' : 'OCR coverage blocked', summary: summary.slice(0, 60000) },
             });
+            const runUrl = `${context.serverUrl}/${context.repo.owner}/${context.repo.repo}/actions/runs/${context.runId}`;
+            const marker = `<!-- ocr-gate:${process.env.REVIEW_HEAD} -->`;
+            const comments = await github.paginate(github.rest.issues.listComments, {
+              ...context.repo, issue_number: Number(process.env.PR_NUMBER), per_page: 100,
+            });
+            const existing = comments.find(c => c.user?.login === 'github-actions[bot]' &&
+              c.user.type === 'Bot' && (c.body || '').split('\n').includes(marker));
+            let notice = conclusion === 'failure'
+              ? `**OCR 已阻塞，未调用模型。**\n\n${summary}`
+              : process.env.REVIEW_REQUESTED !== 'true'
+                ? `**Coverage gate 已通过；OCR 模型审查已跳过。**\n\n${process.env.SKIP_REASON}`
+                : '**Coverage gate 已通过；继续执行 Open Code Review。**';
+            const body = `${marker}\nCommit: \`${process.env.REVIEW_HEAD}\`\n\n${notice}\n\n[查看本次 CI](${runUrl})`.slice(0, 60000);
+            if (existing) {
+              await github.rest.issues.updateComment({ ...context.repo, comment_id: existing.id, body });
+            } else if (conclusion === 'failure' || process.env.REVIEW_REQUESTED !== 'true') {
+              await github.rest.issues.createComment({ ...context.repo, issue_number: Number(process.env.PR_NUMBER), body });
+            }
             await core.summary.addRaw(summary).write();
             if (conclusion !== 'success') core.setFailed('OCR coverage gate failed; see exact-head check.');
 
@@ -262,8 +290,8 @@ jobs:
             const { data: pr } = await github.rest.pulls.get({
               ...context.repo, pull_number: Number(process.env.PR_NUMBER),
             });
-            if (!['main', 'deb_source'].includes(pr.base.ref)) {
-              throw new Error('OCR only reviews PRs targeting main or deb_source.');
+            if (pr.base.ref !== 'main') {
+              throw new Error('OCR only reviews PRs targeting main.');
             }
             if (pr.state !== 'open' || pr.draft) {
               core.notice('Skipping a closed or draft PR.');
@@ -280,7 +308,7 @@ jobs:
               throw new Error('PR or target policy changed after the coverage gate; rerun before invoking a model.');
             }
             if (process.env.FORCE_REVIEW !== 'true') {
-              const receipt = `ocr-completed-${pr.number}-${policySha}-${pr.head.sha}`;
+              const receipt = `ocr-completed-high-critical-${pr.number}-${policySha}-${pr.head.sha}`;
               const artifacts = await github.paginate(github.rest.actions.listArtifactsForRepo, {
                 ...context.repo, name: receipt, per_page: 100,
               });
@@ -433,64 +461,91 @@ jobs:
                   print(f'::add-mask::{escaped}')
           PYTHON
 
-      # The action checks out the trusted base and reads PR blobs through Git.
-      # It never installs dependencies or executes code from the PR head.
-      - name: Review and publish findings
+      - name: Checkout trusted target for official CLI
+        if: steps.pr.outputs.head != ''
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+        with:
+          ref: ${{ steps.pr.outputs.base_sha }}
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: Prepare pinned official CLI and publisher
+        if: steps.pr.outputs.head != ''
+        env:
+          GH_TOKEN: ${{ github.token }}
+          PR_NUMBER: ${{ needs.request.outputs.pr }}
+          REVIEW_HEAD: ${{ steps.pr.outputs.head }}
+          REVIEW_BASE: ${{ steps.pr.outputs.base_sha }}
+        run: |
+          auth="$(printf 'x-access-token:%s' "$GH_TOKEN" | base64 -w0)"
+          echo "::add-mask::$auth"
+          git -c "http.extraheader=AUTHORIZATION: basic $auth" fetch origin "refs/pull/${PR_NUMBER}/head"
+          test "$(git rev-parse FETCH_HEAD)" = "$REVIEW_HEAD"
+          git merge-base "$REVIEW_BASE" "$REVIEW_HEAD" > "$RUNNER_TEMP/ocr-review-base"
+          npm install -g @alibaba-group/open-code-review@1.13.6
+          curl --fail --silent --show-error --location \
+            https://raw.githubusercontent.com/alibaba/open-code-review/891df1b63f380845d882a289a67a6e36c331120c/scripts/github-actions/post-review-comments.js \
+            -o "$RUNNER_TEMP/ocr-publisher.js"
+          printf '%s  %s\n' aa145139b8c1d574290b1377d2631f1a03c48a5d5304a95332103b01f475f6cf "$RUNNER_TEMP/ocr-publisher.js" | sha256sum -c -
+
+      - name: Review with official OCR
         if: steps.pr.outputs.head != ''
         id: ocr
-        uses: alibaba/open-code-review@891df1b63f380845d882a289a67a6e36c331120c # v1.13.6
         env:
+          OCR_LLM_URL: ${{ secrets.OCR_LLM_URL }}
+          OCR_LLM_TOKEN: ${{ secrets.OCR_LLM_TOKEN }}
+          OCR_LLM_MODEL: ${{ vars.OCR_LLM_MODEL }}
+          OCR_LLM_PROTOCOL: ${{ vars.OCR_LLM_PROTOCOL }}
+          OCR_EXTRA_BODY: ${{ steps.model.outputs.extra_body }}
+          OCR_ANTHROPIC: ${{ vars.OCR_LLM_PROTOCOL == 'anthropic' && 'true' || 'false' }}
+          REVIEW_HEAD: ${{ steps.pr.outputs.head }}
+          OCR_RULE: ${{ steps.policy.outputs.rule }}
+          OCR_BACKGROUND: ${{ steps.policy.outputs.background }}
           OCR_RAW_LOGGING: '1'
-        with:
-          pr_number: ${{ needs.request.outputs.pr }}
-          base_ref: ${{ steps.pr.outputs.base }}
-          head_sha: ${{ steps.pr.outputs.head }}
-          llm_url: ${{ secrets.OCR_LLM_URL }}
-          llm_auth_token: ${{ secrets.OCR_LLM_TOKEN }}
-          llm_auth_header: Authorization
-          llm_protocol: ${{ vars.OCR_LLM_PROTOCOL }}
-          llm_use_anthropic: ${{ vars.OCR_LLM_PROTOCOL == 'anthropic' && 'true' || 'false' }}
-          llm_extra_body: ${{ steps.model.outputs.extra_body }}
-          llm_model: ${{ vars.OCR_LLM_MODEL }}
-          ocr_version: '1.13.6'
-          language: Chinese
-          rule: ${{ steps.policy.outputs.rule }}
-          background: ${{ steps.policy.outputs.background }}
-          effort: high
-          review_concurrency: '2'
-          review_task_timeout: '120'
-          sticky_summary: 'false'
-          incremental: 'true'
-          route_severity_below: low
-          upload_artifacts: 'false'
-          stream_progress: 'true'
+          OCR_LLM_TIMEOUT: '300'
+        run: |
+          ocr config unset provider >/dev/null
+          ocr config set llm.auth_token '' >/dev/null
+          ocr config set llm.extra_headers '' >/dev/null
+          ocr config set llm.retry_codes '' >/dev/null
+          ocr config set llm.url "$OCR_LLM_URL" >/dev/null
+          ocr config set llm.model "$OCR_LLM_MODEL" >/dev/null
+          ocr config set llm.use_anthropic "$OCR_ANTHROPIC" >/dev/null
+          ocr config set llm.protocol "$OCR_LLM_PROTOCOL" >/dev/null
+          ocr config set llm.auth_header Authorization >/dev/null
+          ocr config set llm.auth_token_cmd 'printf "%s" "$OCR_LLM_TOKEN"' >/dev/null
+          ocr config set llm.extra_body "$OCR_EXTRA_BODY" >/dev/null
+          ocr config set language Chinese >/dev/null
+          ocr review --from "$(cat "$RUNNER_TEMP/ocr-review-base")" --to "$REVIEW_HEAD" \
+            --format json --timeout 120 --concurrency 2 --effort high \
+            --rule "$OCR_RULE" --background "$OCR_BACKGROUND" \
+            > /tmp/ocr-result.json 2> /tmp/ocr-stderr.log
 
-      - name: Clarify low-severity summary findings
-        if: ${{ !cancelled() && steps.ocr.outputs.summary_comment_url != '' }}
-        continue-on-error: true
+      - name: Select high and critical findings for publication
+        if: steps.pr.outputs.head != ''
+        run: |
+          python3 .github/open-code-review/publication_filter.py \
+            /tmp/ocr-result.json /tmp/ocr-publication.json /tmp/ocr-publication-audit.json
+          touch "$RUNNER_TEMP/ocr-publication-stderr.log"
+
+      - name: Publish high and critical findings with official publisher
+        if: steps.pr.outputs.head != ''
+        id: publish
         uses: actions/github-script@3a2844b7e9c422d3c10d287c895573f7108da1b3 # v9.0.0
         env:
-          SUMMARY_URL: ${{ steps.ocr.outputs.summary_comment_url }}
           PR_NUMBER: ${{ needs.request.outputs.pr }}
-          REVIEW_RUN: ${{ github.run_id }}-${{ github.run_attempt }}
         with:
           script: |
-            const match = new URL(process.env.SUMMARY_URL).hash.match(/^#issuecomment-(\d+)$/);
-            if (!match) throw new Error('OCR returned an invalid summary comment URL');
-            const args = { ...context.repo, comment_id: Number(match[1]) };
-            const { data: comment } = await github.rest.issues.getComment(args);
-            const body = (comment.body || '').replace(
-              /^⚠️ GitHub could not post this as an inline comment: Routed to summary \(severity low(?: · category [^)\r\n]+)?\)$/gm,
-              'ℹ️ Shown here because this finding is low severity.',
-            );
-            if (body === (comment.body || '')) return;
-            const marker = `<!-- ocr-summary-run:${process.env.REVIEW_RUN} -->`;
-            if (comment.user?.login !== 'github-actions[bot]' || comment.user.type !== 'Bot' ||
-                !comment.issue_url.endsWith(`/issues/${process.env.PR_NUMBER}`) ||
-                !(comment.body || '').split('\n').includes(marker)) {
-              throw new Error('Refusing to edit a summary not owned by this OCR run');
-            }
-            await github.rest.issues.updateComment({ ...args, body });
+            const fs = require('fs');
+            const { runPostReviewComments } = require(`${process.env.RUNNER_TEMP}/ocr-publisher.js`);
+            await runPostReviewComments({
+              github, context, core, fs, prNumber: Number(process.env.PR_NUMBER),
+              resultPath: '/tmp/ocr-publication.json',
+              stderrPath: `${process.env.RUNNER_TEMP}/ocr-publication-stderr.log`,
+              stickySummary: false, incremental: true, incrementalOverlapThreshold: 0.6,
+              reviewCommentBatchSize: 50, appSlug: 'github-actions', checkpointEnabled: false,
+              routeSeverityBelow: '', routeCategories: '',
+            });
 
       - name: Collect LLM response metadata
         if: ${{ !cancelled() && steps.ocr.outcome != '' && steps.ocr.outcome != 'skipped' }}
@@ -575,7 +630,7 @@ jobs:
           destination = pathlib.Path(tempfile.mkdtemp(prefix='ocr-diagnostics-', dir=os.environ['RUNNER_TEMP']))
           copied = False
           exposed_key = False
-          for name in ('ocr-result.json', 'ocr-stderr.log', 'ocr-policy-manifest.json', 'ocr-llm-metadata.json'):
+          for name in ('ocr-result.json', 'ocr-stderr.log', 'ocr-policy-manifest.json', 'ocr-llm-metadata.json', 'ocr-publication-audit.json'):
               source = pathlib.Path('/tmp') / name
               if not source.is_file():
                   continue
@@ -606,8 +661,8 @@ jobs:
         if: ${{ !cancelled() && steps.ocr.outcome != '' && steps.ocr.outcome != 'skipped' }}
         env:
           REVIEW_HEAD: ${{ steps.pr.outputs.head }}
-          COMMENTS_FAILED: ${{ steps.ocr.outputs.comments_failed }}
-          SUMMARY_URL: ${{ steps.ocr.outputs.summary_comment_url }}
+          COMMENTS_FAILED: ${{ steps.publish.outputs.comments_failed }}
+          SUMMARY_URL: ${{ steps.publish.outputs.summary_comment_url }}
         run: |
           python3 <<'PY'
           import json, os, pathlib
@@ -687,12 +742,12 @@ jobs:
         id: receipt
         if: >-
           success() && steps.ocr.outcome == 'success' && steps.report.outputs.head != '' &&
-          steps.ocr.outputs.comments_failed == '0' && steps.ocr.outputs.summary_comment_url != ''
+          steps.publish.outputs.comments_failed == '0' && steps.publish.outputs.summary_comment_url != ''
         env:
           PR_NUMBER: ${{ needs.request.outputs.pr }}
           REVIEW_BASE: ${{ steps.pr.outputs.base_sha }}
           REVIEW_HEAD: ${{ steps.report.outputs.head }}
-          SUMMARY_URL: ${{ steps.ocr.outputs.summary_comment_url }}
+          SUMMARY_URL: ${{ steps.publish.outputs.summary_comment_url }}
         run: |
           python3 <<'PY'
           import json, os, pathlib
@@ -710,7 +765,24 @@ jobs:
         if: steps.receipt.outcome == 'success'
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
-          name: ocr-completed-${{ needs.request.outputs.pr }}-${{ steps.pr.outputs.base_sha }}-${{ steps.report.outputs.head }}
+          name: ocr-completed-high-critical-${{ needs.request.outputs.pr }}-${{ steps.pr.outputs.base_sha }}-${{ steps.report.outputs.head }}
           path: ${{ runner.temp }}/ocr-completion.json
           retention-days: 90
           if-no-files-found: error
+
+      - name: Explain review failure on the PR
+        if: failure()
+        uses: actions/github-script@3a2844b7e9c422d3c10d287c895573f7108da1b3 # v9.0.0
+        env:
+          PR_NUMBER: ${{ needs.request.outputs.pr }}
+          REVIEW_HEAD: ${{ needs.coverage.outputs.head }}
+          OCR_OUTCOME: ${{ steps.ocr.outcome }}
+        with:
+          script: |
+            const ran = ['success', 'failure'].includes(process.env.OCR_OUTCOME);
+            const state = ran ? 'OCR 已执行，但审查或发布未完整通过。' : 'OCR 尚未执行：配置、输入校验或工具准备失败。';
+            await github.rest.issues.createComment({
+              ...context.repo, issue_number: Number(process.env.PR_NUMBER),
+              body: `**${state}**\n\nCommit: \`${process.env.REVIEW_HEAD}\`\n\n` +
+                `[查看失败步骤](${context.serverUrl}/${context.repo.owner}/${context.repo.repo}/actions/runs/${context.runId})`,
+            });

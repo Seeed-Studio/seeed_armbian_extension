@@ -1,9 +1,9 @@
 # Open Code Review
 
-This workflow reviews PRs targeting `main` and `deb_source` with Alibaba
-OpenCodeReview. It posts Chinese findings and a new summary per review. Low
-severity findings go to the summary; overlapping inline findings are not posted
-again. It does not approve, request changes, or merge. The coverage job supplies the required exact-head check before model review.
+This workflow reviews PRs targeting `main` with Alibaba OpenCodeReview.
+Only high/critical findings are published, including in summaries. Medium/low
+findings remain in diagnostic results; overlapping inline findings are not posted again.
+`deb_source` has no OCR workflow or policy and is not a protected branch. It does not approve, request changes, or merge. The coverage job supplies the required exact-head check before model review.
 
 ## Enable after model configuration
 
@@ -20,18 +20,18 @@ Set the following in Settings → Secrets and variables → Actions before enabl
 | Variable | `OCR_LLM_EXTRA_BODY` | Optional model request JSON object; defaults to `{}` |
 | Variable | `OCR_ENABLED` | Set to `true` last, after endpoint, model, protocol, request parameters and budget are agreed |
 
-Authentication uses the upstream Action's `Authorization` header handling.
+Authentication uses the official CLI with the `Authorization` header and an environment-backed token command.
 Model-specific thinking and reasoning parameters belong in `OCR_LLM_EXTRA_BODY`;
 the workflow does not copy Omnigent's adaptive-thinking settings or the Action's
 default disabled-thinking body. Never put credentials in variables or PR content.
 
-The CLI is fixed to `1.13.6`, and the Action to its release commit
-`891df1b63f380845d882a289a67a6e36c331120c`; self-update is disabled.
+The CLI is fixed to `1.13.6`, and the unchanged official publisher to its release commit
+`891df1b63f380845d882a289a67a6e36c331120c`, verified by SHA-256; self-update is disabled.
 Review effort is high (three review rounds), concurrency two, per-task timeout 120 minutes and job
 timeout 360 minutes. No `max_tokens_budget` aggregate token limit is configured.
 
 For `deepseek-v4.1-flash-1017` over Chat Completions, the workflow supplies
-`max_completion_tokens: 65536` through the official `llm_extra_body` input unless
+`max_completion_tokens: 65536` through the official `llm.extra_body` setting unless
 an output limit is explicitly configured. This increases v1.13.6's 16,384-token
 per-response ceiling while retaining the configured thinking mode. It mitigates
 reasoning exhausting the response allowance; it does not prove the cause of a
@@ -48,8 +48,8 @@ excluded files. Redacted diagnostics include a policy and file-scope manifest.
 
 - Same-repository PRs are reviewed when opened, reopened or marked ready.
   Draft and closed PRs are skipped. Automatic fork reviews are skipped.
-- New pushes run the coverage gate but do not trigger model review. Comment `/ocr` on its own line to review
-  the latest revision. The commenter must have repository write, maintain or
+- New pushes run the coverage gate, then model review when `OCR_ENABLED=true`.
+  Comment `/ocr` on its own line to review the latest revision. The commenter must have repository write, maintain or
   admin permission; bot comments are ignored. Authorized users can review forks.
 - `/ocr force` reruns a previously completed revision.
 - Actions → Open Code Review → Run workflow accepts a PR number, optional
@@ -64,18 +64,12 @@ Automatic events load the trusted target-branch workflow. Comment and manual
 events use the default-branch workflow. All triggers load `background.md`,
 `rules.json` and its referenced rule files from the PR target branch at the
 resolved base SHA through the GitHub API. The policy is copied as data to
-`RUNNER_TEMP` and passed by absolute path, so the Action's checkout cannot replace
+`RUNNER_TEMP` and passed by absolute path, so the trusted checkout cannot replace
 it. A missing or invalid target policy fails before any model call; there is no
 fallback to the default branch's policy or to PR-authored rules.
-The upstream Action reads PR head blobs through Git without executing PR code
+The official CLI reads PR head blobs through Git without executing PR code
 or installing PR dependencies. Jobs have explicit read permissions plus
 `pull-requests: write` for publishing and `actions: read` for completion lookup.
-
-Install the workflow and each branch's own policy through separate PRs; do not
-merge their unrelated source trees. Merge into `main` first to establish the
-comment/manual entry point, then into `deb_source` for automatic target events.
-Configure both target policies before enabling reviews. Keep workflow plumbing
-compatible while maintaining each branch's background, paths and rules independently.
 
 ## Rule design and coverage
 
@@ -105,10 +99,7 @@ The background owns common correctness checks, evidence requirements, reporting
 scope and severity standards. Domain rules add path-specific checks rather than
 repeating the common instructions. This separation keeps the first-match override
 complete without importing generic naming/style/test-presence requirements.
-This branch has no driver-library or Debian-source policy files;
-`deb_source` maintains its own driver, camera/library/application, tool and
-packaging rules. `/ocr` on a PR targeting `deb_source` loads that target's policy,
-even though the command workflow runs from `main`.
+Automatic, manual and comment triggers reject PRs targeting branches other than `main`.
 
 The background requires concrete triggers, consequences, locations and cross-file
 evidence. It excludes cosmetic feedback and unrelated refactoring, derives board
@@ -124,7 +115,7 @@ completion/publication, not independent acceptance of every model finding.
 
 `include` overrides default extension/path exclusions for matching paths; it is
 not a whitelist. User excludes, binary/secret protection and model-context size
-limits still apply. `effort: medium` controls review rounds, independently of
+limits still apply. `effort: high` controls review rounds, independently of
 provider thinking parameters; increasing rounds alone does not fix rule conflicts.
 
 ## Completeness, publication and diagnostics
@@ -156,9 +147,12 @@ repository's shorter retention limit. Expiring/deleting a receipt permits rerun.
 Detecting the API credential in diagnostics fails the run and blocks completion;
 only redacted copies are uploaded. Known literal/JSON-escaped key and endpoint
 forms are also registered with GitHub's log masker before the Action runs.
-The upstream Action prints raw diagnostics and publishes comments before the
-artifact check; masking/redaction does not guarantee removal of every transformed
-secret or sensitive source excerpt from logs or comments.
+Raw CLI stdout/stderr are redirected to diagnostic files, not echoed to logs or
+used as public error comments. The publisher receives a separate allowlisted
+JSON view containing only high/critical findings; it never reads the full result.
+Unknown severities are withheld. An empty published set is explicitly described
+as no publishable high/critical findings, not proof that the PR has no defects.
+The publication audit records severity counts without finding text.
 
 ## Validate without a model
 
@@ -216,17 +210,19 @@ source. This gate checks size exclusions, not all review coverage or semantic
 correctness. Preview/schema/tool failures also block. OCR 1.13.6 preview does not
 expose per-file token estimates, so none are invented.
 
-All evidence is shown in the GitHub check and workflow summary. Passing this
+Blocking paths are shown in the GitHub check, workflow summary and a PR comment
+with the exact head SHA. Tool failures also receive a PR notice and run link.
+When the model is disabled or a fork lacks authorization, a passing gate posts
+the explicit model-skip reason instead of implying a completed review. Passing this
 check is not model-review acceptance. Model runs must also pass their existing
 completion checks and the current-head coverage check before recording a success
 receipt. No new model filter or cross-group semantic merge is implemented.
 
-`OCR large-file coverage` from GitHub Actions is required on both target branches,
+`OCR large-file coverage` from GitHub Actions is required on `main`,
 with up-to-date branches required and existing protections preserved. The status
 name stays unchanged when moving the gate into this workflow. To check an
 existing PR without a model call, dispatch Open Code Review while `OCR_ENABLED`
-is false. New commits run coverage automatically; synchronize/edited events do
-not request model review even when the switch is enabled. Fork PRs get automatic
+is false. New commits run coverage automatically and then model review when enabled. Fork PRs get automatic
 coverage, but model review still requires an authorized command.
 
 The review job checks that the PR head and target-policy commit still match its
