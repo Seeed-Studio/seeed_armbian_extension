@@ -28,7 +28,7 @@ default disabled-thinking body. Never put credentials in variables or PR content
 
 The CLI is fixed to `1.13.6`, and the Action to its release commit
 `891df1b63f380845d882a289a67a6e36c331120c`; self-update is disabled.
-Review effort is medium, concurrency two, per-task timeout 120 minutes and job
+Review effort is high (three review rounds), concurrency two, per-task timeout 120 minutes and job
 timeout 360 minutes. No `max_tokens_budget` aggregate token limit is configured.
 
 For `deepseek-v4.1-flash-1017` over Chat Completions, the workflow supplies
@@ -229,3 +229,32 @@ updating the PR branch or rerunning the gate. Do not treat an old-head pass as a
 pass for new commits. Oversized source/code diffs must be brought within OCR's supported input
 coverage before merging; exclusions or renaming to a documentation suffix are not
 an accepted workaround.
+
+## Review quality limits and recall acceptance
+
+OCR `effort: high` raises the official review-round preset from two to three.
+It is independent of the provider's `reasoning_effort`/thinking configuration;
+output-token settings, concurrency and timeouts remain unchanged. An additional
+round gives the reviewer another opportunity to inspect omissions; it is not a
+guarantee of improved recall or precision.
+
+Two v1.13.6 limits remain unresolved:
+
+- Project background and path rules guide planning and review, but the embedded
+  group filter receives only group paths, diffs and candidate comments. It does
+  not receive project constraints. Existing pre-submission evidence checks are
+  mitigation, not a repair of the filter's context boundary.
+- The Action's enabled incremental deduplication suppresses overlapping comments
+  on the same path/line ranges. It does not merge a shared root cause reported
+  against different files/groups. No extra model-based merge stage is added.
+
+Compare high effort against the existing medium runs on the same business heads
+of PR #16 and #17 using result artifacts, not newly posted comment counts (the
+publisher may suppress overlaps). Freeze the model, extra_body, rules and input
+heads; record any policy/base changes separately. Count each confirmed root cause
+once, and evaluate known false positives, severity inflation and cross-file
+duplicates as well as recall. Unverified candidates are excluded from the known
+bug denominator. Check completion and filtering errors before interpreting an
+absence as a missed defect. A single comparison measures that run only, not
+long-term stability. Real-model acceptance must run through GitHub PR workflows;
+static checks do not establish review-quality improvement.
