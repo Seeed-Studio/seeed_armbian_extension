@@ -5,7 +5,7 @@ on:
   # Use trusted base-branch configuration for automatic reviews.
   pull_request_target:
     branches: [main, deb_source]
-    types: [opened, reopened, ready_for_review]
+    types: [opened, reopened, synchronize, ready_for_review, edited]
   issue_comment:
     types: [created]
   workflow_dispatch:
@@ -31,7 +31,6 @@ jobs:
     name: Validate review request
     if: >-
       github.repository == 'Seeed-Studio/seeed_armbian_extension' &&
-      vars.OCR_ENABLED == 'true' &&
       (github.event_name != 'issue_comment' ||
        (github.event.issue.pull_request != null &&
         contains(github.event.comment.body, '/ocr')))
@@ -43,6 +42,7 @@ jobs:
     outputs:
       pr: ${{ steps.request.outputs.pr }}
       force: ${{ steps.request.outputs.force }}
+      review: ${{ steps.request.outputs.review }}
     steps:
       - name: Authorize trigger
         id: request
@@ -50,18 +50,21 @@ jobs:
         env:
           INPUT_PR: ${{ inputs.pr }}
           INPUT_FORCE: ${{ inputs.force }}
+          OCR_ENABLED: ${{ vars.OCR_ENABLED }}
         with:
           script: |
             const { owner, repo } = context.repo;
             let number;
             let force = false;
+            let review = process.env.OCR_ENABLED === 'true';
             if (context.eventName === 'pull_request_target') {
               const pr = context.payload.pull_request;
               if (pr.draft || pr.state !== 'open') return;
               if (pr.head.repo?.full_name !== `${owner}/${repo}`) {
-                core.notice('Skipping automatic OCR for a fork PR; use an authorized /ocr command.');
-                return;
+                core.notice('Fork PR: coverage only; model review requires an authorized /ocr command.');
+                review = false;
               }
+              if (['synchronize', 'edited'].includes(context.payload.action)) review = false;
               number = pr.number;
             } else if (context.eventName === 'issue_comment') {
               const comment = context.payload.comment;
@@ -87,6 +90,7 @@ jobs:
             }
             if (!/^[1-9][0-9]*$/.test(String(number))) throw new Error('Expected a positive PR number');
             core.setOutput('pr', String(number));
+            core.setOutput('review', String(review));
             if (force) core.setOutput('force', 'true');
 
       - name: Acknowledge review request
@@ -101,10 +105,136 @@ jobs:
               content: 'eyes',
             });
 
-  review:
-    name: Open Code Review
+  coverage:
+    name: OCR coverage gate
     needs: request
     if: needs.request.outputs.pr != ''
+    outputs:
+      head: ${{ steps.pr.outputs.head }}
+      base: ${{ steps.pr.outputs.base }}
+      check: ${{ steps.pr.outputs.check }}
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    permissions:
+      contents: read
+      checks: write
+      pull-requests: read
+    env:
+      OCR_NO_UPDATE: '1'
+    steps:
+      - name: Resolve current PR and start exact-head check
+        id: pr
+        uses: actions/github-script@3a2844b7e9c422d3c10d287c895573f7108da1b3 # v9.0.0
+        env:
+          INPUT_PR: ${{ needs.request.outputs.pr }}
+          EXPECTED_HEAD: ${{ inputs.expected_head }}
+        with:
+          script: |
+            const number = context.payload.pull_request?.number || process.env.INPUT_PR;
+            if (!/^[1-9][0-9]*$/.test(String(number))) throw new Error('Invalid PR number');
+            const { data: pr } = await github.rest.pulls.get({ ...context.repo, pull_number: Number(number) });
+            if (pr.state !== 'open' || !['main', 'deb_source'].includes(pr.base.ref)) {
+              throw new Error('Expected an open PR targeting main or deb_source');
+            }
+            if (process.env.EXPECTED_HEAD && pr.head.sha !== process.env.EXPECTED_HEAD) {
+              throw new Error('PR moved before coverage inspection; request its current head.');
+            }
+            const { data: branch } = await github.rest.repos.getBranch({ ...context.repo, branch: pr.base.ref });
+            const { data: check } = await github.rest.checks.create({
+              ...context.repo, name: 'OCR large-file coverage', head_sha: pr.head.sha,
+              external_id: `${branch.commit.sha}:${pr.head.sha}`,
+              status: 'in_progress', details_url: `${context.serverUrl}/${context.repo.owner}/${context.repo.repo}/actions/runs/${context.runId}`,
+              output: { title: 'Checking OCR input coverage', summary: 'Official OCR preview only; no model calls.' },
+            });
+            core.setOutput('number', String(pr.number));
+            core.setOutput('head', pr.head.sha);
+            core.setOutput('base', branch.commit.sha);
+            core.setOutput('check', String(check.id));
+
+      # Read policy and executable helpers only from the trusted target branch.
+      - name: Checkout trusted target
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+        with:
+          ref: ${{ steps.pr.outputs.base }}
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: Fetch PR objects without checking out or executing PR code
+        env:
+          GH_TOKEN: ${{ github.token }}
+          PR_NUMBER: ${{ steps.pr.outputs.number }}
+          REVIEW_HEAD: ${{ steps.pr.outputs.head }}
+          REVIEW_BASE: ${{ steps.pr.outputs.base }}
+        run: |
+          auth="$(printf 'x-access-token:%s' "$GH_TOKEN" | base64 -w0)"
+          echo "::add-mask::$auth"
+          git -c "http.extraheader=AUTHORIZATION: basic $auth" fetch origin "refs/pull/${PR_NUMBER}/head"
+          test "$(git rev-parse FETCH_HEAD)" = "$REVIEW_HEAD"
+          git merge-base "$REVIEW_BASE" "$REVIEW_HEAD" > "$RUNNER_TEMP/ocr-coverage-base"
+
+      - name: Install pinned official OCR
+        run: |
+          npm install -g @alibaba-group/open-code-review@1.13.6
+          ocr version
+
+      - name: Preview full PR using target policy
+        env:
+          REVIEW_HEAD: ${{ steps.pr.outputs.head }}
+        run: |
+          ocr review --preview --format json \
+            --from "$(cat "$RUNNER_TEMP/ocr-coverage-base")" --to "$REVIEW_HEAD" \
+            --rule "$GITHUB_WORKSPACE/.github/open-code-review/rules.json" \
+            > "$RUNNER_TEMP/ocr-preview.json"
+          python3 .github/open-code-review/coverage_gate.py \
+            "$RUNNER_TEMP/ocr-preview.json" "$RUNNER_TEMP/ocr-coverage.json" --head "$REVIEW_HEAD"
+
+      - name: Publish critical coverage failures
+        if: ${{ always() && steps.pr.outputs.check != '' }}
+        uses: actions/github-script@3a2844b7e9c422d3c10d287c895573f7108da1b3 # v9.0.0
+        env:
+          CHECK_ID: ${{ steps.pr.outputs.check }}
+          REVIEW_HEAD: ${{ steps.pr.outputs.head }}
+          REVIEW_BASE: ${{ steps.pr.outputs.base }}
+          PR_NUMBER: ${{ steps.pr.outputs.number }}
+          JOB_STATUS: ${{ job.status }}
+        with:
+          script: |
+            const fs = require('node:fs');
+            const path = require('node:path');
+            let conclusion = 'failure';
+            let summary = 'Coverage could not be established. Inspect workflow logs; merging remains blocked.';
+            const resultFile = path.join(process.env.RUNNER_TEMP, 'ocr-coverage.json');
+            if (process.env.JOB_STATUS === 'success' && fs.existsSync(resultFile)) {
+              const result = JSON.parse(fs.readFileSync(resultFile, 'utf8'));
+              conclusion = result.status === 'success' ? 'success' : 'failure';
+              const safe = value => String(value).replace(/[&<>]/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;'}[c])).replace(/`/g, '&#96;').replace(/[\r\n]/g, ' ');
+              summary = `Head: ${process.env.REVIEW_HEAD}\n\nPolicy base: ${process.env.REVIEW_BASE}\n\n`;
+              summary += result.findings.length
+                ? '**CRITICAL — 审查覆盖缺失，阻塞合并。** 这不是已证实的代码漏洞。\n\n' +
+                  result.findings.map(f => `- **critical** \`${safe(f.path)}\`: OCR \`too_large\`，未审查。`).join('\n')
+                : 'No source-code files or code diffs excluded by OCR as `too_large`. This check does not certify model review completion.';
+              if (result.oversized_non_source.length) {
+                summary += '\n\nOversized non-source files (not model-reviewed; nonblocking):\n' + result.oversized_non_source.map(p => `- \`${safe(p)}\``).join('\n');
+              }
+              summary += '\n\nOCR v1.13.6 preview does not expose per-file token estimates; no estimates are fabricated.';
+            }
+            const { data: pr } = await github.rest.pulls.get({ ...context.repo, pull_number: Number(process.env.PR_NUMBER) });
+            const { data: branch } = await github.rest.repos.getBranch({ ...context.repo, branch: pr.base.ref });
+            if (pr.head.sha !== process.env.REVIEW_HEAD || branch.commit.sha !== process.env.REVIEW_BASE) {
+              conclusion = 'failure';
+              summary += '\n\nPR head or target policy changed during inspection; rerun for the current revision.';
+            }
+            await github.rest.checks.update({
+              ...context.repo, check_run_id: Number(process.env.CHECK_ID), status: 'completed', conclusion,
+              output: { title: conclusion === 'success' ? 'OCR large-file coverage passed' : 'OCR coverage blocked', summary: summary.slice(0, 60000) },
+            });
+            await core.summary.addRaw(summary).write();
+            if (conclusion !== 'success') core.setFailed('OCR coverage gate failed; see exact-head check.');
+
+  review:
+    name: Open Code Review
+    needs: [request, coverage]
+    if: needs.request.outputs.review == 'true'
     runs-on: ubuntu-24.04
     timeout-minutes: 360
     permissions:
@@ -125,6 +255,8 @@ jobs:
           PR_NUMBER: ${{ needs.request.outputs.pr }}
           FORCE_REVIEW: ${{ needs.request.outputs.force }}
           EXPECTED_HEAD: ${{ inputs.expected_head }}
+          COVERAGE_HEAD: ${{ needs.coverage.outputs.head }}
+          COVERAGE_BASE: ${{ needs.coverage.outputs.base }}
         with:
           script: |
             const { data: pr } = await github.rest.pulls.get({
@@ -144,6 +276,9 @@ jobs:
               ...context.repo, branch: pr.base.ref,
             });
             const policySha = targetBranch.commit.sha;
+            if (pr.head.sha !== process.env.COVERAGE_HEAD || policySha !== process.env.COVERAGE_BASE) {
+              throw new Error('PR or target policy changed after the coverage gate; rerun before invoking a model.');
+            }
             if (process.env.FORCE_REVIEW !== 'true') {
               const receipt = `ocr-completed-${pr.number}-${policySha}-${pr.head.sha}`;
               const artifacts = await github.paginate(github.rest.actions.listArtifactsForRepo, {
@@ -530,23 +665,22 @@ jobs:
                   output.write(f'head={head}\n')
           PY
 
-      - name: Require current large-file coverage before recording completion
+      - name: Recheck this run's coverage before recording completion
         if: steps.report.outputs.head != ''
         uses: actions/github-script@3a2844b7e9c422d3c10d287c895573f7108da1b3 # v9.0.0
         env:
           REVIEW_HEAD: ${{ steps.report.outputs.head }}
           REVIEW_BASE: ${{ steps.pr.outputs.base_sha }}
+          COVERAGE_CHECK: ${{ needs.coverage.outputs.check }}
         with:
           script: |
-            const checks = await github.paginate(github.rest.checks.listForRef, {
-              ...context.repo, ref: process.env.REVIEW_HEAD,
-              check_name: 'OCR large-file coverage', filter: 'latest', per_page: 100,
+            const { data: check } = await github.rest.checks.get({
+              ...context.repo, check_run_id: Number(process.env.COVERAGE_CHECK),
             });
-            const owned = checks.filter(check => check.app?.slug === 'github-actions')
-              .sort((a, b) => b.id - a.id);
-            if (!owned.length || owned[0].status !== 'completed' || owned[0].conclusion !== 'success' ||
-                owned[0].external_id !== `${process.env.REVIEW_BASE}:${process.env.REVIEW_HEAD}`) {
-              core.setFailed('CRITICAL: current-head OCR large-file coverage has not passed; no completion receipt will be recorded.');
+            if (check.app?.slug !== 'github-actions' || check.status !== 'completed' ||
+                check.conclusion !== 'success' || check.head_sha !== process.env.REVIEW_HEAD ||
+                check.external_id !== `${process.env.REVIEW_BASE}:${process.env.REVIEW_HEAD}`) {
+              core.setFailed('CRITICAL: this run has no matching successful coverage gate; no completion receipt will be recorded.');
             }
 
       - name: Record successfully published review
