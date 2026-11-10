@@ -258,6 +258,7 @@ jobs:
             core.notice(`Review policy loaded from target commit ${process.env.POLICY_REF}.`);
 
       - name: Check model configuration
+        id: model
         if: steps.pr.outputs.head != ''
         env:
           OCR_LLM_URL: ${{ secrets.OCR_LLM_URL }}
@@ -275,8 +276,17 @@ jobs:
                   raise SystemExit(f'::error::Set {name} before enabling OCR.')
           if os.environ['OCR_LLM_PROTOCOL'] not in ('anthropic', 'openai', 'openai-responses'):
               raise SystemExit('::error::Set OCR_LLM_PROTOCOL to anthropic, openai or openai-responses.')
-          if not isinstance(json.loads(os.environ['OCR_LLM_EXTRA_BODY']), dict):
+          extra_body = json.loads(os.environ['OCR_LLM_EXTRA_BODY'])
+          if not isinstance(extra_body, dict):
               raise SystemExit('::error::OCR_LLM_EXTRA_BODY must be a JSON object.')
+          # v1.13.6 otherwise sends a 16,384-token output ceiling, shared with
+          # reasoning by this model. This is per-response, not a run budget.
+          if (os.environ['OCR_LLM_PROTOCOL'] == 'openai' and
+                  os.environ['OCR_LLM_MODEL'] == 'deepseek-v4.1-flash-1017' and
+                  'max_tokens' not in extra_body):
+              extra_body.setdefault('max_completion_tokens', 65536)
+          with open(os.environ['GITHUB_OUTPUT'], 'a') as output:
+              output.write('extra_body=' + json.dumps(extra_body, separators=(',', ':')) + '\n')
           endpoint = os.environ['OCR_LLM_URL'].rstrip('/')
           url = urlsplit(endpoint)
           for value in (os.environ['OCR_LLM_TOKEN'], endpoint, f'{url.scheme}://{url.netloc}'):
@@ -293,6 +303,8 @@ jobs:
         if: steps.pr.outputs.head != ''
         id: ocr
         uses: alibaba/open-code-review@891df1b63f380845d882a289a67a6e36c331120c # v1.13.6
+        env:
+          OCR_RAW_LOGGING: '1'
         with:
           pr_number: ${{ needs.request.outputs.pr }}
           base_ref: ${{ steps.pr.outputs.base }}
@@ -302,7 +314,7 @@ jobs:
           llm_auth_header: Authorization
           llm_protocol: ${{ vars.OCR_LLM_PROTOCOL }}
           llm_use_anthropic: ${{ vars.OCR_LLM_PROTOCOL == 'anthropic' && 'true' || 'false' }}
-          llm_extra_body: ${{ vars.OCR_LLM_EXTRA_BODY || '{}' }}
+          llm_extra_body: ${{ steps.model.outputs.extra_body }}
           llm_model: ${{ vars.OCR_LLM_MODEL }}
           ocr_version: '1.13.6'
           language: Chinese
@@ -344,6 +356,65 @@ jobs:
             }
             await github.rest.issues.updateComment({ ...args, body });
 
+      - name: Collect LLM response metadata
+        if: ${{ !cancelled() && steps.ocr.outcome != '' && steps.ocr.outcome != 'skipped' }}
+        run: |
+          python3 <<'PY'
+          import json, pathlib
+          result = pathlib.Path('/tmp/ocr-result.json')
+          metadata = {'requests': [], 'unreadable_records': 0}
+          if result.is_file():
+              session = json.loads(result.read_text()).get('session_id')
+              if session:
+                  for capture in (pathlib.Path.home() / '.opencodereview/raw').glob('*/*.jsonl'):
+                      if capture.stem != session:
+                          continue
+                      try:
+                          with capture.open() as stream:
+                              for line in stream:
+                                  try:
+                                      record = json.loads(line)
+                                      request = record.get('request_body') or {}
+                                      response = record.get('response_body') or {}
+                                      if not isinstance(request, dict) or not isinstance(response, dict):
+                                          metadata['unreadable_records'] += 1
+                                          continue
+                                      def number(value):
+                                          return value if type(value) in (int, float) else None
+                                      task = record.get('task_type')
+                                      known_tasks = {'main_task', 'plan_task', 'review_filter_task',
+                                                     'memory_compression_task', 're_location_task', 'grouping_task'}
+                                      entry = {
+                                          'task': task if task in known_tasks else 'other',
+                                          'request_no': number(record.get('request_no')),
+                                          'status_code': number(record.get('status_code')),
+                                          'duration_ms': number(record.get('duration_ms')),
+                                          'max_completion_tokens': number(request.get('max_completion_tokens')),
+                                          'max_tokens': number(request.get('max_tokens')),
+                                          'choices': [],
+                                      }
+                                      usage = response.get('usage') or {}
+                                      entry['completion_tokens'] = number(usage.get('completion_tokens'))
+                                      for choice in response.get('choices') or []:
+                                          msg = choice.get('message') or {}
+                                          reason = choice.get('finish_reason')
+                                          entry['choices'].append({
+                                              'finish_reason': reason if reason in {'stop', 'length', 'tool_calls',
+                                                                                   'content_filter', 'function_call'} else 'other',
+                                              'has_content': bool(msg.get('content')),
+                                              'has_reasoning': bool(msg.get('reasoning_content')),
+                                              'tool_call_count': len(msg.get('tool_calls') or []),
+                                          })
+                                      metadata['requests'].append(entry)
+                                  except (ValueError, TypeError, AttributeError):
+                                      metadata['unreadable_records'] += 1
+                      finally:
+                          # Only the numeric/boolean/enumerated metadata leaves the runner.
+                          capture.unlink()
+          pathlib.Path('/tmp/ocr-llm-metadata.json').write_text(json.dumps(metadata) + '\n')
+          print('Captured response metadata for', len(metadata['requests']), 'LLM requests.')
+          PY
+
       - name: Redact review diagnostics
         id: diagnostics
         if: ${{ !cancelled() && steps.ocr.outcome != '' && steps.ocr.outcome != 'skipped' }}
@@ -368,7 +439,7 @@ jobs:
           destination = pathlib.Path(tempfile.mkdtemp(prefix='ocr-diagnostics-', dir=os.environ['RUNNER_TEMP']))
           copied = False
           exposed_key = False
-          for name in ('ocr-result.json', 'ocr-stderr.log', 'ocr-policy-manifest.json'):
+          for name in ('ocr-result.json', 'ocr-stderr.log', 'ocr-policy-manifest.json', 'ocr-llm-metadata.json'):
               source = pathlib.Path('/tmp') / name
               if not source.is_file():
                   continue

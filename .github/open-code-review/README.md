@@ -30,6 +30,14 @@ The CLI is fixed to `1.13.6`, and the Action to its release commit
 Review effort is medium, concurrency two, per-task timeout 120 minutes and job
 timeout 360 minutes. No `max_tokens_budget` aggregate token limit is configured.
 
+For `deepseek-v4.1-flash-1017` over Chat Completions, the workflow supplies
+`max_completion_tokens: 65536` through the official `llm_extra_body` input unless
+an output limit is explicitly configured. This increases v1.13.6's 16,384-token
+per-response ceiling while retaining the configured thinking mode. It mitigates
+reasoning exhausting the response allowance; it does not prove the cause of a
+past filter parse failure or guarantee valid tool output. It is not a total-run
+budget. Thinking mode must not be combined with forced `tool_choice: required`.
+
 GitHub-confirmed renames with zero additions and deletions are deduplicated by
 content. Directory migrations are added to the review background so path
 references, package discovery, build and install behavior remain in scope.
@@ -93,10 +101,11 @@ rule through the official `merge_system_rule: false` option:
 | Remaining text | Armbian hooks, system services, scripts, configuration and operational commands |
 
 Only the first matching custom rule applies. Later project entries are not additive.
-Each domain checklist includes its required language-correctness checks; this
-avoids importing generic naming/style/test-presence requirements that conflict
-with this project's defect-focused reporting scope. Domain rules include their required
-Shell checks. This branch has no driver-library or Debian-source policy files;
+The background owns common correctness checks, evidence requirements, reporting
+scope and severity standards. Domain rules add path-specific checks rather than
+repeating the common instructions. This separation keeps the first-match override
+complete without importing generic naming/style/test-presence requirements.
+This branch has no driver-library or Debian-source policy files;
 `deb_source` maintains its own driver, camera/library/application, tool and
 packaging rules. `/ocr` on a PR targeting `deb_source` loads that target's policy,
 even though the command workflow runs from `main`.
@@ -132,6 +141,14 @@ Partial reviews, including token-budget exhaustion, fail the completeness step
 and list failed coverage paths in the Actions summary. They remain retryable.
 An engine `skipped` result is reported without a completion receipt. Workflow
 failure is diagnostic; this workflow is not a required merge check.
+
+The official `OCR_RAW_LOGGING=1` diagnostic switch captures provider responses on
+the ephemeral runner. Before artifact upload, only numeric limits/usage, known
+finish reasons, content/reasoning presence and tool-call counts are extracted to
+`ocr-llm-metadata.json`; request/response text, headers and tool arguments are not
+copied. The processed raw capture is deleted. Missing/non-JSON captures are not
+proof that a response completed correctly. This evidence distinguishes output
+truncation from a completed response with an invalid filter format on a rerun.
 
 Diagnostics are copied from `/tmp/ocr-result.json` and `/tmp/ocr-stderr.log`,
 redacted and retained for seven days. Completion receipts last 90 days, or the
