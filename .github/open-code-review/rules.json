@@ -1,5 +1,7 @@
 {
-  "include": ["**/*"],
+  "include": [
+    "**/*"
+  ],
   "exclude": [
     "prebuilt/**",
     "camera_engine_rkaiq/build/**",
@@ -13,37 +15,37 @@
     {
       "path": ".github/**",
       "rule": "rules/ci.md",
-      "merge_system_rule": true
+      "merge_system_rule": false
     },
     {
       "path": "**/debian/**",
       "rule": "rules/packaging.md",
-      "merge_system_rule": true
+      "merge_system_rule": false
     },
     {
       "path": "{maxio-phy-dkms,pcie-rkep-dkms,realtek-r8125-dkms,wq9201s-wifi-bt-dkms}/**",
       "rule": "rules/drivers.md",
-      "merge_system_rule": true
+      "merge_system_rule": false
     },
     {
       "path": "morse-halow/morse-fgh100m-dkms/**",
       "rule": "rules/drivers.md",
-      "merge_system_rule": true
+      "merge_system_rule": false
     },
     {
       "path": "camera_engine_rkaiq/**",
       "rule": "rules/camera.md",
-      "merge_system_rule": true
+      "merge_system_rule": false
     },
     {
       "path": "**/*.{patch,diff,c,h,cpp,cc,cxx,hpp,hxx}",
       "rule": "rules/native.md",
-      "merge_system_rule": true
+      "merge_system_rule": false
     },
     {
       "path": "**",
       "rule": "rules/runtime.md",
-      "merge_system_rule": true
+      "merge_system_rule": false
     }
   ]
 }
