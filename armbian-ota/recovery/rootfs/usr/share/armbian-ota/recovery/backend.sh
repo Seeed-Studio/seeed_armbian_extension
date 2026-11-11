@@ -501,9 +501,24 @@ recovery_start_ota() {
 
 # ===== terminal commit (health pass or mark-success) ==========================
 
-# Roll the backup pointer to the freshly confirmed payload (15.5): state
-# first, delete the old directory second -- any power cut leaves BACKUP_ID
-# pointing at a complete payload directory.
+recovery_verify_payload_full() {
+    local dir="$1"
+
+    [ -d "${dir}" ] || return 1
+    [ -f "${dir}/payload.env" ] || return 1
+    (cd "${dir}" && sha256sum -c rootfs.sha256 >/dev/null 2>&1) || {
+        log_warn "Backup verification: rootfs.sha256 failed for ${dir}"
+        return 1
+    }
+    (cd "${dir}" && sha256sum -c boot.sha256 >/dev/null 2>&1) || {
+        log_warn "Backup verification: boot.sha256 failed for ${dir}"
+        return 1
+    }
+}
+
+# Roll the backup pointer to the freshly confirmed payload (15.5): verify the
+# complete candidate first, then state, delete the old directory second. A
+# healthy boot does not prove that the on-disk restore payload stayed intact.
 recovery_roll_backup() {
     local candidate_id="$1"
     local old_backup new_dir old_dir
@@ -513,8 +528,12 @@ recovery_roll_backup() {
 
     new_dir="${OTA_PAYLOADS_DIR}/${candidate_id}"
     [ -d "${new_dir}" ] || {
-        log_warn "Confirmed payload ${candidate_id} is not staged; keeping backup ${old_backup:-none}"
-        return 0
+        log_error "Confirmed payload ${candidate_id} is not staged; keeping backup ${old_backup:-none}"
+        return 1
+    }
+    recovery_verify_payload_full "${new_dir}" || {
+        log_error "Confirmed payload ${candidate_id} failed full verification; keeping backup ${old_backup:-none}"
+        return 1
     }
 
     state_set "BACKUP_ID" "${candidate_id}" || return 1
@@ -537,8 +556,10 @@ recovery_commit_success() {
     restore_mode="$(state_get RESTORE_MODE)"
     [ -n "${candidate_id}" ] || error_exit "No CANDIDATE_ID in state; nothing to confirm"
 
-    state_mark_success "${candidate_id}"
-    recovery_roll_backup "${candidate_id}"
+    state_mark_success "${candidate_id}" ||
+        error_exit "Failed to persist successful OTA state for ${candidate_id}"
+    recovery_roll_backup "${candidate_id}" ||
+        error_exit "Failed to promote verified last-good payload ${candidate_id}; OTA remains pending for retry"
 
     local lower_dev
     lower_dev="$(recovery_lower_source)"
