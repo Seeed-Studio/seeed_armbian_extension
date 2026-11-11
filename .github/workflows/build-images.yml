@@ -269,6 +269,12 @@ jobs:
           rclone cat "$IBASE/slots.json" --contimeout 15s > slots.json
           jq -e 'type == "object"' slots.json >/dev/null
           old="$(jq -r '."pre-release" // empty' slots.json)"
+          # Validate the remote pointer before hiding or deleting anything;
+          # never substitute it as shell source in a later run step.
+          if [ -n "$old" ] && [[ ! "$old" =~ ^[A-Za-z0-9][A-Za-z0-9._-]*$ ]]; then
+            echo "::error::invalid pre-release mirror tag in slots.json"
+            exit 1
+          fi
           echo "current candidate: ${old:-<none>}"
           echo "tag=$old" >> "$GITHUB_OUTPUT"
 
@@ -300,11 +306,14 @@ jobs:
         # History GC belongs to Images - Release.
         env:
           TAG: ${{ needs.plan.outputs.tag }}
+          OLD_TAG: ${{ steps.retire.outputs.tag }}
         run: |
           set -euo pipefail
           IBASE="seeed-storage:armbian/${GITHUB_REPOSITORY_OWNER,,}/images"
-          if [ -n "${{ steps.retire.outputs.tag }}" ]; then
-            rclone purge "$IBASE/trees/${{ steps.retire.outputs.tag }}" --contimeout 15s
+          if [ -n "$OLD_TAG" ]; then
+            [[ "$OLD_TAG" =~ ^[A-Za-z0-9][A-Za-z0-9._-]*$ ]] ||
+              { echo "::error::invalid retired mirror tag; refusing tree cleanup"; exit 1; }
+            rclone purge "$IBASE/trees/$OLD_TAG" --contimeout 15s
           fi
           if ! rclone lsd "$IBASE/trees/$TAG" --contimeout 15s > tree.check 2> tree.error; then
             if grep -qi 'not found' tree.error; then
