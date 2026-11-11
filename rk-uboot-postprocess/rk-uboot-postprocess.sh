@@ -264,7 +264,9 @@ function pre_umount_final_image__902_export_production_loaders() {
 		return 0
 	fi
 
-	if [[ "${RK_SECURE_UBOOT_ENABLE:-no}" == "yes" || "${RK_OPTEE_BOOT_ENABLE:-no}" == "yes" ]]; then
+	# OP-TEE secure-rootfs has an unsigned bootchain. Only the full signed
+	# profile belongs in the public loaders/secure directory.
+	if rk_full_secure_boot_enabled; then
 		sec="secure"
 	else
 		sec="plain"
