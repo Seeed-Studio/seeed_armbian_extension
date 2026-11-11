@@ -57,9 +57,9 @@ immediately**):
 |---|---|---|
 | 1 | environment check: U-Boot env sane, `rootfs_a/b` + `boot_a/b` PARTLABELs exist, current slot from kernel cmdline | `fw_printenv`, `blkid` |
 | 2 | partition capacity gate: `ROOTFS_BYTES`/`BOOT_BYTES` stamps vs target slot partitions, 110% extract margin (raw FIT 1:1), encrypted targets reserve the LUKS2 header | `blkid`, `blockdev` |
-| 3 | staging store: open + mount the `userdata` partition (LUKS-unlocked with the security-flow passphrase on encrypted layouts; `/ota_work` on the live rootfs as warned fallback), sweep aborted staging dirs, then the space gate (package × 2 + margin) and the shared dual-payload assertion | `cryptsetup`, `mount`, `df`, `tar` |
+| 3 | staging store: reuse the userdata overlay upper already mounted at `/media/root-rw`, never unlock or mount its backing ext4 again; sweep aborted staging dirs, then the space gate (package × 2 + margin) and the shared dual-payload assertion | `mountpoint`, `df`, `tar` |
 | 4 | `extract_ota_package` + `ota_verify_payload` (shared with recovery) | `tar`, `sha256sum`, `openssl` |
-| 5 | `ab_update_target_partition`: unlock target if LUKS (key from security partition flow) → mount → `empty_mount_dir` clean (**no mkfs**; UUID/label preserved) → extract rootfs payload → write target boot (tar extract or `boot.itb` dd) → rewrite target `fstab`/`armbianEnv.txt` UUIDs → sync + unmount; staging store torn down afterwards | `cryptsetup`, `mount`, `tar`, `dd` |
+| 5 | `ab_update_target_partition`: unlock target if LUKS (key from security partition flow) → mount → `empty_mount_dir` clean (**no mkfs**; UUID/label preserved) → extract rootfs payload → write target boot (tar extract or `boot.itb` dd) → rewrite target `fstab`/`armbianEnv.txt` UUIDs → sync + unmount; staging directory removed afterwards | `cryptsetup`, `mount`, `tar`, `dd` |
 | 6 | `state ready_to_boot` + `ab_env_prepare` (switch `boot_slot`, set `ota_in_progress=1`) | `fw_setenv` |
 
 Key structural difference: recovery rewrites the rootfs partition from the
@@ -76,7 +76,7 @@ Where each archive is unpacked, by mode and phase:
 | recovery | P2 | initramfs | `rootfs.tar.xz`/`.tar.gz` | GNU tar + xz/gzip (**real binaries staged by the 99-copy-tools hook**) | `tar -xJf` / `-xzf` | freshly mkfs'd rootfs partition |
 | recovery | P2 | initramfs | `boot.tar.xz`/`.tar.gz` | same | same | boot partition |
 | recovery | P2 | initramfs | `boot.itb` | `dd` | `dd bs=4M conv=fsync` | raw boot partition (FIT) |
-| ab | P1 | live system | outer package | GNU tar | `tar -xf` | `/ota_work/ab-package.XXXXXX` |
+| ab | P1 | live system | outer package | GNU tar | `tar -xf` | `<userdata>/ota-ab/ota_work/ab-package.XXXXXX` |
 | ab | P1 | live system | rootfs payload → target slot | `pv` + GNU tar | `pv file \| tar --xattrs --acls --numeric-owner -xf - -C root_mnt` | cleaned target root partition |
 | ab | P1 | live system | boot payload → target slot | tar / dd | same / `dd` | target boot partition |
 | any (encrypted) | P1 | live system | `rootfs.*.enc` → plaintext tar | `openssl aes-256-cbc` + `sha256sum` re-check | decrypt then normal verification | staging dir |

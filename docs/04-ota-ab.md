@@ -74,7 +74,9 @@ then, still on the **old** system:
 
 1. Verifies the package (checksums; on encrypted images: signature when
    present — secure-boot builds only — AES decryption, digest re-check;
-   `OTA_MODE=ab` and encryption state must match).
+   `OTA_MODE=ab` and encryption state must match). Staging uses the existing
+   userdata overlay upper at `/media/root-rw/ota-ab/`; the backend never
+   unlocks or mounts that live filesystem a second time.
 2. Writes the full payload to the **inactive** slot — rootfs is extracted
    into the inactive root partition (LUKS opened with the same passphrase,
    header untouched), `boot.tar.gz` onto the inactive boot partition or the
