@@ -107,14 +107,17 @@ reboot
 
 `armbian-ota start` ([source](../armbian-ota/common/rootfs/usr/sbin/armbian-ota)):
 
-- takes exactly one argument — no options; the mode is auto-detected from
-  `package.env` and must match the firmware (`OTA_MODE=recovery`),
+- takes one package argument; optional `--force` reinstalls the same payload,
+  `--no-backup` skips creating a last-good backup, and
+  `--allow-release-change` explicitly permits a cross-release update. The mode
+  is auto-detected from `package.env` and must match the firmware
+  (`OTA_MODE=recovery`),
 - refuses a package whose encryption state differs from the device
   (`OTA_ENCRYPTED` vs. actual),
-- verifies checksums (and, on encrypted images, the manifest signature —
-  secure-boot builds only, an unsigned manifest is accepted with a
-  warning; see [06-secure-boot.md](06-secure-boot.md)),
-- stages everything under `userdata/ota-recovery/ota_work/` and marks the
+- verifies checksums and, on Secure Boot builds, requires a valid manifest
+  signature; secure-rootfs retains its unsigned-manifest compatibility path
+  with a warning (see [06-secure-boot.md](06-secure-boot.md)),
+- stages the payload under `userdata/ota-recovery/payloads/` and marks the
   state `prepared`.
 
 Then reboot. The initramfs does the rest — see next section.
@@ -133,13 +136,19 @@ runs before the real root is mounted. It anchors every device lookup to
 the disk U-Boot actually booted from (`armbian.bootdev` cmdline tokens —
 a cloned disk can never capture the update), validates the staged
 payload, then applies the new rootfs and boot contents in one verified
-pass, patches `armbianEnv.txt`/fstab/crypttab for the new UUIDs, removes
-the staging area, marks `STATUS=success`, and reboots.
+pass, patches `armbianEnv.txt`/fstab/crypttab for the new UUIDs, marks the
+state `applied`, and reboots once into the normal role. The health service
+then verifies the running candidate and promotes its verified payload to
+last-good, changing `STATUS=success`; it then clears the U-Boot transaction
+flag directly. If the system reboots into Rescue before that flag is cleared,
+Rescue completes the reconciliation.
 
-**Failure behavior:** any error makes the hook exit 0 and boot the old
-system; the staged payload is retried on every subsequent boot until it
-succeeds. There is no retry counter and no automatic fallback to a
-previous rootfs — if you need that, use [A/B OTA](04-ota-ab.md).
+**Failure behavior:** Rescue retries a failed candidate up to three times.
+After the attempts are exhausted it fully verifies the last-good backup,
+switches to a restore campaign, and boots that backup for health confirmation.
+With no usable backup, or if restore also fails, it stays in the Rescue shell
+rather than booting a partially written rootfs. This is not the immediate
+A/B-style rollback; see [A/B OTA](04-ota-ab.md) for inactive-slot recovery.
 
 Lifecycle diagram and step-by-step internals:
 [`armbian-ota/README.md`](../armbian-ota/README.md#how-ota-works).
@@ -149,9 +158,10 @@ Lifecycle diagram and step-by-step internals:
 On encrypted builds the update flow is identical from the user's perspective,
 but:
 
-- the package carries `rootfs.tar.gz.enc` instead of plaintext; the device
-  verifies `payload.manifest.sig` (RSA-PSS, when present) before
-  decrypting, then re-checks digests — key derivation and verification in
+- the package carries `rootfs.tar.<fmt>.enc` instead of plaintext; the device
+  verifies the manifest signature when present (and always requires one on
+  Secure Boot builds) before decrypting, then re-checks digests — key
+  derivation and verification in
   [`common.sh`](../armbian-ota/common/rootfs/usr/share/armbian-ota/common.sh);
 - the initramfs applies the payload through `/dev/mapper/armbian-root`;
 - the same passphrase/keys unlock everything — see
