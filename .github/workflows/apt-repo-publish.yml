@@ -442,11 +442,15 @@ jobs:
       - name: Merge prebuilt debs
         run: |
           if [[ -d deb-source/prebuilt ]]; then
-            found=$(find deb-source/prebuilt -name '*.deb' | wc -l)
-            # cp -vn prints one line per file it actually copies — count
-            # those, not the found total (no-clobber skips may apply)
-            copied=$(cp -vn deb-source/prebuilt/*.deb /tmp/debs/ 2>/dev/null | wc -l)
-            echo "Prebuilt debs: ${found} found, ${copied} merged"
+            copied=0
+            # Recurse consistently with the count below; an empty directory is
+            # a valid source, not an unexpanded cp glob failure.
+            while IFS= read -r -d '' deb; do
+              if cp -vn "$deb" /tmp/debs/ 2>/dev/null; then
+                copied=$((copied + 1))
+              fi
+            done < <(find deb-source/prebuilt -type f -name '*.deb' -print0)
+            echo "Prebuilt debs merged: ${copied}"
           else
             echo "No prebuilt directory found, skipping"
           fi
