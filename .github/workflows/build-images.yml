@@ -266,6 +266,17 @@ jobs:
         run: |
           set -euo pipefail
           IBASE="seeed-storage:armbian/${GITHUB_REPOSITORY_OWNER,,}/images"
+          # Enumerate the parent rather than treating every cat error as a fresh
+          # namespace. Network/permission failures must stop initialization.
+          if ! listing="$(rclone lsjson "$IBASE" --contimeout 15s 2>slots-list.error)"; then
+            cat slots-list.error >&2
+            exit 1
+          fi
+          if [ "$(jq '[.[] | select(.Path == "slots.json")] | length' <<<"$listing")" -eq 0 ]; then
+            printf '%s\n' '{"stable":null,"pre-release":null,"history":[]}' |
+              rclone rcat "$IBASE/slots.json" --contimeout 15s
+            echo "Initialized empty mirror pointer file"
+          fi
           rclone cat "$IBASE/slots.json" --contimeout 15s > slots.json
           jq -e 'type == "object"' slots.json >/dev/null
           old="$(jq -r '."pre-release" // empty' slots.json)"

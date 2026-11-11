@@ -305,7 +305,11 @@ def reconcile(mirror, releases, depth=1):
     old = mirror.slots()
     stable, candidate = old["stable"], old["pre-release"]
     if not any([candidate, stable, *old["history"]]):
-        raise ReconcileError("slots.json has neither pre-release, stable, nor history")
+        # The build workflow may initialize an empty pointer file before its
+        # first upload. Treat that state as a no-op: promotion cannot create a
+        # Release from nothing and must never use emptiness as a GC license.
+        print("mirror has no published pointers; nothing to reconcile")
+        return {"tag": "", "mode": "empty"}
     release_list = releases.list()
     available = {release["tagName"] for release in release_list}
     # Check tree existence before discarding a missing candidate pointer;
