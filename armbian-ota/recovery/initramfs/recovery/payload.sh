@@ -192,6 +192,40 @@ set_env_key() {
     fi
 }
 
+# Verify the exact FIT extent, not the whole partition's padding. Read complete
+# 1 MiB blocks plus one tail block, streaming them into the digest instead of
+# relying on a pipe's final status. A failed or short read produces a different
+# digest and aborts the write transaction.
+ota_fit_readback_verify() {
+    fit_target="$1"
+    fit_size="$2"
+    fit_expected_sha="$3"
+    fit_remaining="${fit_size}"
+    fit_offset=0
+    fit_actual_sha="$(
+        {
+            while [ "${fit_remaining}" -gt 0 ]; do
+                fit_chunk="${fit_remaining}"
+                [ "${fit_chunk}" -gt 1048576 ] && fit_chunk=1048576
+                if [ "${fit_chunk}" -eq 1048576 ]; then
+                    dd if="${fit_target}" bs=1M skip=$((fit_offset / 1048576)) \
+                        count=1 iflag=fullblock status=none || exit 1
+                else
+                    dd if="${fit_target}" bs=1 skip="${fit_offset}" count="${fit_chunk}" \
+                        iflag=fullblock status=none || exit 1
+                fi
+                fit_offset=$((fit_offset + fit_chunk))
+                fit_remaining=$((fit_remaining - fit_chunk))
+            done
+        } | sha256sum | awk '{print $1}'
+    )"
+    if [ "${fit_actual_sha}" != "${fit_expected_sha}" ]; then
+        log "ERROR: written FIT readback failed or does not match source"
+        return 1
+    fi
+    return 0
+}
+
 write_raw_boot_itb() {
     image="$1"
     target="$2"
@@ -238,13 +272,9 @@ write_raw_boot_itb() {
     # file, so a mismatch is a write failure, not a package defect.
     if command -v sha256sum >/dev/null 2>&1; then
         log "verifying written FIT against boot.sha256 ..."
-        written_sha="$(dd if="${target}" bs="${image_size}" count=1 2>/dev/null | sha256sum | awk '{print $1}')"
         source_sha="$(sha256sum "${image}" | awk '{print $1}')"
-        if [ "${written_sha}" != "${source_sha}" ]; then
-            log "ERROR: written FIT sha256 (${written_sha}) != source (${source_sha})"
-            return 1
-        fi
-        log "boot.itb verified after write (sha256=${written_sha})"
+        ota_fit_readback_verify "${target}" "${image_size}" "${source_sha}" || return 1
+        log "boot.itb verified after write (sha256=${source_sha})"
     else
         log "WARN: sha256sum unavailable in initramfs; skipping post-write verification"
     fi
