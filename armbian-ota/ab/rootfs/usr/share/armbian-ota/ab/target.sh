@@ -40,19 +40,24 @@ ab_extract_tar_payload() {
 
     log_info "Extracting ${label} payload"
 
-    if command -v pv >/dev/null 2>&1; then
-        size="$(stat -c '%s' "${archive}" 2>/dev/null || true)"
-        if [ -n "${size}" ]; then
-            pv -f -n -s "${size}" "${archive}" 2> >(ab_log_extract_progress "${label}" >&2) |
-                ${dec} |
-                tar --xattrs --acls --numeric-owner -xf - -C "${target}"
+    # Keep the strict option inside this pipeline's subshell. A sourced hook
+    # must not change the caller's errexit/pipefail policy; tar alone can accept
+    # a valid archive prefix after the decompressor has failed.
+    (
+        set -o pipefail
+        if command -v pv >/dev/null 2>&1; then
+            size="$(stat -c '%s' "${archive}" 2>/dev/null || true)"
+            if [ -n "${size}" ]; then
+                pv -f -n -s "${size}" "${archive}" 2> >(ab_log_extract_progress "${label}" >&2) |
+                    ${dec} |
+                    tar --xattrs --acls --numeric-owner -xf - -C "${target}"
+            else
+                pv -f "${archive}" | ${dec} | tar --xattrs --acls --numeric-owner -xf - -C "${target}"
+            fi
         else
-            pv -f "${archive}" | ${dec} | tar --xattrs --acls --numeric-owner -xf - -C "${target}"
+            ${dec} "${archive}" | tar --xattrs --acls --numeric-owner -xf - -C "${target}"
         fi
-        return $?
-    fi
-
-    ${dec} "${archive}" | tar --xattrs --acls --numeric-owner -xf - -C "${target}"
+    )
 }
 
 ab_write_target_state() {
