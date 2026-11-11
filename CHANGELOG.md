@@ -124,6 +124,15 @@ Covers the work against the initial import (merge base `9980aee`,
   decryption is enabled. Encrypted images use the initramfs-unlocked
   `/dev/mapper/armbian-userdata` mapper as the overlayroot backing device.
 
+- **Board-selected FIT DTB.** Secure Boot resolves `BOOT_FDT_FILE` for the
+  selected board and kernel branch, with an explicit `RK_SECURE_KERNEL_DTB`
+  override; missing or invalid selections fail instead of signing another
+  board's DTB.
+- **Slim boot initramfs layout.** Redundant `initrd.img-*` files are removed
+  from `/boot` only when a matching `uInitrd` exists. FIT packaging strips the
+  mkimage header before embedding a uInitrd, so secure images retain a valid
+  raw initramfs without carrying both copies.
+
 #### OTA payload security
 
 - **Encrypted and signed OTA payloads.** On encrypted-rootfs images the OTA
@@ -150,6 +159,11 @@ Covers the work against the initial import (merge base `9980aee`,
   first-match, so with several disks (or a cloned image) attached, root,
   userdata, and key material are only ever taken from the disk U-Boot
   actually booted from.
+
+- **Download sizes and aligned controls.** New tree manifests carry per-file
+  sizes; deployment enriches older immutable manifests from rclone listings
+  without rewriting them. Image, OTA and loader buttons display human-readable
+  sizes, with aligned Image/OTA groups and independent loader rows.
 
 #### Robustness & tooling
 
@@ -260,6 +274,27 @@ Covers the work against the initial import (merge base `9980aee`,
 
 ### Changed
 
+- **Image-variant compatibility gate.** `IMAGE_VARIANT=cli|desktop` is recorded
+  in both the firmware and package; `armbian-ota start` rejects CLI/Desktop
+  cross-upgrades when both stamps are present, while legacy images keep their
+  compatibility path.
+- **Release provenance.** GitHub Releases target the exact armbian-build
+  commit used for the image build, including cross-repository Releases.
+  `/etc/armbian-release` records only the extension commit, not a mutable ref.
+
+- **PR #37 hardening: OTA integrity, mirror safety and CI fail-closed
+  behavior.** A/B staging now reuses the mounted userdata overlay upper
+  instead of reopening the same ext4; compressed payload failures propagate,
+  raw FIT writes verify the complete FIT extent, and Recovery promotes a
+  last-good payload only after full checksum verification. Staging estimates
+  account for extracted and encrypted members, ext4 boot capacity includes
+  preserved rescue assets, and FIT routing appends disk/role tokens without
+  replacing configured bootargs. Secure Boot requires signed OTA manifests;
+  secure-rootfs retains its explicitly unsigned compatibility path. Mirror
+  updates reject malformed history and shell-unsafe tags, distinguish first
+  initialization from rclone errors, preserve existing pages on empty input,
+  and render history independently of stable. CI enforces RSA-2048, handles
+  empty prebuilt directories, and refuses missing kernel build hosts.
 - **OTA gate order normalized: cheapest-first, pure checks before side
   effects.** Three reorders, no logic changes: A/B's `ota_in_progress`
   guard now runs first in the backend (one `fw_printenv` read beats the
@@ -387,6 +422,13 @@ Covers the work against the initial import (merge base `9980aee`,
 
 ### Removed
 
+- **Mutable extension ref in release metadata.** `/etc/armbian-release` keeps
+  the immutable `SEEED_EXTENSION_COMMIT`; `SEEED_EXTENSION_REF` is no longer
+  recorded.
+- **Legacy OTA mirror test harness.** The unused
+  `.github/scripts/test_image_mirror.py` is removed; mirror coverage checks
+  remain in the OCR/publishing pipeline.
+
 - **`firstlogin-protection/` extension dropped** (upstreamed). The hardened
   firstlogin logic and its atomic-write / hardening patches are removed; the
   SSH-restart behavior moved upstream.
@@ -402,6 +444,22 @@ Covers the work against the initial import (merge base `9980aee`,
   `rk-cryptroot-verbosity.sh`, board defconfigs that lived in-repo).
 
 ### Fixed
+
+- **Standard CLI image handling.** `--minimal` selects `BUILD_DESKTOP=no`
+  without enabling Armbian's separate minimal-rootfs policy. The download page
+  recognizes the resulting suffixless CLI image names as well as encrypted and
+  A/B variants.
+- **APT publication to owner-root Pages.** The APT repository publishes at
+  `https://<owner>.github.io/` with independent Pages concurrency, and the
+  generated package index classifies boards by U-Boot package prefix instead
+  of dropping new boards into "Other".
+- **AIC8800 release downloads.** CI pins a known-good AIC8800 release, caches
+  validated debs, retries downloads and falls back to GitHub's asset API when
+  release URLs fail; invalid cached packages are discarded. Upstream extension
+  errors during this best-effort download path do not abort the image build.
+- **OP-TEE toolchain selection with ccache.** Auto-decrypt builds bypass
+  compiler-only ccache wrapper directories when locating the complete AArch64
+  and Arm32 toolchain binaries needed by the TA build.
 
 - **Refresh after manual history-tree deletion.** The images page now omits
   expired history downloads when their OneDrive manifest is absent or
