@@ -110,15 +110,10 @@ recovery_check_package_metadata() {
 
 recovery_check_space() {
     local package_path="$1" want_backup="$2"
-    local avail need pkg_size backup_est=0 margin
+    local backup_est=0
 
-    avail="$(df -B1 --output=avail "${RECOVERY_OVERLAY_BACKING_DIR}" 2>/dev/null | tail -n1)"
-    [ -n "${avail}" ] || { log_warn "cannot read userdata free space; skipping space gate"; return 0; }
-
-    # a failed stat must not silently collapse need to 0 (gate bypass)
-    pkg_size="$(stat -c%s "${package_path}" 2>/dev/null)" ||
-        error_exit "Cannot determine OTA package size: ${package_path}"
-    need=$((pkg_size * 2))   # outer package + extracted payload members
+    load_package_env_metadata "${package_path}" ||
+        error_exit "Cannot read OTA package metadata for staging estimation: ${package_path}"
 
     if [ "${want_backup}" = "yes" ]; then
         local lower_used boot_used raw_dev fit_sz
@@ -131,14 +126,9 @@ recovery_check_space() {
             boot_used="$(du -sb /boot 2>/dev/null | awk '{print $1}')"
         fi
         backup_est=$(( ${lower_used:-0} + ${boot_used:-0} ))
-        need=$((need + backup_est))
     fi
 
-    margin=$((OTA_SPACE_MARGIN_MB * 1024 * 1024))
-    if [ "${avail}" -lt $((need + margin)) ]; then
-        error_exit "Insufficient userdata space: avail=${avail}, need=${need} (payload=${pkg_size}, backup_est=${backup_est}, margin=${margin}); use --no-backup to drop the backup term"
-    fi
-    log_info "Space gate: avail=${avail} need=${need} (backup_est=${backup_est})"
+    ota_check_staging_free_space "${RECOVERY_OVERLAY_BACKING_DIR}" "${package_path}" "${backup_est}"
 }
 
 # Capacity gate targets: the rootfs partition this system runs from is the one

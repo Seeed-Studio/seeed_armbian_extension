@@ -31,22 +31,10 @@ ab_prepare_staging() {
 # ===== staging space gate ====================================================
 ab_check_space() {
     local package_path="$1"
-    local avail need pkg_size margin
 
-    # The staging directory already exists and is a real mount-backed path;
-    # failure to measure its filesystem must not silently disable the gate.
-    avail="$(df -B1 --output=avail "${OTA_WORK_DIR}" 2>/dev/null | tail -n1)"
-    [ -n "${avail}" ] || error_exit "Cannot read A/B staging free space: ${OTA_WORK_DIR}"
-
-    # a failed stat must not silently collapse need to 0 (gate bypass)
-    pkg_size="$(stat -c%s "${package_path}" 2>/dev/null)" ||
-        error_exit "Cannot determine OTA package size: ${package_path}"
-    need=$((pkg_size * 2))   # outer package + extracted payload members
-    margin=$((OTA_SPACE_MARGIN_MB * 1024 * 1024))
-    if [ "${avail}" -lt $((need + margin)) ]; then
-        error_exit "Insufficient staging space on ${OTA_WORK_DIR}: avail=${avail}, need=${need} + margin=${margin} (payload=${pkg_size})"
-    fi
-    log_info "Space gate: staging ${OTA_WORK_DIR} avail=${avail} need=${need} (margin=${margin})"
+    load_package_env_metadata "${package_path}" ||
+        error_exit "Cannot read OTA package metadata for staging estimation: ${package_path}"
+    ota_check_staging_free_space "${OTA_WORK_DIR}" "${package_path}"
 }
 
 ab_ensure_slot_boot_env() {

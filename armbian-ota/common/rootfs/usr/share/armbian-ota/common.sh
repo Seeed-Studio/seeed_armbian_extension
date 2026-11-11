@@ -58,6 +58,71 @@ ota_resolve_payload_names() {
 #   1. the initramfs stashed the unlock passphrase in /run (decryption-disk.sh)
 #   2. the real root mount (overlay lower /media/root-ro first, / fallback)
 #      sources from a device-mapper node
+
+# ===== staging-space estimation ==============================================
+# Outer-package size is not an upper bound for compressed payload members.
+# Modern packages carry extracted apparent-size stamps; an encrypted rootfs
+# also needs plaintext tar space after its ciphertext has been staged.
+ota_staging_payload_bytes() {
+    local package_path="$1"
+    local root_bytes boot_bytes encrypted_bytes=0 boot_compressed_bytes=0
+
+    root_bytes="$(package_env_get_value "ROOTFS_BYTES" || true)"
+    boot_bytes="$(package_env_get_value "BOOT_BYTES" || true)"
+    case "${root_bytes}" in ''|*[!0-9]*) root_bytes="" ;; esac
+    case "${boot_bytes}" in ''|*[!0-9]*) boot_bytes="" ;; esac
+
+    if [ -n "${root_bytes}" ] && [ -n "${boot_bytes}" ]; then
+        if [ "$(package_env_get_value "OTA_ENCRYPTED" || true)" = "yes" ]; then
+            encrypted_bytes="$(ota_staging_member_size "${package_path}" "rootfs.tar.*.enc")"
+            [ -n "${encrypted_bytes}" ] ||
+                error_exit "Encrypted OTA package has no rootfs ciphertext for staging estimation"
+        fi
+        if [ "$(package_env_get_value "BOOT_KIND" || true)" != "itb" ]; then
+            boot_compressed_bytes="$(ota_staging_member_size "${package_path}" "boot.tar.*")"
+            [ -n "${boot_compressed_bytes}" ] ||
+                error_exit "OTA package has no compressed boot member for staging estimation"
+        fi
+        printf '%s\n' "$((root_bytes + boot_bytes + encrypted_bytes + boot_compressed_bytes))"
+        return 0
+    fi
+
+    # Legacy packages have no extracted-size stamps. Their old 2x heuristic is
+    # explicitly not a proof of capacity; fail closed when stamps are available
+    # only partially, and retain compatibility for truly old packages.
+    if [ -n "${root_bytes}" ] || [ -n "${boot_bytes}" ]; then
+        error_exit "OTA package has incomplete ROOTFS_BYTES/BOOT_BYTES stamps; cannot guarantee staging capacity"
+    fi
+    local pkg_size
+    pkg_size="$(stat -c%s "${package_path}" 2>/dev/null)" ||
+        error_exit "Cannot determine OTA package size: ${package_path}"
+    log_warn "Legacy OTA package has no extracted-size stamps; using conservative 2x staging estimate"
+    printf '%s\n' "$((pkg_size * 2))"
+}
+
+ota_staging_member_size() {
+    local package_path="$1" pattern="$2"
+    tar -tvf "${package_path}" 2>/dev/null |
+        awk -v pattern="${pattern}" '$6 ~ pattern { total += $3 } END {
+            if (total > 0) print total
+        }'
+}
+
+ota_check_staging_free_space() {
+    local directory="$1" package_path="$2" extra_bytes="${3:-0}"
+    local avail need payload_bytes margin
+
+    avail="$(df -B1 --output=avail "${directory}" 2>/dev/null | tail -n1)"
+    [ -n "${avail}" ] || error_exit "Cannot read OTA staging free space: ${directory}"
+    payload_bytes="$(ota_staging_payload_bytes "${package_path}")" || return 1
+    margin=$((OTA_SPACE_MARGIN_MB * 1024 * 1024))
+    need=$((payload_bytes + extra_bytes + margin))
+    if [ "${avail}" -lt "${need}" ]; then
+        error_exit "Insufficient OTA staging space on ${directory}: avail=${avail}, need=${need} (staged=${payload_bytes}, backup=${extra_bytes}, margin=${margin})"
+    fi
+    log_info "Space gate: staging ${directory} avail=${avail} need=${need} (staged=${payload_bytes}, backup=${extra_bytes}, margin=${margin})"
+}
+
 ota_system_encrypted() {
     local src
 
