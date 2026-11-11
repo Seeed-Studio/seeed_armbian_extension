@@ -781,6 +781,13 @@ ota_hkdf_payload_key_hex() {
         HKDF | od -An -v -tx1 | tr -d ' \n'
 }
 
+# Secure Boot must authenticate the rootfs/hook metadata as well as the FIT.
+# The build-time profile stamp distinguishes it from the intentionally unsigned
+# secure-rootfs tier; legacy unsigned images have no stamp and keep compatibility.
+ota_secure_boot_signature_required() {
+    grep -qx 'SECURE_BOOT=yes' /usr/share/armbian-ota/security-profile 2>/dev/null
+}
+
 # Verify the manifest signature (if a signature + public key are present), then
 # decrypt rootfs.tar.gz.enc into the plaintext tar name the rest of the pipeline
 # expects, authenticating the result against the signed plaintext sha256.
@@ -803,6 +810,8 @@ ota_process_encrypted_payload() {
             -verify "${OTA_PAYLOAD_PUBKEY}" -signature "${sig}" "${manifest}" >/dev/null 2>&1 \
             || error_exit "OTA payload manifest signature verification failed"
         log_info "OTA payload manifest signature verified"
+    elif ota_secure_boot_signature_required; then
+        error_exit "Secure Boot requires a signed OTA payload manifest; ${OTA_PAYLOAD_MANIFEST_SIG} is missing"
     else
         log_warn "Encrypted OTA payload has no signature; proceeding without authentication"
     fi

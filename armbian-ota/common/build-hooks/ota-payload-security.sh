@@ -19,6 +19,13 @@ function ota_payload_encryption_enabled() {
     ota_encrypted_rootfs_enabled
 }
 
+# Secure Boot authenticates both its FIT and its OTA manifest. The rootfs
+# stamp lets the device enforce the same contract even when an older package
+# does not declare a security tier in its metadata.
+function ota_secure_boot_payload_signature_required() {
+    [[ "${RK_SECURE_UBOOT_ENABLE:-no}" == "yes" ]]
+}
+
 # Resolve the secure-boot signing key directory. The keys are generated during
 # the U-Boot build phase; at image/packaging time we reach them through, in
 # order: a caller-supplied persistent backup dir, the export left by the
@@ -72,6 +79,10 @@ function pre_umount_final_image__897_install_ota_payload_pubkey() {
     fi
 
     pubkey_src="$(ota_resolve_signing_pubkey 2>/dev/null)" || {
+        if ota_secure_boot_payload_signature_required; then
+            display_alert "OTA payload security" "Secure Boot requires an OTA signing key, but none was found" "err"
+            return 1
+        fi
         display_alert "OTA payload security" "Secure-boot signing key not found; payload will be encrypted but NOT signed" "warn"
         display_alert "OTA payload security" "Provide UBOOT_FIT_KEYS_BACKUP_DIR or enable OP-TEE/secure-boot key generation to sign OTA payloads" "warn"
         return 0
@@ -82,4 +93,9 @@ function pre_umount_final_image__897_install_ota_payload_pubkey() {
     install -m 0644 "${pubkey_src}" "${pubkey_dir}/ota-payload.pub.pem" ||
         exit_with_error "Failed to install OTA payload verification public key"
     display_alert "OTA payload security" "Installed OTA payload verification public key into rootfs" "info"
+
+    if ota_secure_boot_payload_signature_required; then
+        printf 'SECURE_BOOT=yes\n' > "${MOUNT}/usr/share/armbian-ota/security-profile" ||
+            exit_with_error "Failed to install OTA security profile"
+    fi
 }
