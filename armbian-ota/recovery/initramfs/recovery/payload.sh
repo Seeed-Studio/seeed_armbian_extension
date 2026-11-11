@@ -196,35 +196,46 @@ set_env_key() {
 # 1 MiB blocks plus one tail block, streaming them into the digest instead of
 # relying on a pipe's final status. A failed or short read produces a different
 # digest and aborts the write transaction.
-ota_fit_readback_verify() {
+ota_fit_readback_verify() (
+    # This is a POSIX library with shared globals. Keep this helper's state in
+    # a subshell: other apply helpers also use fit_* names. Keep the digest
+    # outside the read pipeline so its counter updates survive in this shell.
     fit_target="$1"
     fit_size="$2"
     fit_expected_sha="$3"
+    fit_status="${LOGDIR}/fit-readback.status.$$"
+    fit_sha_file="${LOGDIR}/fit-readback.sha256.$$"
+    rm -f "${fit_status}" "${fit_sha_file}" 2>/dev/null || true
+
     fit_remaining="${fit_size}"
     fit_offset=0
-    fit_actual_sha="$(
-        {
-            while [ "${fit_remaining}" -gt 0 ]; do
-                fit_chunk="${fit_remaining}"
-                [ "${fit_chunk}" -gt 1048576 ] && fit_chunk=1048576
-                if [ "${fit_chunk}" -eq 1048576 ]; then
-                    dd if="${fit_target}" bs=1M skip=$((fit_offset / 1048576)) \
-                        count=1 iflag=fullblock status=none || exit 1
-                else
-                    dd if="${fit_target}" bs=1 skip="${fit_offset}" count="${fit_chunk}" \
-                        iflag=fullblock status=none || exit 1
-                fi
-                fit_offset=$((fit_offset + fit_chunk))
-                fit_remaining=$((fit_remaining - fit_chunk))
-            done
-        } | sha256sum | awk '{print $1}'
-    )"
-    if [ "${fit_actual_sha}" != "${fit_expected_sha}" ]; then
+    {
+        while [ "${fit_remaining}" -gt 0 ]; do
+            fit_chunk="${fit_remaining}"
+            [ "${fit_chunk}" -gt 1048576 ] && fit_chunk=1048576
+            if [ "${fit_chunk}" -eq 1048576 ]; then
+                dd if="${fit_target}" bs=1M skip=$((fit_offset / 1048576)) \
+                    count=1 iflag=fullblock status=none || break
+            else
+                dd if="${fit_target}" bs=1 skip="${fit_offset}" count="${fit_chunk}" \
+                    iflag=fullblock status=none || break
+            fi
+            fit_offset=$((fit_offset + fit_chunk))
+            fit_remaining=$((fit_remaining - fit_chunk))
+        done
+        printf '%s\n' "${fit_remaining}" > "${fit_status}"
+    } | sha256sum | awk '{print $1}' > "${fit_sha_file}"
+
+    fit_actual_sha="$(cat "${fit_sha_file}" 2>/dev/null)"
+    fit_read_rc=1
+    [ -f "${fit_status}" ] && fit_read_rc="$(cat "${fit_status}" 2>/dev/null)"
+    rm -f "${fit_status}" "${fit_sha_file}" 2>/dev/null || true
+    if [ "${fit_read_rc}" != "0" ] || [ "${fit_actual_sha}" != "${fit_expected_sha}" ]; then
         log "ERROR: written FIT readback failed or does not match source"
         return 1
     fi
     return 0
-}
+)
 
 write_raw_boot_itb() {
     image="$1"
