@@ -45,14 +45,14 @@ design section 3.4).
 + * independent Rescue (ext4 /recovery/ assets on plain builds, the signed
 + * FIT on the PARTLABEL=recovery partition on raw-FIT secure builds), or
 + * distro_bootcmd without either. Only the rescue scripts live here (the
-+ * default bootcmd is their sole consumer); console is hardcoded to the
-+ * rk35xx serial line like the other two copies -- build-time prefill and
-+ * fwenv re-injection -- so the three cannot drift: an env-script
-+ * ${console} evaluates empty and blinds the rescue console.
++ * default bootcmd is their sole consumer). The FIT DTB provides the
++ * configured console/root/extra bootargs; this branch appends only the
++ * dynamic disk and rescue-role tokens, keeping build-time prefill and
++ * fwenv re-injection from overriding those signed settings.
 + */
 +#define OTA_RESCUE_ENV_SETTINGS \
 +	"ota_rescue_boot_fs=ext4load ${devtype} ${devnum}:1 ${kernel_addr_r} /recovery/Image && ext4load ${devtype} ${devnum}:1 ${ramdisk_addr_r} /recovery/uInitrd && ext4load ${devtype} ${devnum}:1 ${fdt_addr_r} /recovery/board.dtb && setenv bootargs \"root=LABEL=armbi_root rootwait rootfstype=ext4 console=ttyFIQ0,1500000n8 armbian.bootdev=${devtype} armbian.bootdevnum=${devnum} armbian.ota_role=recovery\" && booti ${kernel_addr_r} ${ramdisk_addr_r} ${fdt_addr_r}\0" \
-+	"ota_rescue_boot_fit=setenv boot_fit_part recovery; setenv bootargs \"root=/dev/mapper/armbian-root rw rootwait rootfstype=ext4 console=ttyFIQ0,1500000n8 armbian.bootdev=${devtype} armbian.bootdevnum=${devnum} armbian.ota_role=recovery\"; boot_fit\0" \
++	"ota_rescue_boot_fit=setenv boot_fit_part recovery; env set bootargs \"${bootargs} armbian.bootdev=${devtype} armbian.bootdevnum=${devnum} armbian.ota_role=recovery\"; boot_fit\0" \
 +	"ota_rescue_boot=run ota_rescue_boot_fs || run ota_rescue_boot_fit || run distro_bootcmd\0"
 +
  #define CONFIG_EXTRA_ENV_SETTINGS \
@@ -82,14 +82,14 @@ design section 3.4).
 + * independent Rescue (ext4 /recovery/ assets on plain builds, the signed
 + * FIT on the PARTLABEL=recovery partition on raw-FIT secure builds), or
 + * distro_bootcmd without either. Only the rescue scripts live here (the
-+ * default bootcmd is their sole consumer); console is hardcoded to the
-+ * rk35xx serial line like the other two copies -- build-time prefill and
-+ * fwenv re-injection -- so the three cannot drift: an env-script
-+ * ${console} evaluates empty and blinds the rescue console.
++ * default bootcmd is their sole consumer). The FIT DTB provides the
++ * configured console/root/extra bootargs; this branch appends only the
++ * dynamic disk and rescue-role tokens, keeping build-time prefill and
++ * fwenv re-injection from overriding those signed settings.
 + */
 +#define OTA_RESCUE_ENV_SETTINGS \
 +	"ota_rescue_boot_fs=ext4load ${devtype} ${devnum}:1 ${kernel_addr_r} /recovery/Image && ext4load ${devtype} ${devnum}:1 ${ramdisk_addr_r} /recovery/uInitrd && ext4load ${devtype} ${devnum}:1 ${fdt_addr_r} /recovery/board.dtb && setenv bootargs \"root=LABEL=armbi_root rootwait rootfstype=ext4 console=ttyFIQ0,1500000n8 armbian.bootdev=${devtype} armbian.bootdevnum=${devnum} armbian.ota_role=recovery\" && booti ${kernel_addr_r} ${ramdisk_addr_r} ${fdt_addr_r}\0" \
-+	"ota_rescue_boot_fit=setenv boot_fit_part recovery; setenv bootargs \"root=/dev/mapper/armbian-root rw rootwait rootfstype=ext4 console=ttyFIQ0,1500000n8 armbian.bootdev=${devtype} armbian.bootdevnum=${devnum} armbian.ota_role=recovery\"; boot_fit\0" \
++	"ota_rescue_boot_fit=setenv boot_fit_part recovery; env set bootargs \"${bootargs} armbian.bootdev=${devtype} armbian.bootdevnum=${devnum} armbian.ota_role=recovery\"; boot_fit\0" \
 +	"ota_rescue_boot=run ota_rescue_boot_fs || run ota_rescue_boot_fit || run distro_bootcmd\0"
 +
  #define CONFIG_EXTRA_ENV_SETTINGS \
