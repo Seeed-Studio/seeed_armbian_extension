@@ -161,8 +161,8 @@ GPT partition table, located by partition labels. Order: `[boot][recovery?][secu
 
 | Partition | PARTLABEL / fs label | Purpose |
 |-----------|-------|---------|
-| p1 | `boot` / `armbi_boot` | `/boot` files (ext4, plain and auto-decrypt) or raw FIT image (secure boot) |
-| p2 (secure boot) | `recovery` | raw FIT rescue partition — same signed boot.itb, booted by `ota_rescue_boot_fit` (vendor `boot_fit`); never touched by OTA |
+| p1 | `boot` / `armbi_boot` | `/boot` files (ext4, plain and auto-decrypt) or raw FIT image (raw-FIT secure-boot / OP-TEE auto-decrypt layouts) |
+| p2 (raw FIT) | `recovery` | raw FIT rescue partition — same boot.itb, booted by `ota_rescue_boot_fit` (vendor `boot_fit`); never touched by OTA |
 | p2/p3 (encrypted modes) | `security` | crypto key material, no filesystem |
 | following | `rootfs` / `armbi_root` | rootfs (LUKS+ext4 in auto-decrypt mode) |
 | last | `userdata` / `armbi_usrdata` | overlayfs upper layer + OTA transaction store |

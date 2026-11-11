@@ -35,7 +35,7 @@ secure boot:   [ boot raw FIT ][ recovery raw FIT ][ security 4M ][ rootfs LUKS+
 | PARTLABEL | fs label | Role |
 |---|---|---|
 | `boot` | `armbi_boot` | `/boot`, mounted directly (never overlayed) — or raw FIT under secure boot |
-| `recovery` | — | secure boot only: raw FIT rescue partition (same signed boot.itb as boot, flashed at build time, booted by the U-Boot `boot_fit` command; never touched by OTA) |
+| `recovery` | — | raw-FIT layouts (secure-boot and OP-TEE auto-decrypt): raw FIT rescue partition (same boot.itb as boot, flashed at build time, booted by the U-Boot `boot_fit` command; never touched by OTA) |
 | `security` | — | key material (encrypted images only) |
 | `rootfs` | `armbi_root` | read-only rootfs lower layer |
 | `userdata` | `armbi_usrdata` | overlay upper layer + OTA transaction store; auto-expands on first boot |

@@ -69,10 +69,10 @@ Covers the work against the initial import (merge base `9980aee`,
   for secure-boot recovery packages (identity over the rootfs tar + the
   boot.itb tree) and stamps the rootfs `installed-payload-id` marker —
   previously the secure branch shipped no `PAYLOAD_ID` and the build failed
-  at `ota_write_package_env`. Device-side `recovery_assert_dual_tar` accepts
+  at `ota_write_package_env`. Device-side `ota_assert_dual_payload` accepts
   the `boot.itb + boot.sha256` payload shape; the lazy last-good backup
-  reads the signed FIT from the raw boot partition (exact FDT-header size)
-  into `boot.tar.zst`, restoring through the existing
+  reads the FIT from the raw boot partition (exact FDT-header size)
+  into top-level `boot.itb + boot.sha256`, restoring through the existing
   `write_raw_boot_itb` path. The health service and the Rescue
   success-reconciliation skip the `/boot/payload-id` check on raw-fit
   layouts (stamped `/usr/share/armbian-ota/boot-mode`).
@@ -222,23 +222,14 @@ Covers the work against the initial import (merge base `9980aee`,
 
 #### CI
 
-- **OneDrive mirror: slot-first layout + per-slot tag files; no more
-  build-info.json.** The images tree is re-rooted from
-  `images/<board>/<slot>/…` to
-  `images/<slot>/<board>/<profile>[-secure-boot]/…` (slot ∈ pre-release /
-  latest / previous): rotation unit now equals release unit, promotion is
-  one server-side move per slot (every board flips together, no per-board
-  parallel rclone), and the staging purge at build start is a single
-  call. Each slot carries a `tag` file (the YYMMDD-HHMM build stamp)
-  written once every matrix entry has uploaded — it is the page's slot
-  binding (slot labels no longer inferred from release-list ordering) and
-  promote verifies it names the release being promoted before rotating.
-  The release carries no assets: the old `build-info.json` manifest is
-  gone (its identity role moved to `<slot>/tag`; releases without assets
-  are what promote's cleanup treats as superseded). The page walk lists
-  the whole `images/` tree in one `lsjson -R` (boards are discovered, no
-  board list input) and reads the three `tag` files; the release-list
-  inference stays as the fork-mode fallback (`SLOTS={}`).
+- **OneDrive mirror: immutable tag trees + pointer/history manifest.** The
+  images tree is rooted at `images/trees/<tag>/<board>/<plain|secure>/<profile>/`.
+  `slots.json` holds the current pre-release, stable and bounded history tags;
+  promotion flips pointers without moving image files. Each tree carries a
+  `manifest.json` with per-file share links and sizes. The static page fetches
+  one assembled `data.json`, not a directory of per-slot tag files. Expired
+  trees can be reclaimed while their GitHub Releases remain as metadata;
+  Releases carry no image assets.
 - **`apt-repo-publish.yml`: rk3576-module board, family-scoped kernel.**
   New `build_rk3576_module` dispatch input extends the per-board matrix.
   Kernel debs are family-scoped in Armbian (`linux-image`/`-headers`/
