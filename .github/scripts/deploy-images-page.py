@@ -87,15 +87,9 @@ def read_mirror(base):
     slots_in = parse_slots(rcat(f"{base}/slots.json"), legacy=False)
     stable, candidate, history = slots_in["stable"], slots_in["pre-release"], slots_in["history"]
     if not any([stable, candidate, *history]):
-        missing = [key for key in ("stable", "pre-release") if key not in slots_in]
-        if "history" not in slots_in and "previous" not in slots_in:
-            missing.append("history")
-        if missing:
-            raise DeployError(
-                "empty slots.json lacks required pointer fields: "
-                + ", ".join(missing)
-            )
-        return {"slots": {}, "manifests": {}}
+        # Normalization always supplies all three keys. Check their values so a
+        # valid empty pointer file cannot replace a working page with no links.
+        raise DeployError("slots.json has no published image tree pointers")
 
     manifests, page_slots = {}, {}
 
