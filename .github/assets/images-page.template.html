@@ -703,12 +703,13 @@ async function boot() {
     await loadData();
     const s = { latest: mirrorSlot("latest"), pre: mirrorSlot("pre"),
                 history: historyTags().map(t => relFor(t, false)) };
-    if (!s.latest && !s.pre) throw new Error("no published image trees");
+    if (!s.latest && !s.pre && !s.history.length) throw new Error("no published image trees");
 
     boards.hidden = true;  // all slot cards render as collapsible bars below
     const slots = document.getElementById("slots");
     // Build slots; buildSlot returns null for empty ones → skip them.
-    // No stable yet: show pre-release expanded in the "latest" position.
+    // Without a stable, a pre-release takes the expanded "latest" position.
+    // History is independent: history-only and pre+history still need cards.
     const slotEls = [];
     if (!s.latest && s.pre) {
       const d = await buildSlot(s.pre, "latest", "pre-release");
@@ -716,11 +717,11 @@ async function boot() {
     } else {
       if (s.latest) { const d = await buildSlot(s.latest, "latest", "stable");   if (d) slotEls.push(d); }
       if (s.pre)    { const d = await buildSlot(s.pre, "pre", "pre-release");    if (d) slotEls.push(d); }
-      // History: one card per older stable, newest-first.
-      for (const h of s.history || []) {
-        const d = await buildSlot(h, "hist-" + h.tag_name, "history/" + h.tag_name);
-        if (d) slotEls.push(d);
-      }
+    }
+    // History: one card per older stable, newest-first.
+    for (const h of s.history) {
+      const d = await buildSlot(h, "hist-" + h.tag_name, "history/" + h.tag_name);
+      if (d) slotEls.push(d);
     }
     if (!slotEls.length) throw new Error("no renderable releases");
     slots.replaceChildren(...slotEls);
