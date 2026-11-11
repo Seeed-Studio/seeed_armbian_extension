@@ -31,7 +31,10 @@ default disabled-thinking body. Never put credentials in variables or PR content
 The CLI is fixed to `1.13.6`, and the unchanged official publisher to its release commit
 `891df1b63f380845d882a289a67a6e36c331120c`, verified by SHA-256; self-update is disabled.
 Review effort is high (three review rounds), concurrency two, per-task timeout 120 minutes and job
-timeout 360 minutes. No `max_tokens_budget` aggregate token limit is configured.
+timeout 360 minutes. Tool-call rounds per subtask are limited to 1,000 via
+`--max-tools 1000`; this is independent of token limits and the 120-minute task
+timeout. A run that reaches either limit without completing remains incomplete.
+No `max_tokens_budget` aggregate token limit is configured.
 
 For `deepseek-v4.1-flash-1017` over Chat Completions, the workflow supplies
 `max_completion_tokens: 65536` through the official `llm.extra_body` setting unless

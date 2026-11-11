@@ -526,7 +526,7 @@ jobs:
           STREAM_PROGRESS: 'true'
         run: |
           args=(--from "$(cat "$RUNNER_TEMP/ocr-review-base")" --to "$REVIEW_HEAD"
-                --format json --timeout 120 --concurrency 2 --effort high
+                --format json --timeout 120 --concurrency 2 --effort high --max-tools 1000
                 --rule "$OCR_RULE" --background "$OCR_BACKGROUND")
           if [ "$STREAM_PROGRESS" = 'true' ]; then
             fifo="$RUNNER_TEMP/ocr-progress.fifo"
