@@ -59,7 +59,7 @@ Options:
   Build mode:
   --kernel                    Build kernel only (skip u-boot, rootfs, image)
   --uboot                     Build u-boot only (skip kernel, rootfs, image)
-  --minimal                   Build minimal system (no desktop)
+  --minimal                   Build standard CLI (no desktop, not a minimal rootfs)
 
   Build config:
   -b, --board BOARD           Board name (default: recomputer-rk3576-devkit)
@@ -86,7 +86,7 @@ Options:
 Examples:
   $(basename "$0")                              # Default: GNOME desktop, bookworm
   $(basename "$0") -d xfce -R noble             # XFCE on Ubuntu noble
-  $(basename "$0") --minimal                    # No desktop, minimal system
+  $(basename "$0") --minimal                    # Standard CLI, no desktop
   $(basename "$0") --kernel -c                  # Kernel only, clear cache
   $(basename "$0") recovery                     # Recovery OTA only
   $(basename "$0") secure-rootfs --minimal      # Encrypted rootfs with automatic unlock
@@ -256,6 +256,8 @@ while [[ $# -gt 0 ]]; do
             shift
             ;;
         --minimal)
+            # CLI only selects no-desktop. It must not opt into Armbian's
+            # minimal rootfs: BUILD_MINIMAL is a separate image-size policy.
             BUILD_MINIMAL="no"
             BUILD_DESKTOP="no"
             shift
