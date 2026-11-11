@@ -76,6 +76,7 @@ jobs:
           INPUT_RK3588: ${{ inputs.build_rk3588 }}
           INPUT_BUILD_KERNEL: ${{ inputs.build_kernel }}
           INPUT_REF: ${{ inputs.armbian_build_ref || 'main' }}
+          GH_TOKEN: ${{ github.token }}
         run: |
           set -eu
           # Matrix entries: one uboot per selected board, one kernel per
@@ -107,16 +108,16 @@ jobs:
             if [[ "${seen_families}" != *"|${fam}|"* ]]; then
               seen_families="${seen_families}|${fam}|"
               if [[ "${INPUT_BUILD_KERNEL}" == 'true' ]]; then
-                matrix+="{\"target\":\"kernel\",\"board\":\"${b}\",\"family\":\"${fam}\"},"
+                kernel_board="$(sed -n "s/:${fam}\$//p" <<<"${kernel_hosts}" | head -n1)"
+                [[ -n "${kernel_board}" ]] || {
+                  echo "::error::No available kernel host board for ${fam} at ${RESOLVED}."
+                  exit 1
+                }
+                matrix+="{\"target\":\"kernel\",\"board\":\"${kernel_board}\",\"family\":\"${fam}\"},"
               fi
             fi
           done
           matrix="[${matrix%,}]"
-          {
-            echo "matrix<<EOF"
-            echo "${matrix}"
-            echo "EOF"
-          } >> "$GITHUB_OUTPUT"
           # Ref validation: chars in [A-Za-z0-9._-/] (branch/tag names)
           if [[ ! "${INPUT_REF}" =~ ^[A-Za-z0-9][A-Za-z0-9._/-]*$ ]]; then
             echo "::error::Invalid armbian_build_ref: '${INPUT_REF}'"
@@ -131,6 +132,37 @@ jobs:
             echo "::warning::Ref '${INPUT_REF}' not found in Seeed-Studio/armbian-build, using 'main'."
           fi
           echo "armbian_ref=${RESOLVED}" >> "$GITHUB_OUTPUT"
+          # Prepare fails explicitly if no selected board can host a requested
+          # family kernel. Do not bind it to a missing first board and report
+          # success with no kernel artifact. Industrial boards require their
+          # dedicated ref; main cannot silently satisfy that request.
+          if [[ "${INPUT_BUILD_KERNEL}" == 'true' ]]; then
+            kernel_boards=()
+            seen_families=''
+            for b in "${boards[@]}"; do
+              fam="$(family_of "$b")"
+              [[ "${seen_families}" == *"|${fam}|"* ]] && continue
+              if gh api "repos/Seeed-Studio/armbian-build/contents/config/boards/${b}.conf?ref=${RESOLVED}" --silent >/dev/null 2>&1 ||
+                 gh api "repos/Seeed-Studio/armbian-build/contents/config/boards/${b}.csc?ref=${RESOLVED}" --silent >/dev/null 2>&1; then
+                kernel_boards+=("${b}:${fam}")
+                seen_families="${seen_families}|${fam}|"
+              else
+                echo "::warning::No ${fam} kernel host board ${b} at ${RESOLVED}; trying another selected board."
+              fi
+            done
+            if [ ${#kernel_boards[@]} -eq 0 ]; then
+              echo "::error::build_kernel requested, but no selected board can host a kernel at ${RESOLVED}."
+              exit 1
+            fi
+            kernel_hosts="$(printf '%s\n' "${kernel_boards[@]}")"
+          else
+            kernel_hosts=''
+          fi
+          {
+            echo "matrix<<EOF"
+            echo "${matrix}"
+            echo "EOF"
+          } >> "$GITHUB_OUTPUT"
           echo "Selected boards: ${boards[*]}"
           echo "U-Boot: every selected board; kernel entries: ${INPUT_BUILD_KERNEL} (families: ${seen_families//|/ })"
           echo "armbian-build ref: ${RESOLVED}"
@@ -357,14 +389,18 @@ jobs:
         id: board_exists
         env:
           BOARD: ${{ matrix.value.board }}
+          TARGET: ${{ matrix.value.target }}
           ARMBIAN_REF: ${{ needs.prepare.outputs.armbian_ref }}
         run: |
           if [ -f "armbian-build/config/boards/${BOARD}.conf" ] || [ -f "armbian-build/config/boards/${BOARD}.csc" ]; then
             echo "exists=true" >> "$GITHUB_OUTPUT"
             echo "Board ${BOARD} found in armbian-build ${ARMBIAN_REF}"
+          elif [[ "$TARGET" == 'kernel' ]]; then
+            echo "::error::Selected kernel host board ${BOARD} is missing from ${ARMBIAN_REF}; refusing a publish without the requested kernel."
+            exit 1
           else
             echo "exists=false" >> "$GITHUB_OUTPUT"
-            echo "::notice::Board ${BOARD} is not in armbian-build ${ARMBIAN_REF} yet; skipping this job's builds."
+            echo "::notice::Board ${BOARD} is not in armbian-build ${ARMBIAN_REF} yet; skipping this job's U-Boot build."
           fi
 
       - name: Install build dependencies
@@ -446,7 +482,7 @@ jobs:
             # Recurse consistently with the count below; an empty directory is
             # a valid source, not an unexpanded cp glob failure.
             while IFS= read -r -d '' deb; do
-              if cp -vn "$deb" /tmp/debs/ 2>/dev/null; then
+              if cp -vn "$deb" /tmp/debs/; then
                 copied=$((copied + 1))
               fi
             done < <(find deb-source/prebuilt -type f -name '*.deb' -print0)
