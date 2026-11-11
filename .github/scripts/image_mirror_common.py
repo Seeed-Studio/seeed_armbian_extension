@@ -39,12 +39,16 @@ def optional_tag(slots, slot):
 
 
 def history_tags(slots, legacy=True):
-    history = slots.get("history")
-    if not isinstance(history, list):
-        if not legacy and ("history" in slots or "previous" not in slots):
+    if "history" in slots:
+        history = slots["history"]
+        if not isinstance(history, list):
             raise ImageMirrorError("slots.json history must be an array")
-        # A legacy scalar previous pointer is normalized for both callers.
+    elif legacy:
+        # Only a missing history key may use the legacy scalar pointer. Never
+        # turn malformed current data into an empty reference set for GC.
         history = [slots["previous"]] if slots.get("previous") else []
+    else:
+        raise ImageMirrorError("slots.json history must be an array")
     if any(not isinstance(tag, str) or not tag or "/" in tag for tag in history):
         raise ImageMirrorError("slots.json history must contain only safe, non-empty tags")
     return history
