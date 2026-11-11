@@ -43,6 +43,9 @@ jobs:
   pages:
     name: Deploy the images page (build-source repo's Pages)
     needs: promote
+    # An initialized but unpublished mirror has nothing to deploy; keep the
+    # previous page intact until the first candidate pointer exists.
+    if: needs.promote.outputs.mode != 'empty'
     runs-on: ubuntu-latest
     timeout-minutes: 10
     permissions:
