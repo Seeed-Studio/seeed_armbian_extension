@@ -612,7 +612,8 @@ jobs:
           export SEEED_EXTENSION_REPO="${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}.git"
           export SEEED_EXTENSION_REF="commit:${GITHUB_SHA}"
           echo "extension source: ${SEEED_EXTENSION_REPO} @ ${SEEED_EXTENSION_REF}"
-          # cli = minimal Debian 13; gnome = desktop Ubuntu 26.04.
+          # cli = standard CLI Debian 13 (no desktop, not minimal rootfs);
+          # gnome = desktop Ubuntu 26.04.
           TIER_ARGS=""
           if [[ "$TIER" == "cli" ]]; then
               TIER_ARGS="--minimal"
