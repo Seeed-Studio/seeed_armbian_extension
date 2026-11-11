@@ -297,6 +297,37 @@ ab_write_target_boot_itb() {
     dd if="${image}" of="${target}" bs=4M conv=fsync ||
         error_exit "Failed to write FIT boot image to ${target}"
     sync
+
+    # Compare the exact FIT extent with the source already verified at staging.
+    # Full-block reads reject a silent short read; the side file carries dd's
+    # status past sha256sum without depending on the caller's pipefail policy.
+    local readback_status readback_sha
+    readback_status="${OTA_TMP_DIR}/ab-fit-readback.status"
+    readback_sha="${OTA_TMP_DIR}/ab-fit-readback.sha256"
+    rm -f "${readback_status}" "${readback_sha}"
+    (
+        remaining="${image_size}"
+        offset=0
+        while [ "${remaining}" -gt 0 ]; do
+            chunk="${remaining}"
+            [ "${chunk}" -gt 1048576 ] && chunk=1048576
+            if [ "${chunk}" -eq 1048576 ]; then
+                dd if="${target}" bs=1M skip=$((offset / 1048576)) \
+                    count=1 iflag=fullblock status=none || exit 1
+            else
+                dd if="${target}" bs=1 skip="${offset}" count="${chunk}" \
+                    iflag=fullblock status=none || exit 1
+            fi
+            offset=$((offset + chunk))
+            remaining=$((remaining - chunk))
+        done
+        printf '0\n' >"${readback_status}"
+    ) | sha256sum | awk '{print $1}' >"${readback_sha}"
+    [ -f "${readback_status}" ] && [ "$(cat "${readback_status}")" = "0" ] ||
+        error_exit "Failed to read back FIT boot image from ${target}"
+    [ "$(cat "${readback_sha}")" = "$(sha256sum "${image}" | awk '{print $1}')" ] ||
+        error_exit "Written FIT boot image does not match source: ${target}"
+    rm -f "${readback_status}" "${readback_sha}"
 }
 
 ab_update_target_bootfs() {
