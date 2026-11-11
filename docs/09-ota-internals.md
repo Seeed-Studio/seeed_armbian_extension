@@ -57,7 +57,7 @@ immediately**):
 |---|---|---|
 | 1 | environment check: U-Boot env sane, `rootfs_a/b` + `boot_a/b` PARTLABELs exist, current slot from kernel cmdline | `fw_printenv`, `blkid` |
 | 2 | partition capacity gate: `ROOTFS_BYTES`/`BOOT_BYTES` stamps vs target slot partitions, 110% extract margin (raw FIT 1:1), encrypted targets reserve the LUKS2 header | `blkid`, `blockdev` |
-| 3 | staging store: reuse the userdata overlay upper already mounted at `/media/root-rw`, never unlock or mount its backing ext4 again; sweep aborted staging dirs, then the space gate (package × 2 + margin) and the shared dual-payload assertion | `mountpoint`, `df`, `tar` |
+| 3 | staging store: reuse the userdata overlay upper already mounted at `/media/root-rw`, never unlock or mount its backing ext4 again; sweep aborted staging dirs, then the space gate (staged payload/ciphertext sizes + shared margin, using `ROOTFS_BYTES`/`BOOT_BYTES` when present) and the shared dual-payload assertion | `mountpoint`, `df`, `tar` |
 | 4 | `extract_ota_package` + `ota_verify_payload` (shared with recovery) | `tar`, `sha256sum`, `openssl` |
 | 5 | `ab_update_target_partition`: unlock target if LUKS (key from security partition flow) → mount → `empty_mount_dir` clean (**no mkfs**; UUID/label preserved) → extract rootfs payload → write target boot (tar extract or `boot.itb` dd) → rewrite target `fstab`/`armbianEnv.txt` UUIDs → sync + unmount; staging directory removed afterwards | `cryptsetup`, `mount`, `tar`, `dd` |
 | 6 | `state ready_to_boot` + `ab_env_prepare` (switch `boot_slot`, set `ota_in_progress=1`) | `fw_setenv` |
