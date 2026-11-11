@@ -104,12 +104,15 @@ function rk_secure_boot_find_ramdisk() {
     local boot_dir="$1"
 
     RK_SECURE_BOOT_RAMDISK_PATH=""
+    RK_SECURE_BOOT_RAMDISK_VERSION=""
     if compgen -G "${boot_dir}/initrd.img-"* > /dev/null; then
         RK_SECURE_BOOT_RAMDISK_PATH="$(ls -1t ${boot_dir}/initrd.img-* | head -1)"
+        RK_SECURE_BOOT_RAMDISK_VERSION="${RK_SECURE_BOOT_RAMDISK_PATH##*/initrd.img-}"
         display_alert "fit-post-initrd" "Using official initrd: ${RK_SECURE_BOOT_RAMDISK_PATH}" "info"
     elif compgen -G "${boot_dir}/uInitrd-"* > /dev/null; then
         local uinitrd_versioned stripped
         uinitrd_versioned="$(ls -1t ${boot_dir}/uInitrd-* | head -1)"
+        RK_SECURE_BOOT_RAMDISK_VERSION="${uinitrd_versioned##*/uInitrd-}"
         stripped="$(mktemp -t fit-initrd.XXXXXX)"
         RK_SECURE_BOOT_RAMDISK_PATH="$(rk_secure_boot_strip_uimage_header "${uinitrd_versioned}" "${stripped}")"
         display_alert "fit-post-initrd" "Using uInitrd (mkimage header stripped): ${uinitrd_versioned}" "info"
@@ -132,26 +135,23 @@ function rk_secure_boot_find_kernel_image() {
     local kernel_version=""
     local kernel_path=""
 
-    # ramdisk_path may be an initrd.img-*, a stripped mktemp file derived from
-    # uInitrd-*, or a bare uInitrd. Recover the kernel version from whichever
-    # versioned artifact is on disk; prefer initrd.img-* (raw, paired with
-    # vmlinuz), fall back to uInitrd-* (same kernel, mkimage-wrapped).
-    case "$(basename "${ramdisk_path}")" in
-        initrd.img-*) kernel_version="$(basename "${ramdisk_path}" | sed 's/^initrd\.img-//')" ;;
-        uInitrd-*)    kernel_version="$(basename "${ramdisk_path}" | sed 's/^uInitrd-//')" ;;
-    esac
-    if [[ -z "${kernel_version}" ]]; then
-        local cand
-        for cand in "${boot_dir}"/initrd.img-* "${boot_dir}"/uInitrd-*; do
-            [[ -e "${cand}" ]] || continue
-            kernel_version="$(basename "${cand}" | sed -e 's/^initrd\.img-//' -e 's/^uInitrd-//')"
-            break
-        done
+    # A stripped uInitrd is a random temporary filename. Preserve the version
+    # selected above instead of recovering an unrelated version from a glob.
+    if [[ -n "${RK_SECURE_BOOT_RAMDISK_VERSION:-}" ]]; then
+        kernel_version="${RK_SECURE_BOOT_RAMDISK_VERSION}"
+    else
+        case "$(basename "${ramdisk_path}")" in
+            initrd.img-*) kernel_version="$(basename "${ramdisk_path}" | sed 's/^initrd\.img-//')" ;;
+            uInitrd-*)    kernel_version="$(basename "${ramdisk_path}" | sed 's/^uInitrd-//')" ;;
+        esac
     fi
-
-    if [[ -n "${kernel_version}" && -f "${boot_dir}/vmlinuz-${kernel_version}" ]]; then
+    if [[ -n "${kernel_version}" ]]; then
+        [[ -f "${boot_dir}/vmlinuz-${kernel_version}" ]] ||
+            exit_with_error "FIT packaging failed: ramdisk/kernel version mismatch" \
+                "${ramdisk_path} (${kernel_version}) has no ${boot_dir}/vmlinuz-${kernel_version}"
         kernel_path="${boot_dir}/vmlinuz-${kernel_version}"
     elif compgen -G "${boot_dir}/vmlinuz-"* > /dev/null; then
+        # Bare uInitrd has no version to pair; only here use the newest kernel.
         kernel_path="$(ls -1t ${boot_dir}/vmlinuz-* | head -1)"
     fi
 
