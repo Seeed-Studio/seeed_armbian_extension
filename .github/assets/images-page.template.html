@@ -116,14 +116,20 @@
   .row-info { color: #2c6fbf; font-size: 12.5px; text-decoration: underline;
               text-decoration-style: dotted; margin-left: 8px; }
   .row-info:hover { color: #1a4d8f; }
-  .row-links { display: flex; flex-wrap: nowrap; gap: 8px; align-items: center;
+  .row-links { display: flex; flex-wrap: nowrap; gap: 0; align-items: center;
                overflow-x: auto; padding-bottom: 2px; }
+  /* Size labels change the natural button widths. Reserve enough space for
+     the widest live Image/OTA row so both groups and the divider align. */
+  :root { --download-image-group-width: 218px;
+          --download-ota-group-width: 227px; }
   /* Secure size text stays black, not the primary button's white. */
   .file-size { font-size: 12px; font-weight: 400; white-space: nowrap; opacity: .9; }
   .btn.primary .file-size { color: #fff; }
   .btn.secure .file-size, .btn.secure-loader .file-size { color: #03353f; }
   /* Keep each download row on one line; narrow screens scroll the row. */
   .grp { display: inline-flex; align-items: center; flex: 0 0 auto; flex-wrap: nowrap; gap: 8px; }
+  .row-links:not(.loader-links) > .grp:first-child { flex-basis: var(--download-image-group-width); }
+  .row-links:not(.loader-links) > .grp:nth-child(2) { flex-basis: var(--download-ota-group-width); }
   .grp + .grp { margin-left: 16px; padding-left: 18px; border-left: 1px solid #d7dee5; }
   /* Loader types are independent rows, not an Image/OTA separator pair. */
   .loader-links { flex-direction: column; align-items: flex-start; gap: 7px;
