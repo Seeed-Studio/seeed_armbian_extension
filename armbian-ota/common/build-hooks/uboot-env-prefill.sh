@@ -96,14 +96,17 @@ function ota_uboot_env_prefill_compose() {
     if ota_encrypted_rootfs_enabled; then
         rescue_root="/dev/mapper/armbian-root"
     fi
+    # The FIT DTB is the source of truth for configured console/root/extra
+    # bootargs. Do not replace them with a second hardcoded copy: append only
+    # the dynamic boot-disk tokens and the recovery role before boot_fit.
     {
         printf '%s\n' 'ota_in_progress=0'
         printf '%s\n' 'ota_boot_next=recovery'
         printf '%s\n' 'ota_normal_boot_fs=setenv prefix /; ext4load ${devtype} ${devnum}:1 ${scriptaddr} /boot.scr && source ${scriptaddr}'
-        printf '%s\n' 'ota_normal_boot_fit=setenv boot_fit_part boot; setenv bootargs "console=ttyFIQ0 root=/dev/mapper/armbian-root rw rootwait rootfstype=ext4 armbian.bootdev=${devtype} armbian.bootdevnum=${devnum}"; boot_fit'
+        printf '%s\n' 'ota_normal_boot_fit=setenv boot_fit_part boot; env set bootargs "${bootargs} armbian.bootdev=${devtype} armbian.bootdevnum=${devnum}"; boot_fit'
         printf '%s\n' 'ota_normal_boot=run ota_normal_boot_fs || run ota_normal_boot_fit'
         printf '%s\n' "ota_rescue_boot_fs=ext4load \${devtype} \${devnum}:1 \${kernel_addr_r} /recovery/Image && ext4load \${devtype} \${devnum}:1 \${ramdisk_addr_r} /recovery/uInitrd && ext4load \${devtype} \${devnum}:1 \${fdt_addr_r} /recovery/board.dtb && setenv bootargs \"root=${rescue_root} rootwait rootfstype=ext4 console=ttyFIQ0,1500000n8 armbian.bootdev=\${devtype} armbian.bootdevnum=\${devnum} armbian.ota_role=recovery\" && booti \${kernel_addr_r} \${ramdisk_addr_r} \${fdt_addr_r}"
-        printf '%s\n' 'ota_rescue_boot_fit=setenv boot_fit_part recovery; setenv bootargs "root=/dev/mapper/armbian-root rw rootwait rootfstype=ext4 console=ttyFIQ0,1500000n8 armbian.bootdev=${devtype} armbian.bootdevnum=${devnum} armbian.ota_role=recovery"; boot_fit'
+        printf '%s\n' 'ota_rescue_boot_fit=setenv boot_fit_part recovery; env set bootargs "${bootargs} armbian.bootdev=${devtype} armbian.bootdevnum=${devnum} armbian.ota_role=recovery"; boot_fit'
         printf '%s\n' 'ota_rescue_boot=run ota_rescue_boot_fs || run ota_rescue_boot_fit || run distro_bootcmd'
         printf '%s\n' 'bootcmd=if test -z "${devtype}"; then run rkimg_bootdev; fi; if test "${ota_in_progress}" = "1"; then if test "${ota_boot_next}" = "normal"; then setenv ota_boot_next recovery; if saveenv; then run ota_normal_boot; fi; run ota_rescue_boot; else run ota_rescue_boot; fi; else run ota_normal_boot; run ota_rescue_boot; fi'
     } > "${routing_env}"

@@ -178,9 +178,12 @@ fw_env_set_multi() {
 # reconciliation rebuilds this full set before returning to normal.
 
 OTA_ENV_NORMAL_BOOT_FS='setenv prefix /; ext4load ${devtype} ${devnum}:1 ${scriptaddr} /boot.scr && source ${scriptaddr}'
-OTA_ENV_NORMAL_BOOT_FIT='setenv boot_fit_part boot; setenv bootargs "console=ttyFIQ0 root=/dev/mapper/armbian-root rw rootwait rootfstype=ext4 armbian.bootdev=${devtype} armbian.bootdevnum=${devnum}"; boot_fit'
+# The FIT's signed DTB supplies the build-configured console/root/extra
+# bootargs. Only the dynamic disk and Rescue-role tokens belong in this script;
+# a second hardcoded copy would override RK_SECURE_BOOT_* customizations.
+OTA_ENV_NORMAL_BOOT_FIT='setenv boot_fit_part boot; env set bootargs "${bootargs} armbian.bootdev=${devtype} armbian.bootdevnum=${devnum}"; boot_fit'
 OTA_ENV_NORMAL_BOOT='run ota_normal_boot_fs || run ota_normal_boot_fit'
-OTA_ENV_RESCUE_BOOT_FIT='setenv boot_fit_part recovery; setenv bootargs "root=/dev/mapper/armbian-root rw rootwait rootfstype=ext4 console=ttyFIQ0,1500000n8 armbian.bootdev=${devtype} armbian.bootdevnum=${devnum} armbian.ota_role=recovery"; boot_fit'
+OTA_ENV_RESCUE_BOOT_FIT='setenv boot_fit_part recovery; env set bootargs "${bootargs} armbian.bootdev=${devtype} armbian.bootdevnum=${devnum} armbian.ota_role=recovery"; boot_fit'
 OTA_ENV_RESCUE_BOOT='run ota_rescue_boot_fs || run ota_rescue_boot_fit || run distro_bootcmd'
 OTA_ENV_BOOTCMD='if test -z "${devtype}"; then run rkimg_bootdev; fi; if test "${ota_in_progress}" = "1"; then if test "${ota_boot_next}" = "normal"; then setenv ota_boot_next recovery; if saveenv; then run ota_normal_boot; fi; run ota_rescue_boot; else run ota_rescue_boot; fi; else run ota_normal_boot; run ota_rescue_boot; fi'
 
