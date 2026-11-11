@@ -1,10 +1,10 @@
 # Open Code Review
 
 Status: trial operation on `main`. Original business code is restored; new PRs
-use coverage-first review and high/critical-only publication.
+use coverage-first review and medium/high/critical-only publication.
 
 This workflow reviews PRs targeting `main` with Alibaba OpenCodeReview.
-Only high/critical findings are published, including in summaries. Medium/low
+Only medium/high/critical findings are published, including in summaries. Low
 findings remain in diagnostic results; overlapping inline findings are not posted again.
 `deb_source` has no OCR workflow or policy and is not a protected branch. It does not approve, request changes, or merge. The coverage job supplies the required exact-head check before model review.
 
@@ -31,7 +31,10 @@ default disabled-thinking body. Never put credentials in variables or PR content
 The CLI is fixed to `1.13.6`, and the unchanged official publisher to its release commit
 `891df1b63f380845d882a289a67a6e36c331120c`, verified by SHA-256; self-update is disabled.
 Review effort is high (three review rounds), concurrency two, per-task timeout 120 minutes and job
-timeout 360 minutes. No `max_tokens_budget` aggregate token limit is configured.
+timeout 360 minutes. Tool-call rounds per subtask are limited to 1,000 via
+`--max-tools 1000`; this is independent of token limits and the 120-minute task
+timeout. A run that reaches either limit without completing remains incomplete.
+No `max_tokens_budget` aggregate token limit is configured.
 
 For `deepseek-v4.1-flash-1017` over Chat Completions, the workflow supplies
 `max_completion_tokens: 65536` through the official `llm.extra_body` setting unless
@@ -94,7 +97,7 @@ rule through the official `merge_system_rule: false` option:
 | `.github/patchs/**` | Build-script patches and their application/caller contracts |
 | `.github/**` | Trusted automation, board/build matrix and image/OTA/APT publication |
 | `armbian-ota/**`, `initramfs/**` | Device/partition identity, update state, power loss and rollback |
-| `rk_secure-disk-encryption/**` | Key flow, encryption, automatic unlock and verified boot |
+| `rk_secure-disk-encryption/**`, `rk-uboot-postprocess/**` | Key flow, encryption, automatic unlock and verified boot |
 | Remaining text | Armbian hooks, system services, scripts, configuration and operational commands |
 
 Only the first matching custom rule applies. Later project entries are not additive.
@@ -157,9 +160,9 @@ streamed to the Actions console and retained in the diagnostic log, while the
 original CLI exit status is preserved. Existing secret/endpoint masks apply.
 Raw response/thinking captures are separate from this progress stream and are
 not echoed. Public error comments contain only workflow status and a run link. The publisher receives a separate allowlisted
-JSON view containing only high/critical findings; it never reads the full result.
+JSON view containing only medium/high/critical findings; it never reads the full result.
 Unknown severities are withheld. An empty published set is explicitly described
-as no publishable high/critical findings, not proof that the PR has no defects.
+as no publishable medium/high/critical findings, not proof that the PR has no defects.
 The publication audit records severity counts without finding text.
 The existing `coverage_gate.py` provides `coverage` and `publication` subcommands
 for both deterministic checks.
