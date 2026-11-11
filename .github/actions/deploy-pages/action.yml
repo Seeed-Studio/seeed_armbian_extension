@@ -121,20 +121,25 @@ runs:
         REPO: ${{ inputs.repo }}
       run: |
         set -euo pipefail
-        # gh api prints a raw error body on stdout, so a 404 leaves
-        # garbage in parent. Retry transient read failures; only a
-        # confirmed 404 selects the create-ref path.
+        # Keep gh's JSON stdout separate from its human-readable stderr. Only
+        # a structured 404 response selects create-ref; all other failures are
+        # retried and then rejected rather than risking a duplicate ref.
         parent=""
         branch_missing=""
         for attempt in 1 2 3; do
-          if response="$(gh api "repos/$REPO/branches/gh-pages" 2>&1)"; then
+          error_file="$(mktemp)"
+          if response="$(gh api "repos/$REPO/branches/gh-pages" 2>"$error_file")"; then
+            rm -f "$error_file"
             parent="$(jq -r '.commit.sha // empty' <<<"$response")"
             break
           fi
-          if jq -e '.message == "Branch not found"' >/dev/null 2>&1 <<<"$response"; then
+          if [ "$(jq -r '.message // empty' <<<"$response" 2>/dev/null)" = "Branch not found" ] \
+              && grep -q 'HTTP 404' "$error_file"; then
             branch_missing=true
+            rm -f "$error_file"
             break
           fi
+          rm -f "$error_file"
           if [ "$attempt" -lt 3 ]; then sleep $((attempt * 5)); else
             echo "::error::cannot determine whether gh-pages exists; refusing to create a duplicate ref"
             exit 1
