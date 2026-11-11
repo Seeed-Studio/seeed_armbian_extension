@@ -675,6 +675,10 @@ EOF
     fi
 
     privkey="$(ota_resolve_signing_privkey 2>/dev/null)" || {
+        if ota_secure_boot_payload_signature_required; then
+            display_alert "OTA payload security" "Secure Boot requires a signed OTA manifest, but no signing key was found" "err"
+            return 1
+        fi
         display_alert "OTA payload security" "No signing key reachable; shipping encrypted payload WITHOUT signature" "warn"
         return 0
     }

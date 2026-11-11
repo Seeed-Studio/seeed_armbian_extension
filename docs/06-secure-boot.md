@@ -183,8 +183,11 @@ FIT magic, size, and written raw to the boot partition) and an encrypted,
 manifest-signed rootfs payload — see
 [Recovery OTA](03-ota-recovery.md#6-encrypted-images) /
 [A/B OTA](04-ota-ab.md). The OTA public key is installed into the firmware
-at build time; a payload whose manifest signature fails to verify is
-refused (a manifest without a signature is accepted with a warning).
+at build time; a payload whose manifest signature fails to verify is refused.
+Secure Boot builds also refuse to package or apply an encrypted OTA without a
+manifest signature and verification public key. The separate `secure-rootfs`
+tier has an unsigned bootchain and retains the legacy warning-only behavior
+when no OTA signature is configured.
 
 ## 7. Trust boundary, and scaling it up
 
