@@ -72,6 +72,10 @@ runs:
         if [ -n "$PRIVATE_KEY_PEM" ]; then
           printf '%s\n' "$PRIVATE_KEY_PEM" | openssl rsa -check -noout >/dev/null 2>&1 \
             || err "PRIVATE_KEY_PEM is not a parsable RSA key"
+          key_bits=$(printf '%s\n' "$PRIVATE_KEY_PEM" | openssl rsa -text -noout 2>/dev/null |
+            grep -oE 'Private-Key: \([0-9]+ bit' | grep -oE '[0-9]+' | head -1)
+          [ "$key_bits" = "2048" ] \
+            || err "PRIVATE_KEY_PEM must be RSA-2048 (found RSA-${key_bits:-unparseable})"
         fi
         if [ -n "$DEV_CRT" ]; then
           printf '%s\n' "$DEV_CRT" | openssl x509 -noout >/dev/null 2>&1 \
