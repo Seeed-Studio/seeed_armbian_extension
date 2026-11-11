@@ -346,6 +346,7 @@ jobs:
           # RELEASE_GH_TOKEN is required for cross-repo Releases.
           GH_TOKEN: ${{ secrets.RELEASE_GH_TOKEN || github.token }}
           TARGET_REPO: ${{ needs.plan.outputs.release_repo }}
+          BUILD_SOURCE_SHA: ${{ needs.plan.outputs.ab_commit }}
           TAG: ${{ needs.plan.outputs.tag }}
           BOARDS: ${{ needs.plan.outputs.boards }}
           MATRIX: ${{ needs.plan.outputs.matrix }}
@@ -366,11 +367,15 @@ jobs:
             gh release delete "$TAG" --repo "$TARGET_REPO" --yes
             gh api --method DELETE "repos/$TARGET_REPO/git/refs/tags/$TAG" >/dev/null 2>&1 || true
           fi
-          # --target must name a ref of the RELEASE repo.
-          target_args=()
-          if [ "$TARGET_REPO" = "$GITHUB_REPOSITORY" ]; then
-            target_args=(--target "$GITHUB_SHA")
-          fi
+          # Mark the exact build-source revision, including cross-repo Releases.
+          # Without --target GitHub points the tag at the release repo's main.
+          [[ "$BUILD_SOURCE_SHA" =~ ^[0-9a-f]{40}$ ]] || {
+            echo "::error::invalid build-source SHA for Release tag: $BUILD_SOURCE_SHA"
+            exit 1
+          }
+          gh api "repos/$TARGET_REPO/git/commits/$BUILD_SOURCE_SHA" >/dev/null \
+            || { echo "::error::build-source commit is missing from $TARGET_REPO"; exit 1; }
+          target_args=(--target "$BUILD_SOURCE_SHA")
           # Title derives from the UTC tag; the tree manifest holds metadata.
           boards_n="$(jq length <<<"$BOARDS")"
           images_n="$(jq '.include | length' <<<"$MATRIX")"
