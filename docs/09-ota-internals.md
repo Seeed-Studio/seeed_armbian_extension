@@ -88,7 +88,7 @@ State files:
 | Mode | File | Readers | Writers |
 |---|---|---|---|
 | recovery | `<userdata>/ota-recovery/state/ota-state.env` | initramfs 99-ota-apply, CLI status | phase-1 backend, initramfs commit |
-| ab | `/var/lib/armbian-ota/ota-state.env` | CLI, firstboot/rollback services | phase-1 backend, mark-success |
+| ab | `/var/lib/armbian-ota/ota-state.env` | CLI, firstboot/rollback services | phase-1 backend, firstboot reconcile, mark-success |
 | ab | U-Boot env: `boot_slot`, `ota_in_progress` | U-Boot, firstboot | `fw_setenv` |
 
 Recovery:
@@ -106,10 +106,15 @@ AB (three focal points: state file + U-Boot env + the actually-booted slot):
 | `idle` | initial | `ota_in_progress=0` | `start` |
 | `ready_to_boot` | target slot flashed | `boot_slot=target`, `ota_in_progress=1` | reboot into new slot |
 | `success` | firstboot service passes the **dual gate** (`STATUS ∈ {ready_to_boot, boot_verifying}` ∧ `ota_in_progress=1`) | `ota_in_progress` cleared | normal operation |
+| `rollback` | U-Boot retry exhaustion returned to `boot_success`, not the target | `ota_in_progress=0` | reconcile clears target; normal operation on confirmed slot |
+| `failed` | pending ended without boot confirmation and is not a provable rollback | `ota_in_progress=0` | reconcile keeps target for diagnosis; no false success |
 | failure | new slot unhealthy | `ota_in_progress` still 1 | rollback service / CLI switches back; the old slot was never touched |
 
 The dual gate exists so a crash that leaves `ready_to_boot` but U-Boot unset
-cannot false-mark success on a non-target boot.
+cannot false-mark success on a non-target boot. The firstboot post-action
+handles the other side of that gate after U-Boot clears pending itself: only
+running the confirmed, non-target slot proves a rollback. Other unconfirmed
+endings become `failed`, never `success`.
 
 ## 5. Runtime file map
 

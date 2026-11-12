@@ -103,7 +103,11 @@ unit's `OnFailure=` restores the previous slot and reboots.
 **Layer 2 — U-Boot** (works even when userspace never starts):
 `ab_preboot` decrements `slot_retry_left` on every boot of a pending
 slot; when the budget (default 3, set by `slot_retry_max`) is exhausted,
-U-Boot itself resets `boot_slot` to `boot_success`.
+U-Boot itself resets `boot_slot` to `boot_success`. On the resulting old-slot
+boot, `armbian-ota-firstboot.service` runs `armbian-ota reconcile`, records
+`STATUS=rollback`, clears the target slot, and leaves the confirmed slot
+running. If U-Boot is no longer pending but the state cannot be proven to be a
+completed rollback, it records `failed` rather than falsely claiming success.
 
 Full lifecycle diagram:
 [`armbian-ota/README.md`](../armbian-ota/README.md#how-ota-works).

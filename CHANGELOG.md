@@ -10,6 +10,13 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 Covers the work against the initial import (merge base `9980aee`,
 2026-07-02 → 2026-10-14).
 
+### Fixed
+
+- **A/B U-Boot rollback state reconciliation.** After retry exhaustion boots
+  the last confirmed slot, the firstboot service's post-action records
+  `STATUS=rollback` and clears the stale target. An unconfirmed pending state
+  that is not a provable rollback is recorded as `failed`, never `success`.
+
 ### Added
 
 #### Production loaders (maskrom / SPI flash)
