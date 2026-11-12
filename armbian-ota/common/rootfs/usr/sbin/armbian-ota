@@ -68,6 +68,11 @@ check_ota_pkg() {
         *) error_exit "Invalid OTA_MODE in package metadata: ${OTA_CLI_MODE:-<empty>} (expected ab or recovery)" ;;
     esac
 
+    # Mode-specific device probes require that mode's runtime backend. Reject a
+    # cross-mode package before an A/B probe can call helpers absent from a
+    # recovery-only firmware (or vice versa).
+    require_mode_backend "${OTA_CLI_MODE}"
+
     package_encrypted="$(package_env_get_value "OTA_ENCRYPTED" || true)"
     case "${package_encrypted:-no}" in
         yes|no) ;;
