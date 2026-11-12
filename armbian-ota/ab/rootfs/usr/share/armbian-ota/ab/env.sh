@@ -163,8 +163,8 @@ ab_env_mark_success() {
     retry_max="$(ab_env_initial_get slot_retry_max)"
     [ -n "${retry_max}" ] || return 1
     # boot_slot must be set so U-Boot's ab_select_boot_part / ab_select_fit_slot
-    # pick the slot on next boot; harmless for the post-health-check caller
-    # (slot is already the running one) and required for switch-slot.
+    # pick the slot on next reset; switch-slot uses ab_env_prepare instead so
+    # its target remains an unconfirmed boot trial until health checks pass.
     ab_env_set "boot_slot=${slot}" "boot_success=${slot}" "ota_in_progress=0" \
         "slot_retry_left=${retry_max}"
 }

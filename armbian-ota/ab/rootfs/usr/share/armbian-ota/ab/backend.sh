@@ -276,11 +276,15 @@ ab_switch_slot() {
         return 0
     fi
 
-    ab_env_mark_success "${target_slot}" || error_exit "Failed to switch A/B boot state"
-    state_mark_completed "ab" "slot_switched" "${current_slot}" "${target_slot}" ||
-        error_exit "Failed to record A/B slot switch state"
+    # A manual slot switch is a boot trial too: retain the last confirmed
+    # slot as the rollback anchor and require first-boot health confirmation.
+    # Do not mark the unbooted target successful, or a bad slot cannot roll
+    # back and a following OTA would trust the wrong boot_success value.
+    ab_env_prepare "${target_slot}" || error_exit "Failed to prepare A/B slot switch"
+    state_mark_prepared "ab" "ready_to_boot" "manual-slot-switch" "${current_slot}" "${target_slot}" ||
+        error_exit "Failed to record pending A/B slot switch"
 
-    log_info "Boot slot switched from ${current_slot} to ${target_slot}; reboot to apply"
+    log_info "Boot slot switch requested from ${current_slot} to ${target_slot}; reboot to apply and verify"
 }
 
 ab_status() {

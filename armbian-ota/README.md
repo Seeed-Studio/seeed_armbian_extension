@@ -142,7 +142,7 @@ armbian-ota switch-slot [a|b]            # A/B firmware only, root required
 
 - `start` takes exactly one argument (the package path) and rejects any `-` option. The update mode is **not** selectable on the command line: it is read from the package's `package.env` (`OTA_MODE=ab|recovery`) and cross-checked against the mode backend installed on the firmware.
 - `start` also compares `OTA_ENCRYPTED` from `package.env` against the device's actual encryption state (A/B probes the boot-disk-anchored `rootfs_a`/`rootfs_b` for `crypto_LUKS`; Recovery answers from the running root filesystem) and aborts on mismatch — an encrypted package never applies to a plain device and vice versa.
-- `switch-slot` with no argument switches to the other slot; with `a`/`b` it targets that slot. It refuses to run while an OTA is in progress. It only rewrites the U-Boot environment — **reboot manually to apply**.
+- `switch-slot` with no argument switches to the other slot; with `a`/`b` it targets that slot. It refuses to run while a boot trial is in progress. The target stays unconfirmed until its first-boot health check passes, with the same automatic rollback protection as OTA — **reboot manually to apply**.
 - `mark-success` and `rollback` are internal actions driven by the A/B first-boot systemd units; avoid running them by hand.
 
 ## Recovery OTA Mode

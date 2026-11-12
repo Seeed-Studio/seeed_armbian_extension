@@ -16,6 +16,10 @@ Covers the work against the initial import (merge base `9980aee`,
   the last confirmed slot, the firstboot service's post-action records
   `STATUS=rollback` and clears the stale target. An unconfirmed pending state
   that is not a provable rollback is recorded as `failed`, never `success`.
+- **Verified manual A/B slot switching.** `switch-slot` now starts a pending
+  boot trial instead of marking an unbooted target successful. It preserves
+  the confirmed rollback anchor, resets the retry budget, and requires the
+  same first-boot health confirmation as OTA.
 
 ### Added
 
