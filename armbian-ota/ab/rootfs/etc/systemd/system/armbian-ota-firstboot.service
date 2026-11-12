@@ -17,6 +17,11 @@ ExecCondition=/usr/bin/grep -Eq '^STATUS=(ready_to_boot|boot_verifying)$' /var/l
 ExecCondition=/bin/sh -c '[ "$(fw_printenv -n ota_in_progress 2>/dev/null || true)" = 1 ]'
 ExecStart=/usr/lib/armbian/armbian-ota-health-check
 ExecStartPost=/usr/sbin/armbian-ota mark-success
+# ExecStartPost also runs after an ExecCondition skip. When U-Boot already
+# rolled back, reconcile the stale pending state; after a health-check pass,
+# mark-success has already finished the transaction and reconcile is a no-op.
+# A health-check failure skips both ExecStartPost lines and keeps OnFailure.
+ExecStartPost=/usr/sbin/armbian-ota reconcile
 RemainAfterExit=yes
 TimeoutStartSec=300
 StandardOutput=journal+console

@@ -181,6 +181,54 @@ ab_mark_success() {
     log_info "AB OTA marked successful on slot ${current_slot}"
 }
 
+ab_reconcile() {
+    local status current_slot target_slot last_success
+
+    ab_require_tools
+    init_logging
+    # state_init is normally idempotent. Redirect its output outside any log
+    # command substitution, which would otherwise run it in a subshell and
+    # lose first-time state-file creation.
+    state_init >> "${OTA_LOG_FILE}" 2>&1
+    [ "$(state_get OTA_MODE)" = "ab" ] || return 0
+    status="$(state_get STATUS)"
+    case "${status}" in
+        ready_to_boot|boot_verifying) ;;
+        *) return 0 ;;
+    esac
+
+    # A still-pending transaction belongs to the health check. This runs from
+    # firstboot's ExecStartPost, which also runs when its ExecCondition skips
+    # the health check after U-Boot has already cleared ota_in_progress.
+    [ "$(ab_env_get ota_in_progress)" != "1" ] || return 0
+
+    current_slot="$(ab_get_current_root_slot || true)"
+    target_slot="$(state_get TARGET_SLOT)"
+    last_success="$(ab_env_get boot_success)"
+    case "${current_slot}" in
+        a|b) ;;
+        *)
+            log_error "Cannot reconcile A/B OTA state: current root slot is unknown"
+            return 1
+            ;;
+    esac
+
+    if [ -n "${target_slot}" ] && [ "${current_slot}" != "${target_slot}" ] && [ "${current_slot}" = "${last_success}" ]; then
+        # U-Boot cannot update this slot's state file after retry exhaustion.
+        log_warn "A/B OTA target slot ${target_slot} did not pass boot verification; running confirmed slot ${current_slot}"
+        state_mark_completed "ab" "rollback" "${current_slot}" "" ||
+            error_exit "Failed to record U-Boot A/B rollback"
+        log_info "A/B OTA rollback recorded; target slot cleared"
+        return 0
+    fi
+
+    # Never infer success from ota_in_progress=0: it may have been cleared by
+    # a power cut or manual fw_setenv before userspace verified the candidate.
+    log_error "A/B OTA pending state ended without boot confirmation (current=${current_slot}, target=${target_slot:-unknown}, boot_success=${last_success:-unknown})"
+    state_mark_completed "ab" "failed" "${current_slot}" "${target_slot}" ||
+        error_exit "Failed to record unconfirmed A/B OTA state"
+}
+
 ab_rollback() {
     local last_success
     ab_require_tools
