@@ -311,7 +311,17 @@ run_campaign() {
         fi
     fi
 
-    retry=$(( $(state_get RETRY_COUNT 2>/dev/null || echo 0) + 1 ))
+    # A power cut cannot call campaign_fail(). Enforce the retry budget at the
+    # next Rescue entry too, or every interrupted extraction increments the
+    # counter and writes the candidate again forever (attempt 4/3, 5/3, ...).
+    # campaign_fail reuses this persisted count to select backup restore.
+    retry="$(state_get RETRY_COUNT)"
+    if [ -z "${retry}" ]; then retry=0; fi
+    if [ "${retry}" -ge "${OTA_RETRY_MAX}" ]; then
+        campaign_fail "retry budget exhausted after ${retry}/${OTA_RETRY_MAX} attempts"
+    fi
+
+    retry=$((retry + 1))
     state_set "RETRY_COUNT" "${retry}" ||
         campaign_fail "cannot persist RETRY_COUNT"
 
