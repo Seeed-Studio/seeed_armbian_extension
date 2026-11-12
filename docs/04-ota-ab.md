@@ -123,10 +123,12 @@ armbian-ota switch-slot a     # ... or explicitly to slot a / b
 reboot
 ```
 
-`switch-slot` refuses to run while an OTA is in progress, and only rewrites
-the environment — you choose when to reboot. It is the intended way to flip
-between the two installed systems; the `mark-success`/`rollback` subcommands
-are internal to the first-boot units.
+`switch-slot` refuses to run while a boot trial is in progress. It starts a
+new pending trial: `boot_slot` changes, `boot_success` stays on the confirmed
+slot, `ota_in_progress=1`, and the retry budget resets. Reboot manually to
+apply; the first-boot health check then confirms the target, or failure/retry
+exhaustion rolls back to the previous slot. The `mark-success`/`rollback`
+subcommands are internal to the first-boot units.
 
 ## 6. U-Boot environment reference
 
@@ -136,7 +138,7 @@ State variables (see [`ab/rootfs/etc/u-boot-initial-env`](../armbian-ota/ab/root
 |---|---|
 | `boot_slot` | slot to boot next reset (`a`/`b`) |
 | `boot_success` | last slot that passed health checks |
-| `ota_in_progress` | 1 while an update is pending verification |
+| `ota_in_progress` | 1 while an update or manual slot switch is pending verification |
 | `slot_retry_max` / `slot_retry_left` | boot-attempt budget for the pending slot (default 3) |
 | `ab_boot_mode` | `filesystem` or `raw-fit` boot path |
 | `ab_boot_devtype` / `ab_boot_devnum` | boot device anchoring |
@@ -163,7 +165,7 @@ fw_printenv                          # full slot state
 |---|---|
 | Device keeps reverting to the old slot | New slot failed health checks or did not boot 3× — read `ota.log` from the old slot |
 | `OTA package encryption mismatch` | Package tier ≠ device tier |
-| `switch-slot` refuses | An OTA is pending (`ota_in_progress=1`) — let it finish or roll back first |
+| `switch-slot` refuses | A boot trial is pending (`ota_in_progress=1`) — let it finish or roll back first |
 | After manual `fw_setenv` experiments | Ensure `boot_slot` ≠ garbage and `slot_retry_left` ≥ 1 |
 
 Developer internals: [`armbian-ota/README.md`](../armbian-ota/README.md).
