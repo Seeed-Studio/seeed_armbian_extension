@@ -12,6 +12,7 @@ attacker can physically touch.
 5. [Device-tree overlays on secure-boot images](#5-device-tree-overlays-on-secure-boot-images)
 6. [Updates on a signed system](#6-updates-on-a-signed-system)
 7. [Trust boundary, and scaling it up](#7-trust-boundary-and-scaling-it-up)
+8. [Loader/OS mismatch enforcement](#8-loaderos-mismatch-enforcement)
 
 ## 1. What gets signed
 
@@ -220,3 +221,60 @@ If you need stronger isolation, in order of effort/payoff:
    doing the HKDF/AES work so the normal world only ever sees ciphertext;
    pair with a LUKS2 token (`systemd-cryptenroll`) so cryptsetup is fed
    by the TEE and no plaintext passphrase exists at runtime.
+
+## 8. Loader/OS mismatch enforcement
+
+The two mismatch rules the bootchain enforces:
+
+> **A verifying (secure) U-Boot must not boot a plain OS.**
+> **A plain U-Boot must not boot a secure OS.**
+
+The subtlety: U-Boot's FIT signature check only guards the `bootm` path.
+`booti` (raw Image), `source` (boot.scr), extlinux/PXE, and `android`
+boot.img are unverified launch paths, and the env blob that selects
+between them lives **unsigned on the OS disk** — a plain image's blob
+steers whichever loader reads it. Enforcement therefore has to remove
+the launch commands from the verifying binary, not just script the good
+path. Three pieces do that:
+
+1. **Secure U-Boot Kconfig fragments** disable every unverified launch
+   command:
+   `CMD_BOOTZ`, `CMD_SOURCE` (boot.scr), `CMD_PXE` (pxe/sysboot),
+   `CMD_BOOT_ANDROID`, `CMD_GO`. `bootm` stays — with
+   `CONFIG_FIT_SIGNATURE` the legacy image format is auto-disabled
+   ([`include/config_fallbacks.h`](https://source.denx.de/u-boot/u-boot/-/blob/master/include/config_fallbacks.h)),
+   and the required key in the control DTB makes `bootm`/`boot_fit`
+   accept signed FITs only.
+2. **`booti` is refused in C** ([rescue-default-env
+   patch](../armbian-ota/common/patches/seeed-ota-rescue-default-env.patch)):
+   `DISTRO_DEFAULTS` `select`s `CMD_BOOTI` on ARM64, so it cannot be
+   Kconfig-disabled; `do_booti` returns failure on `FIT_SIGNATURE`
+   builds instead. Plain builds compile both the command and the full
+   rescue chain unchanged. The same patch compiles the default-env
+   rescue dispatcher down to the signed recovery-FIT branch only.
+3. **The initramfs refuses the raw passphrase without OP-TEE**
+   ([`decryption-disk.sh`](../rk_secure-disk-encryption/initramfs/decryption-disk.sh)):
+   every auto-decrypt image carries BL32 in its U-Boot FIT, so a genuine
+   boot always has `/dev/tee*`. A plain U-Boot provides no BL32 — before
+   keybox migration the passphrase is still stored raw on the `security`
+   partition, and that plaintext window is exactly when a loader swap
+   would boot the system, so the raw path hard-fails without a working
+   TEE. After migration (SSKR) the existing keybox path already required
+   OP-TEE.
+
+`rk_apply_kconfig_fragment` runs `make olddefconfig` after merging and
+verifies the *resolved* values, so a fragment line that a hidden Kconfig
+`select` would silently re-enable fails the build instead of shipping.
+
+Residual gaps (all require the §7 OTP step to close):
+
+- The env blob is still unsigned; on secure builds it can now only
+  route to verified-FIT launches, but it can still pick *which* signed
+  FIT (e.g. force the recovery partition).
+- An **unsigned OP-TEE-chain loader** (the `secure-rootfs` tier's
+  U-Boot, which carries BL32 but verifies nothing) still passes the
+  TEE gate and can launch the secure kernel unverified — software
+  cannot distinguish "TEE present because the signed chain loaded it"
+  from "TEE present because an unsigned loader bundled it".
+- The ROM still does not verify SPL before OTP is burned: reflashing
+  the whole disk (idbloader/SPL included) replaces the chain outright.

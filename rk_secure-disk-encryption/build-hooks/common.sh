@@ -168,6 +168,15 @@ function rk_apply_kconfig_fragment() {
     KCONFIG_CONFIG="${target_config}" rk_run_host_command "${merge_config}" -m "${target_config}" "${fragment}" ||
         exit_with_error "Kconfig fragment merge failed" "${fragment}"
 
+    # Re-resolve Kconfig dependencies before verifying. merge_config -m only
+    # edits the text: a fragment line that a hidden "select" overrides (e.g.
+    # DISTRO_DEFAULTS selects CMD_BOOTI on ARM64) would pass the textual
+    # check below and then silently re-enable at the real build's syncconfig.
+    # olddefconfig settles the same .config the build will use, so the
+    # verification below sees the final values.
+    KCONFIG_CONFIG="${target_config}" rk_run_host_command make olddefconfig ||
+        exit_with_error "Kconfig olddefconfig failed after fragment merge" "${fragment}"
+
     while IFS= read -r line || [[ -n "${line}" ]]; do
         [[ "${line}" =~ ^CONFIG_[A-Za-z0-9_]+= ]] || [[ "${line}" =~ ^#\ CONFIG_[A-Za-z0-9_]+\ is\ not\ set$ ]] || continue
         grep -Fxq "${line}" "${target_config}" ||
