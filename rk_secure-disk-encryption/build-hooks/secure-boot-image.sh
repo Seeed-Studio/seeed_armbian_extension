@@ -45,6 +45,11 @@ function rk_secure_boot_patch_dtb_bootargs() {
 # Operates on a copy (board.dtb or the resource.img staging file), not the
 # kernel build artifact, so callers must pass the path they intend to embed.
 # overlay_dir is the kernel's arch/arm64/boot/dts/rockchip/overlay directory.
+#
+# DEFAULT_OVERLAYS holds bare logical names (e.g. "panthor-gpu"), but vendor
+# overlay files ship prefixed (rk3588-*.dtbo, rockchip-rk3588-*.dtbo). Resolve
+# like boot-rockchip64.cmd does: try "${prefix}-${ov}.dtbo" for each
+# OVERLAY_PREFIX entry first, then fall back to the bare "${ov}.dtbo" name.
 function rk_secure_boot_apply_default_overlays() {
     local dtb_file="$1"
     local overlay_dir="$2"
@@ -59,11 +64,20 @@ function rk_secure_boot_apply_default_overlays() {
         exit_with_error "FIT packaging failed: fdtoverlay missing" "device-tree-compiler"
 
     local -a overlay_args=()
-    local ov src
+    local ov prefix src
     for ov in ${DEFAULT_OVERLAYS}; do
-        src="${overlay_dir}/${ov}.dtbo"
+        src=""
+        for prefix in ${OVERLAY_PREFIX:-}; do
+            if [[ -f "${overlay_dir}/${prefix}-${ov}.dtbo" ]]; then
+                src="${overlay_dir}/${prefix}-${ov}.dtbo"
+                break
+            fi
+        done
+        # Full overlay names (repack-fit passes real filenames) resolve here.
+        [[ -n "${src}" ]] || src="${overlay_dir}/${ov}.dtbo"
         [[ -f "${src}" ]] ||
-            exit_with_error "FIT packaging failed: overlay missing" "${src}"
+            exit_with_error "FIT packaging failed: overlay missing" \
+                "${src} (prefixes tried: ${OVERLAY_PREFIX:-none})"
         overlay_args+=("${src}")
     done
 
