@@ -60,7 +60,7 @@ flowchart TD
     C --> D["boot_slot=new · ota_in_progress=1 · retry=3, reboot"]
     D --> E{"ab_preboot: retry budget left?"}
     E -- no --> U["U-Boot rollback to boot_success (layer 2)"]
-    U --> R["firstboot ExecStartPost: STATUS=rollback, clear target"]
+    U --> R["firstboot ExecStopPost: STATUS=rollback, clear target"]
     E -- yes --> F["boot the new slot"]
     F --> G{"systemd firstboot health check (layer 1)"}
     G -- pass --> H["boot_success=new · ota_in_progress=0"]
