@@ -162,29 +162,30 @@ fw_env_set_multi() {
 #                          PARTLABEL=recovery partition and booted with the
 #                          vendor `boot_fit` command (signature verification
 #                          included), mirroring the A/B raw-fit slot boot
-# The dispatcher tries fs first (plain devices hit :1), then fit (secure
-# devices: :1 is raw so ext4load fails through), then distro_bootcmd. Each
-# branch is self-contained, so the same compiled U-Boot and the same routing
-# set stay correct on every build flavor.
+# Rescue assets are mutually exclusive: plain uses ext4 /recovery/, while
+# secure/raw-FIT uses its signed recovery partition. The dispatcher is selected
+# below from the build-time layout stamp, never by trying an unsigned FIT.
 #
-# Normal boot uses the same fs/fit split: ota_normal_boot_fs loads boot.scr
-# from the ext4 boot partition, ota_normal_boot_fit boots the signed FIT on
-# the raw `boot` partition via vendor boot_fit (no ota_role, so the initramfs
-# takes its normal role). Without the fit branch a raw-FIT device had NO
-# working normal boot: ext4load on the raw :1 always fails, every boot fell
-# through to the rescue role and the hook dropped to rescue_shell whenever
-# ota_in_progress=0. The compiled default env (patch) carries only the rescue
-# scripts: on a bad-CRC boot the default bootcmd lands in Rescue, whose CRC
-# reconciliation rebuilds this full set before returning to normal.
+# Normal boot likewise uses the layout-selected fs or signed FIT branch.
+# The compiled default env carries only rescue scripts: on a bad-CRC boot it
+# enters Rescue, whose CRC reconciliation rebuilds the full routing set.
 
 OTA_ENV_NORMAL_BOOT_FS='setenv prefix /; ext4load ${devtype} ${devnum}:1 ${scriptaddr} /boot.scr && source ${scriptaddr}'
 # The FIT's signed DTB supplies the build-configured console/root/extra
 # bootargs. Only the dynamic disk and Rescue-role tokens belong in this script;
 # a second hardcoded copy would override RK_SECURE_BOOT_* customizations.
 OTA_ENV_NORMAL_BOOT_FIT='setenv boot_fit_part boot; env set bootargs "${bootargs} armbian.bootdev=${devtype} armbian.bootdevnum=${devnum}"; boot_fit'
-OTA_ENV_NORMAL_BOOT='run ota_normal_boot_fs || run ota_normal_boot_fit'
+# Select routes from the build-stamped layout, not a writable U-Boot variable:
+# plain never falls back to an unsigned raw FIT; secure/raw-FIT has no ext4
+# /boot to try. The unused branch is retained only as inert reference data so
+# full CRC rebuilds remain compatible with older compiled default envs.
+OTA_ENV_NORMAL_BOOT='run ota_normal_boot_fs'
 OTA_ENV_RESCUE_BOOT_FIT='setenv boot_fit_part recovery; env set bootargs "${bootargs} armbian.bootdev=${devtype} armbian.bootdevnum=${devnum} armbian.ota_role=recovery"; boot_fit'
-OTA_ENV_RESCUE_BOOT='run ota_rescue_boot_fs || run ota_rescue_boot_fit || run distro_bootcmd'
+OTA_ENV_RESCUE_BOOT='run ota_rescue_boot_fs || run distro_bootcmd'
+if [ "$(cat /usr/share/armbian-ota/boot-mode 2>/dev/null)" = "raw-fit" ]; then
+    OTA_ENV_NORMAL_BOOT='run ota_normal_boot_fit'
+    OTA_ENV_RESCUE_BOOT='run ota_rescue_boot_fit'
+fi
 OTA_ENV_BOOTCMD='if test -z "${devtype}"; then run rkimg_bootdev; fi; if test "${ota_in_progress}" = "1"; then if test "${ota_boot_next}" = "normal"; then setenv ota_boot_next recovery; if saveenv; then run ota_normal_boot; fi; run ota_rescue_boot; else run ota_rescue_boot; fi; else run ota_normal_boot; run ota_rescue_boot; fi'
 
 # Rescue root for the fs branch, resolved at routing-set build time:

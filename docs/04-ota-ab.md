@@ -140,7 +140,7 @@ State variables (see [`ab/rootfs/etc/u-boot-initial-env`](../armbian-ota/ab/root
 | `boot_success` | last slot that passed health checks |
 | `ota_in_progress` | 1 while an update or manual slot switch is pending verification |
 | `slot_retry_max` / `slot_retry_left` | boot-attempt budget for the pending slot (default 3) |
-| `ab_boot_mode` | `filesystem` or `raw-fit` boot path |
+| `ab_boot_mode` | `filesystem` or `raw-fit` boot path; plain never falls back to FIT |
 | `ab_boot_devtype` / `ab_boot_devnum` | boot device anchoring |
 | `distro_bootpart_a` / `distro_bootpart_b` | boot partition number per slot |
 | `ab_preboot` | pre-boot script: retry bookkeeping + hard rollback |

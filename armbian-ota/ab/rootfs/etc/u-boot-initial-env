@@ -37,4 +37,4 @@ ab_select_fit_slot=if test "${boot_slot}" = "b"; then setenv boot_fit_part boot_
 # saveenv's during OTA retry handling and must never persist the mutated
 # bootargs, or the token accumulates across retry boots. No bootrkp tail: the
 # command does not exist in the u-boot we ship.
-bootcmd=run ab_preboot; setenv bootargs "${bootargs} armbian.bootdev=${devtype} armbian.bootdevnum=${devnum}"; if test "${ab_boot_mode}" = "raw-fit"; then run ab_select_fit_slot; setenv bootargs "${bootargs} armbian.slot=${boot_slot}"; boot_fit; else run distro_bootcmd; boot_fit; fi
+bootcmd=run ab_preboot; setenv bootargs "${bootargs} armbian.bootdev=${devtype} armbian.bootdevnum=${devnum}"; if test "${ab_boot_mode}" = "raw-fit"; then run ab_select_fit_slot; setenv bootargs "${bootargs} armbian.slot=${boot_slot}"; boot_fit; else run distro_bootcmd; fi

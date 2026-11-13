@@ -44,6 +44,9 @@ function ota_rescue_artifacts_resolve_dtb() {
 
 # Stamp the layout flavor into the rootfs so the runtime health service can
 # branch without probing block devices (plain recovery stamps "filesystem").
+# The initramfs also needs this stamp: 99-copy-tools runs immediately after
+# pre_update_initramfs and copies it for fwenv.sh. The final rescue hook below
+# reasserts it after installing the corresponding assets.
 # Hard failure, not a warning: the Rescue success-reconciliation treats the
 # stamp as the deciding input on raw-FIT devices (HAS_BOOT_PART=0), so a
 # warn-only write could ship a rootfs whose next reconciliation wedges in

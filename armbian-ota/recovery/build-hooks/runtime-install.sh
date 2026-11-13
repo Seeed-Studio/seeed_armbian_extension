@@ -169,6 +169,14 @@ function ota_install_recovery_initramfs() {
 
 function pre_update_initramfs__894_install_recovery_ota_hooks() {
     ota_install_recovery_runtime_to_rootfs "${MOUNT}" || return 1
+    # ota_raw_boot_enabled uses the same raw-layout inputs as the rescue
+    # hook; BOOT_RAW_MODE alone may not survive across Armbian hook rounds.
+    # The stamp must exist before update_initramfs invokes 99-copy-tools.
+    if ota_raw_boot_enabled; then
+        ota_rescue_stamp_boot_mode "raw-fit"
+    else
+        ota_rescue_stamp_boot_mode "filesystem"
+    fi
     ota_install_recovery_initramfs "${MOUNT}"
 }
 

@@ -203,9 +203,8 @@ Logs land in `/run/initramfs/ota.log` (carried into the running system via `/run
 
 Every recovery image carries a rescue boot path that never depends on the
 rootfs; U-Boot routes to it through the transactional `bootcmd` whenever
-`ota_in_progress=1` or a normal boot falls through. Two flavors share one
-dispatcher (`ota_rescue_boot=run ota_rescue_boot_fs || run ota_rescue_boot_fit
-|| run distro_bootcmd`):
+`ota_in_progress=1` or a normal boot falls through. The routing is selected by
+image layout rather than by trying an unverified FIT fallback:
 
 - **ext4 layouts** (`ota_rescue_boot_fs`): `Image` + `uInitrd` + `board.dtb`
   in `boot/recovery/`, loaded with `ext4load` and started with `booti`.
@@ -215,6 +214,11 @@ dispatcher (`ota_rescue_boot=run ota_rescue_boot_fs || run ota_rescue_boot_fit
   recovery`) — FIT signature verification applies, and the FIT's ramdisk is
   the same-build initramfs, so the rescue boots straight into the
   `99-ota-apply` Rescue role (`armbian.ota_role=recovery`).
+
+Plain Recovery routes only through ext4 `/boot` and `/recovery/`; plain A/B
+likewise ends after `distro_bootcmd` instead of falling back to raw FIT.
+Secure/raw-FIT images retain `boot_fit` for their signed normal and
+Rescue/slot payloads.
 
 The rescue set is **never updated by OTA** (packages stage the boot
 partition with `recovery/` excluded and never touch the recovery partition),
@@ -321,7 +325,7 @@ Both OTA modes require a GPT partition table. Their boot, rootfs, userdata, and 
 
 ### Initial U-Boot environment
 
-At build time `uboot-default-env.sh` extracts U-Boot's compiled default environment from the ELF and merges it with `ab/rootfs/etc/u-boot-initial-env` into the image's `/etc/u-boot-initial-env` (rootfs template wins on conflicts); `uboot-env-prefill.sh` writes the resulting persistent environment to raw offset `0x3f8000`. On first boot `armbian-ota-init-uboot` repairs missing defaults, writes `/etc/fw_env.config`, and fills in `distro_bootpart_a/b`, `ab_boot_devtype/devnum`, and `ab_boot_mode` (auto-detecting `raw-fit` when no boot partition carries a filesystem). This keeps `distro_bootcmd`/`scan_dev_for_boot` intact while the slot logic overlays them.
+At build time `uboot-default-env.sh` extracts U-Boot's compiled default environment from the ELF and merges it with `ab/rootfs/etc/u-boot-initial-env` into the image's `/etc/u-boot-initial-env` (rootfs template wins on conflicts); `uboot-env-prefill.sh` writes the resulting persistent environment to raw offset `0x3f8000`. On first boot `armbian-ota-init-uboot` repairs missing defaults, writes `/etc/fw_env.config`, and fills in `distro_bootpart_a/b`, `ab_boot_devtype/devnum`, and `ab_boot_mode` (auto-detecting `raw-fit` when no boot partition carries a filesystem). Plain A/B does not fall back to raw FIT after `distro_bootcmd`. This keeps `distro_bootcmd`/`scan_dev_for_boot` intact while the slot logic overlays them.
 
 ## OTA Package Contents
 
@@ -405,7 +409,7 @@ In `ota-support.sh` and `*/build-hooks/*.sh` (ordering matters):
 
 - U-Boot default env packaging: `post_uboot_custom_postprocess__890_*` (`common/build-hooks/uboot-default-env.sh`)
 - overlayroot configuration: `pre_update_initramfs__892_*` (`common/build-hooks/overlayroot.sh`)
-- Recovery initramfs hooks: `pre_update_initramfs__894_*` (`recovery/build-hooks/runtime-install.sh`)
+- Recovery initramfs hooks: `pre_update_initramfs__894_*` (`recovery/build-hooks/runtime-install.sh`); the runtime install also writes `usr/share/armbian-ota/boot-mode` here so `99-copy-tools` can stage it in the initramfs
 - A/B runtime + merged initial env: `pre_update_initramfs__895_*` (`ab/build-hooks/runtime-install.sh`)
 - Resize userdata service: `pre_umount_final_image__896_*` (`common/build-hooks/userdata-resize.sh`)
 - OTA payload pubkey install: `pre_umount_final_image__897_*` (`common/build-hooks/ota-payload-security.sh`)
