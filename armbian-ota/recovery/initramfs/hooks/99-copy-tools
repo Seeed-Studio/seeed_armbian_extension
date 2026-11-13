@@ -144,6 +144,17 @@ copy_exec_first /usr/sbin /usr/sbin/mke2fs /sbin/mke2fs
 copy_ota_lib state.sh
 copy_ota_lib find-userdata.sh
 copy_ota_lib fwenv.sh
+# fwenv.sh reads the boot-mode stamp at SOURCE time to pick the fs vs
+# raw-FIT boot routes, and 99-ota-apply sources fwenv.sh before any rootfs
+# mount -- inside this initramfs the bare-path cat finds nothing without a
+# staged copy, the routes freeze at the fs-only default, and a raw-FIT
+# device's env CRC rebuild (fw_env_write_routing_set) would persist
+# ext4-only dispatchers: ext4load on the raw :1 always fails, so the signed
+# normal/rescue boot routes are lost. The pre_update_initramfs hook stamps
+# the rootfs before this hook runs, so a missing file here is a build-order
+# break, not a flavor difference: fail instead of shipping the silent
+# fs-only default.
+copy_ota_lib boot-mode
 copy_recovery_initramfs_lib log.sh
 copy_recovery_initramfs_lib device.sh
 copy_recovery_initramfs_lib payload.sh

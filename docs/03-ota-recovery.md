@@ -32,10 +32,14 @@ auto-decrypt:  [ boot ext4 ][ security 4M ][ rootfs LUKS+ext4 ][ userdata LUKS+e
 secure boot:   [ boot raw FIT ][ recovery raw FIT ][ security 4M ][ rootfs LUKS+ext4 ][ userdata LUKS+ext4 ]
 ```
 
+Plain Recovery boots only through ext4 `/boot` and `/recovery/`, with no raw
+FIT fallback. Secure/raw-FIT Recovery boots the signed FIT from the raw `boot`
+or `recovery` partition.
+
 | PARTLABEL | fs label | Role |
 |---|---|---|
 | `boot` | `armbi_boot` | `/boot`, mounted directly (never overlayed) — or raw FIT under secure boot |
-| `recovery` | — | raw-FIT layouts (secure-boot and OP-TEE auto-decrypt): raw FIT rescue partition (same boot.itb as boot, flashed at build time, booted by the U-Boot `boot_fit` command; never touched by OTA) |
+| `recovery` | — | raw-FIT layouts (secure-boot): raw FIT rescue partition (same boot.itb as boot, flashed at build time, booted by the U-Boot `boot_fit` command; never touched by OTA) |
 | `security` | — | key material (encrypted images only) |
 | `rootfs` | `armbi_root` | read-only rootfs lower layer |
 | `userdata` | `armbi_usrdata` | overlay upper layer + OTA transaction store; auto-expands on first boot |
