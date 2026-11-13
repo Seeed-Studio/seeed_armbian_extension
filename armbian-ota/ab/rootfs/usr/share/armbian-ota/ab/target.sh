@@ -451,17 +451,91 @@ ab_update_target_filesystem_config() {
     fi
 }
 
+# List mountpoints backed by the mapper device: mounts whose /proc/mounts
+# source is the mapper path (or its resolved /dev/dm-N alias) plus any
+# mountpoints nested beneath them. Parents print before children; callers
+# peel the layers with retries instead of assuming a single pass suffices.
+ab_mapper_mountpoints() {
+    local dev="$1"
+    local alias="$2"
+
+    awk -v d="${dev}" -v a="${alias}" '
+        $1 == d || (a != "" && $1 == a) { roots[$2] = 1; print $2; next }
+        {
+            for (r in roots)
+                if (index($2, r "/") == 1) { print $2; break }
+        }
+    ' /proc/mounts
+}
+
+# Force an OTA LUKS mapper out of the way before (re)opening it. Leftovers
+# from an interrupted run hold the mapper busy (stale mounts), which made
+# luksOpen fail with "Device <name> already exists" while the pre-close
+# luksClose failed silently. Kernel state is probed via "cryptsetup status"
+# so a missing /dev/mapper node (plain -e test) cannot hide an active
+# mapping. Returns 0 once the mapper is gone (or was never active), 1 when
+# something still holds it.
+ab_teardown_luks_mapper() {
+    local mapper="$1"
+    local dev="/dev/mapper/${mapper}"
+    local dev_alias="" pass mounts mnt busy
+
+    cryptsetup status "${mapper}" >/dev/null 2>&1 || return 0
+
+    dev_alias="$(readlink -f "${dev}" 2>/dev/null || true)"
+    [ "${dev_alias}" = "${dev}" ] && dev_alias=""
+
+    for pass in 1 2 3 4 5; do
+        mounts="$(ab_mapper_mountpoints "${dev}" "${dev_alias}")"
+        [ -z "${mounts}" ] && break
+        busy=0
+        while IFS= read -r mnt; do
+            [ -n "${mnt}" ] || continue
+            # Never touch the live rootfs, whatever /proc/mounts claims.
+            [ "${mnt}" = "/" ] && continue
+            if umount "${mnt}" 2>/dev/null; then
+                log_info "Unmounted target-slot mount ${mnt}"
+            elif [ "${pass}" -eq 5 ]; then
+                umount -l "${mnt}" 2>/dev/null || busy=$((busy + 1))
+                log_warn "Lazy-unmounted busy target-slot mount ${mnt}"
+            else
+                busy=$((busy + 1))
+            fi
+        done <<EOF
+${mounts}
+EOF
+        [ "${busy}" -eq 0 ] && break
+        sleep 1
+    done
+
+    for pass in 1 2 3; do
+        cryptsetup luksClose "${mapper}" >/dev/null 2>&1 && return 0
+        sleep 1
+    done
+    cryptsetup status "${mapper}" >/dev/null 2>&1 || return 0
+    return 1
+}
+
 ab_cleanup_target_root() {
     local root_mnt="$1"
     local luks_mapper="$2"
     local luks_opened="$3"
-    local cleanup_failed=0
+    local cleanup_failed=0 pass
 
-    if mountpoint -q "${root_mnt}" 2>/dev/null && ! umount "${root_mnt}"; then
-        log_warn "Failed to unmount target root partition"
-        cleanup_failed=1
+    if mountpoint -q "${root_mnt}" 2>/dev/null; then
+        # -R also detaches nested mounts a hook may have left inside the
+        # target slot (chroot /proc, /dev, ...); those made the single
+        # umount fail and leaked the mapper in earlier runs.
+        for pass in 1 2 3; do
+            umount -R "${root_mnt}" 2>/dev/null && break
+            sleep 1
+        done
+        if mountpoint -q "${root_mnt}" 2>/dev/null; then
+            log_warn "Failed to unmount target root partition"
+            cleanup_failed=1
+        fi
     fi
-    if [ "${luks_opened}" -eq 1 ] && [ -n "${luks_mapper}" ] && ! cryptsetup luksClose "${luks_mapper}" >/dev/null 2>&1; then
+    if [ "${luks_opened}" -eq 1 ] && [ -n "${luks_mapper}" ] && ! ab_teardown_luks_mapper "${luks_mapper}"; then
         log_warn "Failed to close mapper ${luks_mapper}"
         cleanup_failed=1
     fi
@@ -510,8 +584,12 @@ ab_update_target_partition() {
         fi
 
         luks_mapper="armbian-ota-root-${target_slot}"
-        if [ -e "/dev/mapper/${luks_mapper}" ]; then
-            cryptsetup luksClose "${luks_mapper}" >/dev/null 2>&1 || true
+        if cryptsetup status "${luks_mapper}" >/dev/null 2>&1; then
+            log_warn "Stale LUKS mapper ${luks_mapper} found (interrupted previous run?), closing it before unlocking"
+        fi
+        if ! ab_teardown_luks_mapper "${luks_mapper}"; then
+            rm -f "${key_file}" 2>/dev/null || true
+            error_exit "Stale LUKS mapper ${luks_mapper} is still busy; unmount whatever holds it (grep ${luks_mapper} /proc/mounts, lsof /dev/mapper/${luks_mapper}) and retry"
         fi
         cat "${key_file}" | cryptsetup luksOpen "${target_root_dev}" "${luks_mapper}" ||
             cryptsetup luksOpen "${target_root_dev}" "${luks_mapper}" --key-file "${key_file}" ||
