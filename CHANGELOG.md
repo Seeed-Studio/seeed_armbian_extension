@@ -108,6 +108,29 @@ Covers the work against the initial import (merge base `9980aee`,
 
 #### Secure boot & secure rootfs
 
+- **Loader/OS mismatch enforcement.** A verifying U-Boot can no longer be
+  steered into a plain OS by a foreign image's unsigned env blob, and a
+  plain U-Boot can no longer ride the first-boot plaintext passphrase
+  window of a secure image:
+  - Secure U-Boot fragments Kconfig-disable `CMD_BOOTZ`, `CMD_SOURCE`,
+    `CMD_PXE`, `CMD_BOOT_ANDROID`, `CMD_GO` (with `FIT_SIGNATURE` the
+    legacy image format is auto-off, so the surviving `bootm`/`boot_fit`
+    accept signed FITs only).
+  - `booti` refuses raw Image execution on `FIT_SIGNATURE` builds (C-level
+    guard in the rescue-default-env patch — `DISTRO_DEFAULTS` selects
+    `CMD_BOOTI` on ARM64 so it cannot be Kconfig-disabled); the same patch
+    compiles the default-env rescue dispatcher down to the signed
+    recovery-FIT branch. Plain builds are unchanged.
+  - `decryption-disk.sh` hard-fails the raw (pre-SSKR-migration)
+    passphrase path when OP-TEE is unavailable (plain U-Boot ships no
+    BL32), closing the loader-swap window while the passphrase is still
+    plaintext on the security partition.
+  - `rk_apply_kconfig_fragment` now resolves Kconfig dependencies
+    (`make olddefconfig`) before verifying the fragment, so a hidden
+    `select` overriding a fragment line fails the build instead of
+    silently re-enabling at syncconfig.
+  Residual gaps (unsigned OP-TEE-chain loader, ROM/SPL before OTP) are
+  documented in docs/06-secure-boot.md §8.
 - **Rockchip secure U-Boot bootchain.** New `RK_SECURE_UBOOT_ENABLE=yes`
   profile builds U-Boot with ATF + OP-TEE (BL32), packages the kernel as a
   signed FIT, and flashes a raw boot partition. LUKS root and OP-TEE/SSKR

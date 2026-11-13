@@ -228,6 +228,16 @@ if [ "$SECURITY_MARKER" = "SSKR" ]; then
     fi
     stop_tee_supplicant
 else
+    # First-boot raw passphrase window. Every auto-decrypt image boots with
+    # OP-TEE BL32 packed in its U-Boot FIT, so a genuine boot always has
+    # /dev/tee* by the time this hook runs. A plain U-Boot provides no BL32
+    # and can only have launched this kernel unverified -- refusing to hand
+    # out the raw passphrase (and the rootfs) in that state closes the
+    # loader-swap window while the passphrase is still stored in plaintext.
+    if ! keybox_ready; then
+        log_step "[Decryption-disk] Error: raw passphrase path requires OP-TEE (no /dev/tee*; launched by a loader without BL32?)"
+        exit 1
+    fi
     log_step "[Decryption-disk] No SSKR marker, reading raw passphrase"
     dd if="$SECURITY_DEV" of="$SYSPW_FILE" bs=1 count=64 2>/dev/null || {
         log_step "[Decryption-disk] Error: failed to read raw passphrase"
@@ -235,13 +245,18 @@ else
     }
     chmod 600 "$SYSPW_FILE" 2>/dev/null || true
 
-    if keybox_ready && start_tee_supplicant; then
-        /usr/bin/keybox_app write >/dev/null 2>&1 ||
-            log_step "[Decryption-disk] keybox_app write failed, keeping raw passphrase"
-        stop_tee_supplicant
-    else
-        log_step "[Decryption-disk] OP-TEE keybox path unavailable, using raw passphrase"
+    if ! start_tee_supplicant; then
+        log_step "[Decryption-disk] Error: tee-supplicant failed on the raw passphrase path"
+        exit 1
     fi
+    # Best-effort migration into the TEE keybox (keybox_app write rewrites
+    # the partition as an SSKR container). Failure keeps the raw copy for
+    # this boot and retries on the next one; the gate above still blocks
+    # any later boot under a BL32-less loader.
+    if ! /usr/bin/keybox_app write >/dev/null 2>&1; then
+        log_step "[Decryption-disk] keybox_app write failed, keeping raw passphrase for this boot"
+    fi
+    stop_tee_supplicant
 fi
 
 if [ ! -s "$SYSPW_FILE" ]; then

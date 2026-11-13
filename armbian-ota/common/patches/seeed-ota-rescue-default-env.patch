@@ -1,5 +1,5 @@
 From: mingzq <north_sea@qq.com>
-Date: Wed, 28 Oct 2026 10:13:20 +0000
+Date: Fri, 13 Nov 2026 04:20:00 +0000
 Subject: [PATCH] rk35xx: fail-safe default environment for OTA rescue routing
 
 The single-copy U-Boot env blob (0x3f8000, no redundant copy) can lose
@@ -27,6 +27,19 @@ is therefore inert on every build flavor and is staged unconditionally:
 no compile-time gating, and one stable U-Boot artifact hash across
 flavors sharing a checkout.
 
+Verified-boot lockdown (CONFIG_FIT_SIGNATURE builds, i.e. the seeed
+secure-boot fragment): a verifying U-Boot must not launch a plain OS
+even when a foreign image's unsigned env blob steers the boot path, so
+- OTA_RESCUE_ENV_SETTINGS compiles down to the signed recovery FIT
+  branch only (no booti fs branch, no distro_bootcmd tail), and
+- cmd/booti.c refuses raw ARM64 Image execution entirely (the seeed
+  fragment Kconfig-disables bootz/source/pxe/boot_android/go; booti
+  cannot be disabled that way because DISTRO_DEFAULTS selects it on
+  ARM64).
+
+Plain builds compile both #else branches unchanged -- byte-identical
+behavior, the patch content is the only artifact-hash delta.
+
 The persistent (prefilled) env carries the full transactional bootcmd;
 this default is its CRC-failure fallback (Seeed recovery OTA v0.8,
 design section 3.4).
@@ -34,7 +47,7 @@ design section 3.4).
 ---
 --- a/include/configs/rk3576_common.h
 +++ b/include/configs/rk3576_common.h
-@@ -77,13 +77,34 @@
+@@ -77,13 +77,49 @@
  
  #include <config_distro_bootcmd.h>
  
@@ -49,11 +62,26 @@ design section 3.4).
 + * configured console/root/extra bootargs; this branch appends only the
 + * dynamic disk and rescue-role tokens, keeping build-time prefill and
 + * fwenv re-injection from overriding those signed settings.
++ *
++ * Full secure-boot builds (the seeed fragment enables CONFIG_FIT_SIGNATURE)
++ * must never launch an unverified OS. The ext4 rescue branch ends in a raw
++ * `booti` and the distro_bootcmd tail boots whatever extlinux/boot.scr a
++ * disk offers -- both are unverified launch paths, so on those builds only
++ * the signed recovery FIT (vendor boot_fit -> bootm verification chain)
++ * stays dispatchable here. cmd/booti.c refuses raw Image execution on the
++ * same builds, closing the loader/OS mismatch paths driven by a foreign
++ * image's unsigned on-disk env blob. Plain builds keep the full chain.
 + */
++#if defined(CONFIG_FIT_SIGNATURE)
++#define OTA_RESCUE_ENV_SETTINGS \
++	"ota_rescue_boot_fit=setenv boot_fit_part recovery; env set bootargs \"${bootargs} armbian.bootdev=${devtype} armbian.bootdevnum=${devnum} armbian.ota_role=recovery\"; boot_fit\0" \
++	"ota_rescue_boot=run ota_rescue_boot_fit\0"
++#else
 +#define OTA_RESCUE_ENV_SETTINGS \
 +	"ota_rescue_boot_fs=ext4load ${devtype} ${devnum}:1 ${kernel_addr_r} /recovery/Image && ext4load ${devtype} ${devnum}:1 ${ramdisk_addr_r} /recovery/uInitrd && ext4load ${devtype} ${devnum}:1 ${fdt_addr_r} /recovery/board.dtb && setenv bootargs \"root=LABEL=armbi_root rootwait rootfstype=ext4 console=ttyFIQ0,1500000n8 armbian.bootdev=${devtype} armbian.bootdevnum=${devnum} armbian.ota_role=recovery\" && booti ${kernel_addr_r} ${ramdisk_addr_r} ${fdt_addr_r}\0" \
 +	"ota_rescue_boot_fit=setenv boot_fit_part recovery; env set bootargs \"${bootargs} armbian.bootdev=${devtype} armbian.bootdevnum=${devnum} armbian.ota_role=recovery\"; boot_fit\0" \
 +	"ota_rescue_boot=run ota_rescue_boot_fs || run ota_rescue_boot_fit || run distro_bootcmd\0"
++#endif
 +
  #define CONFIG_EXTRA_ENV_SETTINGS \
  	ENV_MEM_LAYOUT_SETTINGS \
@@ -71,7 +99,7 @@ design section 3.4).
  /* rockchip ohci host driver */
 --- a/include/configs/rk3588_common.h
 +++ b/include/configs/rk3588_common.h
-@@ -84,6 +84,23 @@
+@@ -84,6 +84,38 @@
  
  #include <config_distro_bootcmd.h>
  
@@ -86,16 +114,31 @@ design section 3.4).
 + * configured console/root/extra bootargs; this branch appends only the
 + * dynamic disk and rescue-role tokens, keeping build-time prefill and
 + * fwenv re-injection from overriding those signed settings.
++ *
++ * Full secure-boot builds (the seeed fragment enables CONFIG_FIT_SIGNATURE)
++ * must never launch an unverified OS. The ext4 rescue branch ends in a raw
++ * `booti` and the distro_bootcmd tail boots whatever extlinux/boot.scr a
++ * disk offers -- both are unverified launch paths, so on those builds only
++ * the signed recovery FIT (vendor boot_fit -> bootm verification chain)
++ * stays dispatchable here. cmd/booti.c refuses raw Image execution on the
++ * same builds, closing the loader/OS mismatch paths driven by a foreign
++ * image's unsigned on-disk env blob. Plain builds keep the full chain.
 + */
++#if defined(CONFIG_FIT_SIGNATURE)
++#define OTA_RESCUE_ENV_SETTINGS \
++	"ota_rescue_boot_fit=setenv boot_fit_part recovery; env set bootargs \"${bootargs} armbian.bootdev=${devtype} armbian.bootdevnum=${devnum} armbian.ota_role=recovery\"; boot_fit\0" \
++	"ota_rescue_boot=run ota_rescue_boot_fit\0"
++#else
 +#define OTA_RESCUE_ENV_SETTINGS \
 +	"ota_rescue_boot_fs=ext4load ${devtype} ${devnum}:1 ${kernel_addr_r} /recovery/Image && ext4load ${devtype} ${devnum}:1 ${ramdisk_addr_r} /recovery/uInitrd && ext4load ${devtype} ${devnum}:1 ${fdt_addr_r} /recovery/board.dtb && setenv bootargs \"root=LABEL=armbi_root rootwait rootfstype=ext4 console=ttyFIQ0,1500000n8 armbian.bootdev=${devtype} armbian.bootdevnum=${devnum} armbian.ota_role=recovery\" && booti ${kernel_addr_r} ${ramdisk_addr_r} ${fdt_addr_r}\0" \
 +	"ota_rescue_boot_fit=setenv boot_fit_part recovery; env set bootargs \"${bootargs} armbian.bootdev=${devtype} armbian.bootdevnum=${devnum} armbian.ota_role=recovery\"; boot_fit\0" \
 +	"ota_rescue_boot=run ota_rescue_boot_fs || run ota_rescue_boot_fit || run distro_bootcmd\0"
++#endif
 +
  #define CONFIG_EXTRA_ENV_SETTINGS \
  	BOOTENV_SHARED_MTD	\
  	ENV_MEM_LAYOUT_SETTINGS \
-@@ -91,7 +103,11 @@
+@@ -91,7 +123,11 @@
  	"partitions=" PARTS_RKIMG \
  	ROCKCHIP_DEVICE_SETTINGS \
  	RKIMG_DET_BOOTDEV \
@@ -107,3 +150,26 @@ design section 3.4).
  #endif
  
  /* rockchip ohci host driver */
+--- a/cmd/booti.c
++++ b/cmd/booti.c
+@@ -134,6 +134,20 @@
+ {
+ 	int ret;
+ 
++#ifdef CONFIG_FIT_SIGNATURE
++	/*
++	 * Seeed secure-boot lockdown: verified builds launch kernels only
++	 * through FIT configurations checked against the required key in
++	 * the control DTB (boot_fit / bootm). Raw ARM64 Image execution is
++	 * the unverified boot.scr / rescue-fs path, so refuse it no matter
++	 * which environment script -- possibly one from a foreign image's
++	 * unsigned env blob -- asked for it. DISTRO_DEFAULTS selects this
++	 * command on ARM64, so it cannot be Kconfig-disabled instead.
++	 */
++	printf("booti: raw Image boot is disabled on verified-boot builds\n");
++	return CMD_RET_FAILURE;
++#endif
++
+ 	/* Consume 'booti' */
+ 	argc--; argv++;
+ 
