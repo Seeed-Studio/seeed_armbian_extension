@@ -448,7 +448,7 @@ jobs:
           # Retired candidate's tags go with its Release: extension
           # here, kernel in the notes-named repo.
           gh api --method DELETE "repos/${GITHUB_REPOSITORY}/git/refs/tags/${OLD_TAG}" >/dev/null 2>&1 || true
-          old_kernel_repo="$(jq -r '.[3]' <<<"$state" | grep -oP '^\| \[?\K[A-Za-z0-9_.-]+/linux-rockchip\b' | head -1)"
+          old_kernel_repo="$(jq -r '.[3]' <<<"$state" | python3 .github/scripts/notes-meta.py kernel-repo)"
           if [[ -n "$old_kernel_repo" ]]; then
             gh api --method DELETE "repos/${old_kernel_repo}/git/refs/tags/${OLD_TAG}" >/dev/null 2>&1 || true
             echo "swept kernel tag ${OLD_TAG} from ${old_kernel_repo} (if present)"
