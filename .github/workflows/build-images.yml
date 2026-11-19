@@ -861,14 +861,14 @@ jobs:
           dest="seeed-storage:armbian/${GITHUB_REPOSITORY_OWNER,,}/images/trees/$TAG/$BOARD/$sec_dir/$PROFILE"
           echo "Uploading to $dest"
           rclone mkdir "$dest" 2>/dev/null || true
+          # "/" anchors to the transfer root; bare "*.img.xz" would match nested loaders.
           rclone copy output/images/ "$dest" \
-            --include "*.img.xz" --include "*.img.xz.sha256" --include "*.img.sha" --include "*.img.txt" \
+            --include "/*.img.xz" --include "/*.img.xz.sha256" --include "/*.img.sha" --include "/*.img.txt" \
             --transfers 4 --stats-one-line --stats 30s
-          if [ ${#ota_files[@]} -gt 0 ]; then
-            rclone mkdir "$dest/ota" 2>/dev/null || true
-            rclone copy "output/images/$BOARD/ota/" "$dest/ota" \
-              --transfers 4 --stats-one-line --stats 30s
-          fi
+          # ota_files non-emptiness is asserted above; this upload is unconditional.
+          rclone mkdir "$dest/ota" 2>/dev/null || true
+          rclone copy "output/images/$BOARD/ota/" "$dest/ota" \
+            --transfers 4 --stats-one-line --stats 30s
 
       - name: Upload production loaders to this tag's tree
         # Loaders are board/security-scoped, so only cli/trixie/recovery uploads.
