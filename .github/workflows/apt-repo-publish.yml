@@ -588,8 +588,7 @@ jobs:
           path: public
 
   # ──────────────────────────────────────────────────
-  # Deploy APT to this repository's project Pages. Images publishing is a
-  # separate pipeline in armbian-build and must not share this destination.
+  # Deploy APT to this repo's Pages; images live on the release repo's site.
   # ──────────────────────────────────────────────────
   deploy-pages:
     needs: publish
