@@ -78,7 +78,9 @@ def references(slots):
 
 # Regex for the notes' kernel-repo row (plain or linked);
 # cell-boundary lookahead avoids fork-suffix truncation.
-KERNEL_REPO_RE = re.compile(r"^\| \[?([A-Za-z0-9_.-]+/linux-rockchip)\b", re.MULTILINE)
+KERNEL_REPO_RE = re.compile(
+    r"^\| \[?([A-Za-z0-9_.-]+/linux-rockchip)(?=[\]\|\s]|$)", re.MULTILINE
+)
 
 
 def kernel_repo_from_notes(body):
