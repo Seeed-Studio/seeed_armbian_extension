@@ -128,7 +128,18 @@ struct ieee80211_rx_ampdu *alloc_rx_ampdu(struct rwnx_hw *rwnx_hw,
 		del_timer_sync(&rx_ampdu->rx_reorder_timer);
 	}
 
-	memset(rx_ampdu, 0, sizeof(struct ieee80211_rx_ampdu));
+	/*
+	 * Everything but rxa_qframes_lock, which is initialised once, where
+	 * the struct is allocated: the rx path takes it on any TID, with or
+	 * without a block ack session.
+	 */
+	memset(rx_ampdu, 0,
+	       offsetof(struct ieee80211_rx_ampdu, rxa_qframes_lock));
+	memset((char *)rx_ampdu +
+		       offsetofend(struct ieee80211_rx_ampdu, rxa_qframes_lock),
+	       0,
+	       sizeof(*rx_ampdu) -
+		       offsetofend(struct ieee80211_rx_ampdu, rxa_qframes_lock));
 	rx_ampdu->rwnx_hw = rwnx_hw;
 	rx_ampdu->ni = sta;
 	rx_ampdu->tid = tid;
@@ -1271,10 +1282,6 @@ int ht_recv_action_ba_addba_request(struct rwnx_hw *rwnx_hw, uint8_t sta_idx,
 	rap = alloc_rx_ampdu(
 		rwnx_hw, sta_idx,
 		tid); //alloc_rx_ampdu() reuses existed rap or allocates a new one
-	if (rap != NULL) {
-		spin_lock_init(&rap->rxa_qframes_lock);
-	}
-
 	if (rap) {
 		spin_lock_bh(&rap->rxa_qframes_lock);
 		ampdu_rx_start(sta_idx, tid, rap, bufsiz, baseqctl);
