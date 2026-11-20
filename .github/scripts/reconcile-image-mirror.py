@@ -268,7 +268,7 @@ class Releases:
             return
         self.call("release", "delete", tag, "--yes", "--cleanup-tag")
 
-    def gc_stale_drafts(self, slots, releases, age_days=7):
+    def gc_stale_drafts(self, slots, releases, age_days=90):
         # GC owned asset-less drafts (no pointer) past the
         # rerun window, with their source tags.
         referenced = references(slots)
