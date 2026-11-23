@@ -47,6 +47,9 @@ runs:
         # Reachability gate only — the per-owner namespace
         # (armbian/<owner>/images) may not exist yet on a fresh mirror;
         # the build's uploads create it.
+        # Fail closed on an empty remote name: rclone would treat ":" as the local fs root and pass the gate.
+        [ -n "$REMOTE" ] \
+          || { echo "::error::setup-onedrive exposed an empty remote name."; exit 1; }
         if ! error="$(rclone lsf "${REMOTE}:" --dirs-only --contimeout 15s 2>&1 >/dev/null)"; then
           echo "::error::rclone cannot reach ${REMOTE}: — refresh the RCLONE_CONFIG token or check the remote."
           printf '%s\n' "$error" >&2
