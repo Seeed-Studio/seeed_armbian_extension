@@ -12,6 +12,19 @@ Covers the work against the initial import (merge base `9980aee`,
 
 ### Fixed
 
+- **Redundant env everywhere; no single-copy fallback.** Every shipped
+  U-Boot carries the redundant-env patch, so the probe/per-SoC gating and
+  `env-sanitize-single.bin` are gone: `fw_env.config` is always two
+  entries, the prefill always writes the `-r` dual copy. The old probe
+  guessed single-copy when no copy parsed; a both-bad rebuild then wrote
+  a blob the patched U-Boot could never read (default-env Rescue loop).
+- **One env-health predicate and rebuild mechanism on both flavors.**
+  The bad-CRC retry is `fw_setenv -f /etc/u-boot-initial-env` (the
+  libubootenv defenv base), same as A/B's `ab_env_initialize_default`;
+  the dd-sanitize machinery is deleted, `ab/env.sh` sources the common
+  `fwenv.sh`, and `armbian-ota-init-uboot` runs every boot so a mid-life
+  both-bad env self-heals on A/B too. The health check must read stderr:
+  `fw_printenv` exits 0 on a bad env once the initial env exists.
 - **Plain U-Boot no longer has any live raw-FIT entry in the env it
   produces.** Patch `#else`, the env prefill and
   `fw_env_write_routing_set` write the `*_boot_fit` keys as refusal
@@ -80,51 +93,22 @@ Covers the work against the initial import (merge base `9980aee`,
   alternate writes between the two copies: a `saveenv` power cut leaves
   the other copy intact, and both-copies-bad falls back to the compiled
   default env (Rescue) as before.
-  The redundant format is gated everywhere the U-Boot patch is not:
-  `uboot-env-prefill` writes the `-r` dual copy only for `BOOT_SOC`
-  `rk3576`/`rk3588` (single-copy boards keep the 4-byte-header blob;
-  rk3588-devkit keeps U-Boot in partition 1, so its raw area below
-  16 MiB holds only idbloader + env, and prefill's assert_layout fails
-  the build if a loader ever crosses the env boundary), and the
-  runtime `fw_env_write_config`/`armbian-ota-init-uboot` install the
-  second `fw_env.config` entry only when `fw_env_probe_redundant` proves
-  the disk's blob parses as redundant format — so devices still
-  running a pre-redundant U-Boot (e.g. after a rootfs-only OTA) stay
-  single-copy instead of diverging from their bootloader.
-  The both-copies-bad rebuild path is hardened: `fw_env_set_multi` no
-  longer deletes the script file before the sanitize retry consumes it,
-  and the sanitize stamps a build-generated minimal rescue env
-  (`env-sanitize-{redundant,single}.bin`, filtered from the same
-  compiled default env this image's U-Boot ships, staged into the
-  recovery initramfs as required files) instead of a valid-CRC empty
-  blob, so a power cut between sanitize and the rewrite boots into
-  Rescue instead of hanging autoboot at the prompt. The recovery build
-  also installs `/etc/u-boot-initial-env` into the recovery rootfs as
-  the native fw_setenv merge base for rootfs-side rebuilds.
-- **Env CRC self-heal works on trixie libubootenv.** `fw_env_crc_bad` now
+  The layout is unconditional: patch staged for every board, `-r` prefill
+  and two-entry `fw_env.config` always (assert_layout still fails the
+  build if a loader crosses the env boundary). A both-bad rebuild runs
+  `fw_setenv -f /etc/u-boot-initial-env -s script` — no dd, no reading
+  of the damaged copies; a power cut mid-retry leaves a bad CRC (U-Boot
+  falls back to the compiled default env) instead of a valid-empty env
+  that hangs autoboot.
+- **Env bad-CRC detection works on trixie libubootenv.** `fw_env_crc_bad`
   matches the trixie wording ("Cannot read environment") alongside the
-  classic "Bad CRC", and `fw_env_set_multi` sanitizes a bad-CRC blob (zero
-  + valid empty-env CRC) and retries once — trixie `fw_setenv` refuses to
-  write a bad-CRC env outright, which broke every rebuild path. Verified
-  on-device: corrupt -> detect -> repair+rewrite -> routing readback ->
-  CRC good.
-- **Partial env writes no longer sanitize the blob.** The
-  sanitize-and-retry in `fw_env_set_multi` is now gated on an explicit
-  `--full-set` contract (only `fw_env_write_routing_set` passes it): any
-  other caller failing `fw_setenv` fails the write with the blob
-  untouched. Before, a two-key arming write that hit an I/O error (or a
-  CRC mis-detection) would zero a good-CRC env and rewrite only
-  `ota_in_progress`/`ota_boot_next` — a valid-CRC blob without the
-  routing set, i.e. an endless Rescue loop no auto-rebuild can detect.
-- **Env sanitize is confirmed, loud, and never leaves a valid empty blob.**
-  `fw_env_set_multi` now captures the failed `fw_setenv` stderr and only
-  sanitizes on a confirmed bad-CRC refusal (or a fresh `fw_env_crc_bad`);
-  any other failure fails with the blob untouched, and the sanitize
-  itself logs a warning. `fw_env_crc_bad` also flags a CRC-valid but
-  empty blob (the sanitize/rewrite intermediate state U-Boot cannot
-  recover from), and a failed rewrite-after-sanitize poisons one CRC bit
-  so U-Boot falls back to the compiled default env instead of hanging
-  at the prompt.
+  classic "Bad CRC", and also flags a CRC-valid but empty blob — the
+  rewrite intermediate state U-Boot cannot recover from. Verified
+  on-device: corrupt -> detect -> rebuild -> routing readback -> CRC good.
+- **Partial env writes never trigger the -f rebuild.** The retry is gated
+  on the `--full-set` contract (only `fw_env_write_routing_set`): other
+  callers fail with the blob untouched, so a two-key arming write can no
+  longer leave a routing-less valid-CRC env (endless Rescue loop).
 - **Encrypted userdata resizes in one boot.** `armbian-resize-userdata`
   grows the LUKS mapping online with `cryptsetup resize --key-file
   /run/armbian-luks-passphrase` (the initramfs-stashed key; a bare call
@@ -195,14 +179,13 @@ Covers the work against the initial import (merge base `9980aee`,
     `CMD_BOOTI` on ARM64 so it cannot be Kconfig-disabled); the same patch
     compiles the default-env rescue dispatcher down to the signed
     recovery-FIT branch. Plain builds are unchanged.
-  - plain (non-`FIT_SIGNATURE`) builds keep every boot command: FIT
-    entry is env-gated in the persistent env only — the layout stamp
-    keeps the fwenv routing set and uboot-env-prefill on the ext4 fs
-    path, while the compiled default env is `CONFIG_FIT_SIGNATURE`-
-    gated at compile time and keeps its `|| run ota_rescue_boot_fit ||`
-    fallback on plain, so an ext4-branch failure can still reach
-    `boot_fit` automatically (the TEE gate is the final backstop).
-    Manual FIT boot is a plain env edit or a
+  - plain (non-`FIT_SIGNATURE`) builds keep every boot command, but no
+    plain env carries a live FIT entry: the persistent env (recovery
+    prefill and fwenv routing set) refuses it, and the compiled default
+    env's plain `#else` branch stubs `ota_rescue_boot_fit` and drops the
+    fit term from the dispatcher — an ext4-branch failure falls to
+    `distro_bootcmd`, never `boot_fit` (the TEE gate stays the final
+    backstop). Manual FIT boot is a plain env edit or a
     `boot_fit` at the prompt. The loader/disk mismatch backstops at the
     TEE gate (secure rootfs cannot complete boot under a plain loader).
     `BOOT_RAW_MODE` builds need a verifying U-Boot.
