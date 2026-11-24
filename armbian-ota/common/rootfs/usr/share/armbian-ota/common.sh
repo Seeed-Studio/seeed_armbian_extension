@@ -753,7 +753,7 @@ ota_get_security_part() {
         # p? covers both mmcblk0p1/nvme0n1p1 and sda1/vda1 (no p) naming.
         # blkid -o device prints /dev/-prefixed names; PKNAME is bare.
         dev="$(blkid -t PARTLABEL=security -o device 2>/dev/null |
-            grep -E "^/dev/${disk}p?[0-9]+$" | head -n1 || true)"
+            grep -E "^${disk}p?[0-9]+$" | head -n1 || true)"
     fi
     [ -z "${dev}" ] && dev="$(blkid -t PARTLABEL=security -o device 2>/dev/null | head -n1)"
     [ -z "${dev}" ] && dev="$(blkid -t LABEL=security -o device 2>/dev/null | head -n1)"
