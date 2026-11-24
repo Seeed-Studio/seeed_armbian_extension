@@ -22,8 +22,10 @@ ab_get_security_part() {
         [ -n "${disk}" ] && disk="/dev/${disk}"
     fi
     if [ -n "${disk}" ]; then
+        # p optional: sdX/vdX partitions carry no p suffix (sda1), while
+        # mmcblk/nvme do (mmcblk0p1, nvme0n1p1).
         dev="$(blkid -t PARTLABEL=security -o device 2>/dev/null |
-            grep -E "^${disk}p[0-9]+$" | head -n1 || true)"
+            grep -E "^${disk}p?[0-9]+$" | head -n1 || true)"
     fi
     [ -z "${dev}" ] && dev="$(blkid -t PARTLABEL=security -o device 2>/dev/null | head -n1)"
     if [ -z "${dev}" ]; then

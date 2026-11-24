@@ -104,7 +104,9 @@ ab_reformat_target_root() {
         [ -n "${residue_mnt}" ] || continue
         log_warn "Detaching stale target-root mount: ${residue_mnt}"
         residue_try=0
-        until umount "${residue_mnt}" 2>/dev/null; do
+        # -R also detaches nested chroot mounts a killed hook left under the
+        # target root; a plain umount stays EBUSY on them (never converges).
+        until umount -R "${residue_mnt}" 2>/dev/null; do
             residue_try=$((residue_try + 1))
             [ "${residue_try}" -ge 24 ] && {
                 log_error "Cannot detach stale mount ${residue_mnt} (orphan extract still writing after 120s?)"

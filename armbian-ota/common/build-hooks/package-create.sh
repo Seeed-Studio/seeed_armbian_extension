@@ -673,10 +673,21 @@ EOF
 
 # Wrapper: the staging dirs are removed on EVERY exit path (the impl's early
 # returns used to duplicate the rm six times and miss two failure paths).
+# Refuse to rm through a still-mounted boot_mount: an impl umount failure
+# leaves it live and rm -rf would gut the image's boot partition content.
 function ota_create_payload_archives() {
+    local ota_temp_dir="${1:-}"
+    if [[ -z "${ota_temp_dir}" ]]; then
+        display_alert "OTA package cleanup" "staging dir argument missing" "err"
+        return 1
+    fi
     ota_create_payload_archives_impl "$@"
     local rc=$?
-    rm -rf "${1}/boot_mount" "${1}/boot_stage"
+    if mountpoint -q "${ota_temp_dir}/boot_mount" 2>/dev/null; then
+        display_alert "OTA package cleanup" "boot partition still mounted at ${ota_temp_dir}/boot_mount; refusing to remove" "err"
+        return 1
+    fi
+    rm -rf "${ota_temp_dir}/boot_mount" "${ota_temp_dir}/boot_stage"
     return "${rc}"
 }
 
@@ -730,10 +741,14 @@ function ota_create_payload_archives_impl() {
         # Recovery preserves its rescuer on the target ext4 boot partition
         # while excluding it from the payload tar; measure it while the
         # partition is still mounted so the capacity stamp covers it.
+        # Measurement failure degrades like the sibling stamps (warn +
+        # omit), never aborts with the partition still mounted.
         if [[ -d "${boot_mount}/recovery" ]]; then
             rescue_bytes="$(du --apparent-size -sb "${boot_mount}/recovery" 2>/dev/null | tail -n1 | cut -f1)"
-            [[ "${rescue_bytes:-}" =~ ^[0-9]+$ ]] ||
-                exit_with_error "OTA capacity stamps" "cannot measure preserved recovery/ assets"
+            if [[ ! "${rescue_bytes:-}" =~ ^[0-9]+$ ]]; then
+                display_alert "OTA capacity stamps" "cannot measure preserved recovery/ assets; BOOT_BYTES stamp omits them" "warn"
+                rescue_bytes=""
+            fi
         fi
         if ! umount "${boot_mount}"; then
             return 1
