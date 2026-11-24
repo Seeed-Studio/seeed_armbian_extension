@@ -2,16 +2,16 @@
 
 Goal of this chapter: from a clean machine to a flashed, booting image.
 
-> **Skip the build?** CI-built images are published at
-> [Seeed-Studio/armbian-build releases](https://github.com/Seeed-Studio/armbian-build/releases).
-> Each release carries a download table per board (rk3576 / rk3588 /
-> rk3576 module devkits):
-> one row per distribution (Debian 13 / Ubuntu 26.04) × variant (Gnome /
-> Minimal CLI) × type (**AB** / **RECOVERY**), with an **IMAGE** link
-> (`.img.xz`, flash-ready GPT) and an **OTA** link (update payload for the
-> paired image) per row. The matching `.sha256` sidecar sits next to each
-> file on OneDrive — verify after downloading. The pre-release is recreated
-> on every CI run, so always take the newest one. Flash it with
+> **Skip the build?** CI-built binaries are published only in the
+> OneDrive mirror, surfaced through the **images page** (GitHub Pages of
+> [Seeed-Studio/armbian-build](https://github.com/Seeed-Studio/armbian-build);
+> the releases page carries version metadata only): each board
+> (rk3576 / rk3588 / rk3576 module devkits) has one row per distribution
+> (Debian 13 / Ubuntu 26.04) × variant (Gnome / Minimal CLI) × type
+> (**AB** / **RECOVERY**), with an **IMAGE** link (`.img.xz`, flash-ready
+> GPT) and an **OTA** link (update payload for the paired image). The
+> matching `.sha256` sidecar sits next to each file — verify after
+> downloading. Flash it with
 > [§5 Flash and boot](#5-flash-and-boot); read on only if you need to build
 > your own image.
 
