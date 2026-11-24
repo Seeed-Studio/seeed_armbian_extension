@@ -11,6 +11,9 @@ m-dev integration line since 1.2.0: OTA infrastructure themes (recovery-infra
 
 ### Fixed
 
+- **README passphrase claim was stale.** "Validated non-empty only"
+  predates the secure-storage hard gate: the build fails any passphrase
+  whose length is not exactly 64; the hex charset stays documentation-only.
 - **Redundant env everywhere; no single-copy fallback.** Every shipped
   U-Boot carries the redundant-env patch, so the probe/per-SoC gating and
   `env-sanitize-single.bin` are gone: `fw_env.config` is always two
@@ -147,6 +150,9 @@ m-dev integration line since 1.2.0: OTA infrastructure themes (recovery-infra
 
 ### Changed
 
+- **README leads with the official Armbian board pages.** The not-yet-live
+  images page and its releases are no longer advertised; the Documentation
+  index lists one entry per line.
 - **A/B env repair key spec is single-sourced.** The missing/sync key lists
   live in `ab/env-keys.sh`; the runtime repair loop and the build-time
   initial-env completeness check both source it, so a spec drift fails the
