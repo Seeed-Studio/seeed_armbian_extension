@@ -103,14 +103,16 @@ get_cmdline_boot_disk() {
 }
 
 # First blkid device match for KEY=value, restricted to partitions of $disk
-# (mmcblkNpX / nvmeXn1pY naming) when a disk is given, otherwise the plain
-# first line (legacy single-disk behavior).
+# (mmcblkNpX / nvmeXn1pY / sdXN naming) when a disk is given, otherwise the
+# plain first line (legacy single-disk behavior).
 first_match_on_disk() {
     local filter="$1" disk="$2"
 
     if [ -n "$disk" ]; then
+        # p optional: sdX/vdX partitions carry no p suffix (sda1), while
+        # mmcblk/nvme do (mmcblk0p1, nvme0n1p1).
         blkid -t "$filter" -o device 2>/dev/null |
-            grep -E "^${disk}p[0-9]+$" | first_line || true
+            grep -E "^${disk}p?[0-9]+$" | first_line || true
     else
         blkid -t "$filter" -o device 2>/dev/null | first_line || true
     fi
@@ -144,8 +146,9 @@ get_luks_device_by_partlabel() {
     for dev in $(blkid -t "PARTLABEL=$partlabel" -o device 2>/dev/null); do
         [ "$(blkid -s TYPE -o value "$dev" 2>/dev/null || true)" = "crypto_LUKS" ] || continue
         if [ -n "${anchor_disk}" ]; then
+            # p optional: sdX partitions carry no p suffix (sda1).
             case "${dev}" in
-                "${anchor_disk}"p[0-9]*) ;;
+                "${anchor_disk}"p[0-9]*|"${anchor_disk}"[0-9]*) ;;
                 *) continue ;;
             esac
         fi
