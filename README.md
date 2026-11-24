@@ -15,11 +15,13 @@ Armbian board-support extensions for Seeed reComputer RK3576/RK3588 devices:
 
 ## Prebuilt Images
 
-Download from **<https://github.com/Seeed-Studio/armbian-build/releases>**
-(newest release, rebuilt on every CI run): pick your board's row —
-Debian 13 / Ubuntu 26.04 × Gnome / Minimal (CLI) × AB / Recovery — then
-**IMAGE** to flash (`.img.xz` + `.sha256`) or **OTA** for the matching
-update package. Flashing steps: [docs/01-getting-started.md §5](docs/01-getting-started.md#5-flash-and-boot).
+Download from the **images page** — the GitHub Pages site of
+[Seeed-Studio/armbian-build](https://github.com/Seeed-Studio/armbian-build)
+(its [releases](https://github.com/Seeed-Studio/armbian-build/releases) are
+rebuilt on every CI run and carry version metadata only): pick your
+board's row — Debian 13 / Ubuntu 26.04 × Gnome / Minimal (CLI) × AB /
+Recovery — then **IMAGE** to flash (`.img.xz` + `.sha256`) or **OTA** for
+the matching update package. Flashing steps: [docs/01-getting-started.md §5](docs/01-getting-started.md#5-flash-and-boot).
 
 ## Quick Start
 

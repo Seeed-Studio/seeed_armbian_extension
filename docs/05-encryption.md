@@ -66,9 +66,13 @@ About password-derived keys:
   is silently decoded to garbage: after the first-boot migration the
   keybox returns a different key and the next unlock fails. Hex keys
   round-trip; base64 keys corrupt most of the stored bytes.
-- Neither the build ([`build.sh:153`](../scripts/build.sh#L153) — non-empty
-  only) nor the CI preflight (length only) validates the charset; this
-  constraint is enforced only by this document.
+- The build hard-fails a passphrase whose length is not exactly 64 at the
+  security-partition write
+  ([`auto-decryption.sh`](../rk_secure-disk-encryption/build-hooks/auto-decryption.sh));
+  the charset stays unchecked by the build
+  ([`build.sh:153`](../scripts/build.sh#L153) — non-empty) and the CI
+  preflight (length only), so this constraint is enforced only by this
+  document.
 
 64 hex chars, stored safely (password manager), once per product line is
 the sane default.
