@@ -114,7 +114,9 @@ function resolve_kernel_dtb_path() {
         fi
         # Cache-hit builds never compile the kernel, so the worktree has no
         # built DTBs; the linux-dtb deb installed in the rootfs does.
-        if [[ -f "${MOUNT:-}/boot/dtb/${board_dtb}" ]]; then
+        # MOUNT unset means pre-rootfs-mount stages: never fall back to the
+        # build host's own /boot/dtb.
+        if [[ -n "${MOUNT:-}" && -f "${MOUNT}/boot/dtb/${board_dtb}" ]]; then
             echo "${MOUNT}/boot/dtb/${board_dtb}"
             return 0
         fi
