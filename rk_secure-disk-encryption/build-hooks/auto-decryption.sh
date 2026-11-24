@@ -268,10 +268,10 @@ function rk_secure_storage_write_passphrase() {
     display_alert "secure-storage" "Writing CRYPTROOT_PASSPHRASE to security partition" "info"
     wait_for_disk_sync "before writing to security partition"
 
-    printf "%s" "${CRYPTROOT_PASSPHRASE}" | dd of="${sec_dev}" bs=1 count="${#CRYPTROOT_PASSPHRASE}" conv=fsync 2>/dev/null || {
-        display_alert "secure-storage" "Failed to write password to security partition" "err"
-        return 1
-    }
+    # Hard-fail like the readback gate below: a soft return only unwinds the
+    # hook and skips the readback, shipping an image whose key never landed.
+    printf "%s" "${CRYPTROOT_PASSPHRASE}" | dd of="${sec_dev}" bs=1 count="${#CRYPTROOT_PASSPHRASE}" conv=fsync 2>/dev/null ||
+        exit_with_error "secure-storage" "Failed to write password to security partition ${sec_dev}"
 
     sleep 1
     read_back="$(dd if="${sec_dev}" bs="${#CRYPTROOT_PASSPHRASE}" count=1 2>/dev/null)"

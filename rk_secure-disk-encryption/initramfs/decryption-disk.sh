@@ -2,6 +2,21 @@
 #
 # initramfs-tools init-top hook: unlock encrypted root from the security partition.
 
+PREREQ=""
+
+prereqs() {
+    echo "$PREREQ"
+}
+
+# mkinitramfs executes every script body on the build host to collect
+# prereqs; bail before any device probing happens there.
+case "$1" in
+    prereqs)
+        prereqs
+        exit 0
+        ;;
+esac
+
 export SECURITY_STORAGE=SECURITY
 
 BN_DIR="/dev/block/by-name"
@@ -219,7 +234,12 @@ else
     # loader-swap window while the passphrase is still stored in plaintext.
     if ! keybox_ready; then
         log_step "[Decryption-disk] Error: loader/OS mismatch: no OP-TEE/BL32 under this loader"
-        panic "Decryption-disk: this image requires a secure loader (BL32). Boot halted; rootfs stays locked."
+        # panic comes from /scripts/functions (initramfs init); guard for a
+        # context that lacks it and keep the halt unconditional either way.
+        if type panic >/dev/null 2>&1; then
+            panic "Decryption-disk: this image requires a secure loader (BL32). Boot halted; rootfs stays locked."
+        fi
+        exit 1
     fi
     log_step "[Decryption-disk] No SSKR marker, reading raw passphrase"
     dd if="$SECURITY_DEV" of="$SYSPW_FILE" bs=1 count=64 2>/dev/null || {

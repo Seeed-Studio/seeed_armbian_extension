@@ -439,14 +439,16 @@ function rk_secure_boot_create_resource_img() {
     # $1 = DTB path (default: resolved from the kernel worktree)
     # $2 = output path (default: kernel worktree resource.img)
     local kernel_src="${SRC}/cache/sources/${LINUXSOURCEDIR}"
-    local uboot_src="${SRC}/cache/sources/${BOOTSOURCEDIR}"
     local dtb_path="${1:-}"
     local output_resource_img="${2:-${kernel_src}/resource.img}"
     if [[ -z "${dtb_path}" ]]; then
         dtb_path="$(resolve_kernel_dtb_path "${kernel_src}")"
     fi
     display_alert "Creating resource.img" "Using DTB: ${dtb_path:-<not found>}" "info"
-    local resource_tool="${uboot_src}/tools/resource_tool"
+    # Cache-hit builds skip the u-boot unpack; the worktree fallback (the
+    # same resolution the FIT signing side uses) covers that.
+    rk_secure_boot_resolve_uboot_dir
+    local resource_tool="${RK_SECURE_BOOT_UBOOT_DIR}/tools/resource_tool"
 
     # Check necessary files and tools
     [[ -f "${dtb_path}" ]] ||
