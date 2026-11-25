@@ -237,6 +237,12 @@ ab_rollback() {
                 return 0
                 ;;
         esac
+        # mark_success writes env before the state file; a failed state write
+        # must not roll back a slot the env already confirmed.
+        if [ "$(ab_env_get boot_success)" = "${current_slot}" ]; then
+            log_info "Slot ${current_slot} already marked boot-success; nothing to rollback"
+            return 0
+        fi
         rollback_slot="$(ab_env_rebuild_slot "${current_slot}")"
         if [ "${rollback_slot}" = "${current_slot}" ]; then
             log_info "No A/B OTA in progress, nothing to rollback"
