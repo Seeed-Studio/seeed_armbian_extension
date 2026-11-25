@@ -4,7 +4,7 @@
 #
 # The SAME initramfs boots in two roles: normal (no marker; premount does
 # nothing -- the /run marker copy for the health service lives in
-# init-bottom/99-ota-normal-marker) and Rescue (armbian.ota_role=recovery,
+# init-bottom/zz-ota-normal-marker) and Rescue (armbian.ota_role=recovery,
 # set only by ota_rescue_boot). The Rescue role reconciles state + U-Boot env
 # after any power cut, then drives the campaign state machine:
 # prepared -> applied -> reboot (normal one-shot handoff), with retries and

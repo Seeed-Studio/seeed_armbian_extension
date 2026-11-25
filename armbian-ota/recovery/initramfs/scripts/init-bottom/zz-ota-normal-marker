@@ -1,13 +1,10 @@
 #!/bin/sh
 #
-# init-bottom hook (normal role): copy the rootfs payload marker into tmpfs
-# before switch_root so the health service can compare it against
-# CANDIDATE_ID without touching the overlay (v0.8 design section 4).
-#
-# Runs on EVERY normal boot -- after overlayroot has assembled /root, so the
-# marker read is lower-layer-visible (upper shadowing would be the correct,
-# newer identity anyway). Missing marker (fresh pre-v0.8 root) is not an
-# error here; the health service owns that judgement.
+# init-bottom hook (normal role, zz-: runs AFTER overlayroot): copy the
+# rootfs payload marker into tmpfs before switch_root so the health service
+# can compare it against CANDIDATE_ID without touching the overlay (v0.8
+# design section 4). Missing marker (fresh pre-v0.8 root) is not an error
+# here; the health service owns that judgement.
 # Also probe a dual-bad env (261124): Rescue needs a healthy env to
 # route; fail-open on every normal boot.
 
@@ -41,6 +38,12 @@ ota_env_boot_rebuild() {
     lower_src="$(awk '$2 == "/media/root-ro" { print $1; exit }' /proc/mounts 2>/dev/null | sed 's~\[.*\]~~')"
     [ -n "${lower_src}" ] || return 0
 
+    # Encrypted roots carry no LABEL=armbi_root; the fs rescue branch must
+    # point at the unlocked mapper, like 99-ota-apply / recovery_arm_env.
+    case "${lower_src}" in
+        /dev/mapper/*) OTA_RESCUE_ROOT_DEFAULT="/dev/mapper/armbian-root" ;;
+    esac
+
     raw_part="$(find_user_data__raw_partition_of "${lower_src}" 2>/dev/null)" || return 0
     [ -n "${raw_part}" ] || return 0
 
@@ -51,6 +54,17 @@ ota_env_boot_rebuild() {
 
     fw_env_crc_bad || return 0
 
+    # Mirror 99-ota-apply's state-aware CRC rebuild: a pending transaction
+    # re-arms for Rescue; only a quiet store may be rebuilt 0/normal.
+    status="$(grep -E '^STATUS=' /media/root-rw/ota-recovery/state/ota-state.env 2>/dev/null | tail -n1 | cut -d'=' -f2-)"
+    case "${status}" in
+        prepared|applied)
+            echo "armbian-ota: env unreadable; re-arming for Rescue (STATUS=${status})" >&2
+            fw_env_write_routing_set "1" "recovery" 2>/dev/null ||
+                echo "armbian-ota: WARNING env rebuild failed; continuing boot" >&2
+            return 0
+            ;;
+    esac
     echo "armbian-ota: env unreadable; rebuilding routing set on ${disk}" >&2
     if fw_env_write_routing_set "0" "normal" 2>/dev/null; then
         echo "armbian-ota: env rebuilt (full routing set, ota_in_progress=0)" >&2
