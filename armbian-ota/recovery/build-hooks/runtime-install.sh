@@ -79,7 +79,7 @@ function ota_install_recovery_initramfs() {
     local -a initramfs_file_list=(
         "hooks/99-copy-tools:etc/initramfs-tools/hooks/99-copy-tools:0755"
         "scripts/init-premount/99-ota-apply:etc/initramfs-tools/scripts/init-premount/99-ota-apply:0755"
-        "scripts/init-bottom/99-ota-normal-marker:etc/initramfs-tools/scripts/init-bottom/99-ota-normal-marker:0755"
+        "scripts/init-bottom/zz-ota-normal-marker:etc/initramfs-tools/scripts/init-bottom/zz-ota-normal-marker:0755"
         "recovery/log.sh:etc/initramfs-tools/ota/recovery/log.sh:0644"
         "recovery/device.sh:etc/initramfs-tools/ota/recovery/device.sh:0644"
         "recovery/payload.sh:etc/initramfs-tools/ota/recovery/payload.sh:0644"
