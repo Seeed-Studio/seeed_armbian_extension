@@ -105,28 +105,29 @@ done <<'EOF'
 /usr/sbin /usr/sbin/reboot /sbin/reboot
 EOF
 
-# fw_setenv/fw_printenv: stage explicitly (binaries + the private
-# libubootenv.so.0) instead of copy_exec -- copy_exec resolves dependencies
-# through ldd and silently dropped these two on the build host (observed:
-# every other binary stages fine, fw_* vanish without an error).
+# fw_setenv/fw_printenv via copy_exec: binary + full ldd closure, symlink
+# safe; the landing assert turns the historical silent drop into a loud fail.
 fw_env_staged=0
 for fw_bin in fw_setenv fw_printenv; do
     for pfx in /usr/bin /usr/sbin /sbin; do
-        if [ -x "${pfx}/${fw_bin}" ]; then
-            mkdir -p "${DESTDIR}${pfx}"
-            cp -p "${pfx}/${fw_bin}" "${DESTDIR}${pfx}/${fw_bin}"
-            fw_env_staged=$((fw_env_staged + 1))
-            break
-        fi
+        [ -x "${pfx}/${fw_bin}" ] || continue
+        copy_exec "${pfx}/${fw_bin}"
+        case "${pfx}" in
+            /sbin) fw_dest="/usr/sbin" ;;
+            *)     fw_dest="${pfx}" ;;
+        esac
+        # copy_exec no-ops (rc 0) when the destination exists; a silent
+        # drop of fw_* once shipped an env-dead initramfs.
+        [ -e "${DESTDIR}${fw_dest}/${fw_bin}" ] || {
+            echo "[99-copy-tools] ERROR: ${fw_bin} did not land in the initramfs" >&2
+            exit 1
+        }
+        fw_env_staged=$((fw_env_staged + 1))
+        break
     done
 done
 if [ "${fw_env_staged}" -eq 2 ]; then
-    for lib in /usr/lib/aarch64-linux-gnu/libubootenv.so.0* \
-               /lib/aarch64-linux-gnu/libubootenv.so.0*; do
-        [ -e "${lib}" ] || continue
-        mkdir -p "${DESTDIR}/usr/lib/aarch64-linux-gnu"
-        cp -p "${lib}" "${DESTDIR}/usr/lib/aarch64-linux-gnu/"
-    done
+    echo "[99-copy-tools] staged fw_setenv/fw_printenv + ldd closure" >&2
     # fw_setenv -f rebuild base; hard-fail if missing.
     if [ -f "/etc/u-boot-initial-env" ]; then
         mkdir -p "${DESTDIR}/etc"
@@ -135,7 +136,6 @@ if [ "${fw_env_staged}" -eq 2 ]; then
         echo "[99-copy-tools] missing required /etc/u-boot-initial-env; both-bad env rebuild would be dead" >&2
         exit 1
     fi
-    echo "[99-copy-tools] staged fw_setenv/fw_printenv + libubootenv" >&2
 else
     echo "[99-copy-tools] WARN: fw_setenv/fw_printenv not found in rootfs (${fw_env_staged}/2); OTA env writes will fail on device" >&2
 fi
