@@ -307,7 +307,8 @@ recovery_create_backup() {
     # 3) identity, then the boot checksum target (tar on ext4 layouts, the
     #    FIT itself on raw-FIT ones -- ota_payload_verify_full just runs
     #    sha256sum -c boot.sha256, which covers whichever file this names)
-    payload_id="$(ota_compute_payload_id "${work}/rootfs.tar.zst" "${boot_tree}")"
+    payload_id="$(ota_compute_payload_id "${work}/rootfs.tar.zst" "${boot_tree}")" ||
+        _backup_fail "Backup: payload identity computation failed"
     if [ -n "${raw_boot_dev}" ]; then
         (cd "${work}" && sha256sum boot.itb > boot.sha256)
     else
