@@ -167,7 +167,15 @@ find_user_data__raw_partition_of() {
     _find_user_data__sys_partition "$(basename "${dev}")" && return 0
 
     # Real /dev/mapper nodes have no sysfs block name; map via maj:min.
-    mm="$(ls -l "${dev}" 2>/dev/null | awk '{ gsub(",", "", $5); print $5 ":" $6 }')"
+    # Column-agnostic: busybox ls -l has no owner/group/date (maj, min land
+    # earlier), GNU ls -l puts them at $5/$6 -- scan for the "NNN," field.
+    mm="$(ls -l "${dev}" 2>/dev/null | awk '
+        {
+            for (i = 1; i <= NF; i++) {
+                if ($i ~ /^[0-9]+,[0-9]+$/) { gsub(",", ":", $i); print $i; exit }
+                if ($i ~ /^[0-9]+,$/) { gsub(",", "", $i); print $i ":" $(i + 1); exit }
+            }
+        }')"
     case "${mm}" in
         [0-9]*:[0-9]*)
             sys_base="$(basename "$(readlink -f "/sys/dev/block/${mm}" 2>/dev/null || true)" 2>/dev/null)"
