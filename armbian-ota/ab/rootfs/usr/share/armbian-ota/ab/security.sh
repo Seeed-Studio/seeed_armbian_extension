@@ -51,6 +51,7 @@ ab_try_keybox_roundtrip() {
     cp "${out_file}" "${OTA_SYSPW_FILE}" 2>/dev/null || true
     ota_start_tee_supplicant || {
         log_warn "Failed to start tee-supplicant in non-SSKR path; keep raw key fallback"
+        rm -f "${OTA_SYSPW_FILE}" 2>/dev/null || true
         return 0
     }
     /usr/bin/keybox_app write >/dev/null 2>&1 || true
