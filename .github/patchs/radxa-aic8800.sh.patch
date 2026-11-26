@@ -90,7 +90,7 @@ index 946650f..b7c52a9 100644
  function post_install_kernel_debs__install_aic8800_dkms_package() {
  
  	[[ "${INSTALL_HEADERS}" != "yes" ]] || [[ "${KERNEL_HAS_WORKING_HEADERS}" != "yes" ]] && return 0
-@@ -39,19 +118,12 @@ function post_install_kernel_debs__install_aic8800_dkms_package() {
+@@ -39,19 +120,12 @@ function post_install_kernel_debs__install_aic8800_dkms_package() {
  	# Local download cache on the host; the version is part of the filename, so it doubles as the cache key.
  	declare down_dir="${SRC}/cache/radxa-aic8800-debs"
  	mkdir -p "${down_dir}"
