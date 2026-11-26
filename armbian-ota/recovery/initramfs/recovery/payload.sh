@@ -162,22 +162,31 @@ ota_save_pre_ota_env() {
 
 # Capture the pre-OTA armbianEnv before a hook can reformat anything, so
 # ota_patch_config's overlays merge keeps working when the built-in apply
-# (which owns this capture) is replaced by hook_apply.
+# (which owns this capture) is replaced by hook_apply. The boot partition is
+# the authoritative live env (same priority as ota_apply_boot); rootfs /boot
+# is a stale fallback, so it is only captured when the boot partition yields
+# nothing -- otherwise "first capture wins" in staging would lock the stale
+# copy in as the merge source.
 ota_capture_pre_ota_env() {
-    if [ -f "${ROOT_MNT}/boot/armbianEnv.txt" ]; then
-        ota_save_pre_ota_env "${ROOT_MNT}/boot/armbianEnv.txt" &&
-            log "captured pre-OTA armbianEnv.txt from rootfs /boot"
-    fi
+    ota_preenv_captured=0
+
     if [ "${HAS_BOOT_PART:-0}" -eq 1 ]; then
         mkdir -p /mnt/preenv
         if mount -t ext4 -o ro "${BOOT_DEV}" /mnt/preenv 2>/dev/null; then
             if [ -f /mnt/preenv/armbianEnv.txt ]; then
-                ota_save_pre_ota_env /mnt/preenv/armbianEnv.txt &&
+                if ota_save_pre_ota_env /mnt/preenv/armbianEnv.txt; then
                     log "captured pre-OTA armbianEnv.txt from boot partition"
+                    ota_preenv_captured=1
+                fi
             fi
             umount /mnt/preenv 2>/dev/null || true
         fi
         rmdir /mnt/preenv 2>/dev/null || true
+    fi
+
+    if [ "${ota_preenv_captured}" -eq 0 ] && [ -f "${ROOT_MNT}/boot/armbianEnv.txt" ]; then
+        ota_save_pre_ota_env "${ROOT_MNT}/boot/armbianEnv.txt" &&
+            log "captured pre-OTA armbianEnv.txt from rootfs /boot (fallback)"
     fi
     return 0
 }
@@ -402,56 +411,58 @@ ota_apply_boot() {
     DO_BOOT_OTA=0
     [ "$HAS_BOOT_PART" -eq 1 ] && [ "$HAS_BOOT_TAR" -eq 1 ] && DO_BOOT_OTA=1
 
-    if [ "$DO_BOOT_OTA" -eq 0 ]; then
-        log "boot OTA disabled (no separate boot partition or no boot payload)"
-        return 0
-    fi
+    if [ "$DO_BOOT_OTA" -eq 1 ]; then
+        log "boot OTA enabled (separate boot partition + ${BOOT_TAR##*/} present)"
 
-    log "boot OTA enabled (separate boot partition + ${BOOT_TAR##*/} present)"
-
-    mkdir -p "${BOOT_MNT}"
-    log "mounting ${BOOT_DEV} -> ${BOOT_MNT} ..."
-    if ! mount -t ext4 -o rw "${BOOT_DEV}" "${BOOT_MNT}"; then
-        # Fatal for the same reason the extract gate below is: skipping
-        # the boot refresh commits "new rootfs + old boot", and the
-        # marker check would only surface it a boot cycle later.
-        log "ERROR: mount ${BOOT_DEV} failed"
-        BOOT_MNT=""
-        return 1
-    fi
-
-    # The separate boot partition holds the live env; capture it BEFORE
-    # the clear below deletes it (hard ordering: capture -> clear ->
-    # extract; inverting it loses the user's overlays, section 7 step 6).
-    if [ -f "${BOOT_MNT}/armbianEnv.txt" ]; then
-        if ota_save_pre_ota_env "${BOOT_MNT}/armbianEnv.txt"; then
-            log "captured pre-OTA armbianEnv.txt from boot partition"
-        else
-            log "WARN: failed to capture pre-OTA armbianEnv.txt from boot partition"
+        mkdir -p "${BOOT_MNT}"
+        log "mounting ${BOOT_DEV} -> ${BOOT_MNT} ..."
+        if ! mount -t ext4 -o rw "${BOOT_DEV}" "${BOOT_MNT}"; then
+            # Fatal for the same reason the extract gate below is: skipping
+            # the boot refresh commits "new rootfs + old boot", and the
+            # marker check would only surface it a boot cycle later.
+            log "ERROR: mount ${BOOT_DEV} failed"
+            BOOT_MNT=""
+            return 1
         fi
+
+        # The separate boot partition holds the live env; capture it BEFORE
+        # the clear below deletes it (hard ordering: capture -> clear ->
+        # extract; inverting it loses the user's overlays, section 7 step 6).
+        if [ -f "${BOOT_MNT}/armbianEnv.txt" ]; then
+            if ota_save_pre_ota_env "${BOOT_MNT}/armbianEnv.txt"; then
+                log "captured pre-OTA armbianEnv.txt from boot partition"
+            else
+                log "WARN: failed to capture pre-OTA armbianEnv.txt from boot partition"
+            fi
+        fi
+
+        # v0.8: wipe normal boot files (everything except recovery/ and
+        # lost+found/, hidden files included) so the partition content after
+        # OTA is exactly the package plus the rescuer. Never mkfs here --
+        # recovery/ lives in this filesystem.
+        ota_clear_normal_boot "${BOOT_MNT}" || {
+            log "ERROR: failed to clear normal boot files"
+            return 1
+        }
+
+        log "extracting ${BOOT_TAR} -> ${BOOT_MNT} ..."
+        if ! ota_run_step "extracting ${BOOT_TAR##*/} to ${BOOT_MNT}" extract_tar "${BOOT_TAR}" "${BOOT_MNT}" "boot"; then
+            log "ERROR: extract ${BOOT_TAR##*/} failed -- FATAL (legacy warn-and-continue removed: it produced 'new rootfs + old boot')"
+            return 1
+        fi
+
+        # v0.8: the package must prove its identity on the partition it just
+        # wrote; a mismatch means the extract was partial or wrong.
+        ota_verify_boot_marker "${BOOT_MNT}" || return 1
+
+        sync
+    else
+        log "boot OTA disabled (no separate boot partition or no boot payload)"
     fi
 
-    # v0.8: wipe normal boot files (everything except recovery/ and
-    # lost+found/, hidden files included) so the partition content after
-    # OTA is exactly the package plus the rescuer. Never mkfs here --
-    # recovery/ lives in this filesystem.
-    ota_clear_normal_boot "${BOOT_MNT}" || {
-        log "ERROR: failed to clear normal boot files"
-        return 1
-    }
-
-    log "extracting ${BOOT_TAR} -> ${BOOT_MNT} ..."
-    if ! ota_run_step "extracting ${BOOT_TAR##*/} to ${BOOT_MNT}" extract_tar "${BOOT_TAR}" "${BOOT_MNT}" "boot"; then
-        log "ERROR: extract ${BOOT_TAR##*/} failed -- FATAL (legacy warn-and-continue removed: it produced 'new rootfs + old boot')"
-        return 1
-    fi
-
-    # v0.8: the package must prove its identity on the partition it just
-    # wrote; a mismatch means the extract was partial or wrong.
-    ota_verify_boot_marker "${BOOT_MNT}" || return 1
-
-    sync
-
+    # Must stay OUTSIDE the DO_BOOT_OTA gate: itb-only payloads (secure
+    # recovery, boot_partition="") carry no boot.tar, yet the signed FIT
+    # still has to be dd-written or the campaign commits new rootfs + old FIT.
     if [ "${HAS_BOOT_ITB}" -eq 1 ]; then
         RAW_BOOT_DEV="$(find_raw_boot_dev || true)"
         if [ -z "${RAW_BOOT_DEV}" ]; then
