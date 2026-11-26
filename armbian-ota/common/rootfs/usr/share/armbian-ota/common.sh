@@ -191,6 +191,8 @@ ota_check_board_release() {
     # Snapshot only: armbian-release is package-owned and can drift.
     sys_board="$(ota_image_release_field BOARD)"
     sys_release="$(ota_image_release_field RELEASE)"
+    [ -n "${sys_board}" ] || log_warn "unstamped image: BOARD gate skipped"
+    [ -n "${sys_release}" ] || log_warn "unstamped image: RELEASE gate skipped"
 
     if [ -n "${sys_board}" ] && [ "${board}" != "${sys_board}" ]; then
         error_exit "OTA package BOARD mismatch: package=${board}, device=${sys_board}"
@@ -843,7 +845,7 @@ ota_get_security_passphrase_file() {
         rm -f "${OTA_SYSPW_FILE}" 2>/dev/null || true
         ota_run_keybox_app || { rm -f "${OTA_SYSPW_FILE}" 2>/dev/null || true; return 1; }
         [ -s "${OTA_SYSPW_FILE}" ] || { log_error "keybox_app produced no passphrase"; return 1; }
-        cp "${OTA_SYSPW_FILE}" "${out_file}" || return 1
+        cp "${OTA_SYSPW_FILE}" "${out_file}" || { rm -f "${OTA_SYSPW_FILE}" 2>/dev/null || true; return 1; }
         rm -f "${OTA_SYSPW_FILE}" 2>/dev/null || true
         return 0
     fi
