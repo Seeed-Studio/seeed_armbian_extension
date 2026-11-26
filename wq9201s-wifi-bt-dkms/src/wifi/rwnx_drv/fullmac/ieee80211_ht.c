@@ -108,6 +108,9 @@ struct ieee80211_rx_ampdu *alloc_rx_ampdu(struct rwnx_hw *rwnx_hw,
 {
 	struct rwnx_sta *sta = &rwnx_hw->sta_table[sta_idx];
 	struct ieee80211_rx_ampdu *rx_ampdu = sta->rx_ampdu[tid];
+	const size_t lock_start = offsetof(struct ieee80211_rx_ampdu,
+					   rxa_qframes_lock);
+	const size_t lock_end = lock_start + sizeof(rx_ampdu->rxa_qframes_lock);
 
 	WQ_DBG_MAC(DM_IEEE80211, DL_INF, sta,
 		   "alloc_rx_ampdu, sta_idx:%d, tid:%d\n", sta_idx, tid);
@@ -124,37 +127,32 @@ struct ieee80211_rx_ampdu *alloc_rx_ampdu(struct rwnx_hw *rwnx_hw,
     }
 */
 
-	/* Avoid of Timer expiring while clearing ieee80211_rx_ampdu. */
+	/* Stop RX and BAR before draining the old session timer. */
+	spin_lock_bh(&rx_ampdu->rxa_qframes_lock);
+	rx_ampdu->rxa_flags &= ~(IEEE80211_AGGR_XCHGPEND | IEEE80211_AGGR_RUNNING);
+	spin_unlock_bh(&rx_ampdu->rxa_qframes_lock);
+
 	if (NULL != rx_ampdu->rx_reorder_timer.function) {
 		del_timer_sync(&rx_ampdu->rx_reorder_timer);
 	}
 
-	/*
-	 * Under the lock, so the rx path never sees a half-cleared struct.
-	 * Frames still queued by a session that ended without a DELBA are
-	 * freed first; clearing rxa_m[] alone would leak them.
-	 *
-	 * Everything but rxa_qframes_lock is cleared: it is initialised once,
-	 * where the struct is allocated, because the rx path takes it on any
-	 * TID, with or without a block ack session.
-	 */
 	spin_lock_bh(&rx_ampdu->rxa_qframes_lock);
-	/* The rx path may have re-armed it since del_timer_sync() above. */
-	del_timer(&rx_ampdu->rx_reorder_timer);
+	/* Purge using the old BA window before clearing the slot pointers. */
 	ampdu_rx_purge(rx_ampdu);
-	memset(rx_ampdu, 0,
-	       offsetof(struct ieee80211_rx_ampdu, rxa_qframes_lock));
-	memset((char *)rx_ampdu +
-		       offsetofend(struct ieee80211_rx_ampdu, rxa_qframes_lock),
-	       0,
-	       sizeof(*rx_ampdu) -
-		       offsetofend(struct ieee80211_rx_ampdu, rxa_qframes_lock));
+
+	/*
+	 * Everything but rxa_qframes_lock, which is initialised once, where
+	 * the struct is allocated: the rx path takes it on any TID, with or
+	 * without a block ack session.
+	 */
+	memset(rx_ampdu, 0, lock_start);
+	memset((char *)rx_ampdu + lock_end, 0, sizeof(*rx_ampdu) - lock_end);
 	rx_ampdu->rwnx_hw = rwnx_hw;
 	rx_ampdu->ni = sta;
 	rx_ampdu->tid = tid;
-	spin_unlock_bh(&rx_ampdu->rxa_qframes_lock);
 	timer_setup(&rx_ampdu->rx_reorder_timer, ieee80211_rx_reorder_timeout,
 		    0);
+	spin_unlock_bh(&rx_ampdu->rxa_qframes_lock);
 	//INIT_WORK(&rx_ampdu->flush_task_work, ampdu_reorder_timeout_task);
 
 	return rx_ampdu;
