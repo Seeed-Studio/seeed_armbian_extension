@@ -464,6 +464,18 @@ ota_apply_boot() {
     # recovery, boot_partition="") carry no boot.tar, yet the signed FIT
     # still has to be dd-written or the campaign commits new rootfs + old FIT.
     if [ "${HAS_BOOT_ITB}" -eq 1 ]; then
+        # itb payload on an ext4-boot device would dd over that filesystem
+        # (boot.scr, armbianEnv, rescue set included); fail closed.
+        if [ "${HAS_BOOT_PART:-0}" -eq 1 ]; then
+            log "ERROR: boot.itb payload but ${BOOT_DEV} is an ext4 boot partition; refusing to overwrite the filesystem"
+            return 1
+        fi
+        # Same fail-closed rule as recovery_raw_boot_dev: no disk anchor,
+        # no dd target -- an unscoped PARTNAME=boot match can hit another disk.
+        if [ -z "$(fw_env_boot_disk || true)" ]; then
+            log "ERROR: boot.itb present but no boot-disk anchor (armbian.bootdev tokens); refusing unscoped PARTNAME=boot match"
+            return 1
+        fi
         RAW_BOOT_DEV="$(find_raw_boot_dev || true)"
         if [ -z "${RAW_BOOT_DEV}" ]; then
             log "ERROR: boot.itb present but no PARTNAME=boot raw boot partition found"
