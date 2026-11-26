@@ -1424,6 +1424,7 @@ static inline int rwnx_rx_sm_connect_ind(struct rwnx_hw *rwnx_hw,
 		cfg80211_roamed(dev, &info, GFP_ATOMIC);
 	} else {
 		struct wireless_dev *wdev = &rwnx_vif->wdev;
+		bool fw_connect_failed = ind->status_code != WLAN_STATUS_SUCCESS;
 
 #if LINUX_VERSION_CODE >= KERNEL_VERSION(6, 1, 0)
 		WQ_DBG(DM_GENERIC, DL_ERR,
@@ -1495,24 +1496,17 @@ static inline int rwnx_rx_sm_connect_ind(struct rwnx_hw *rwnx_hw,
 						req_ie, ind->assoc_req_ie_len,
 						rsp_ie, ind->assoc_rsp_ie_len,
 						ind->status_code, GFP_ATOMIC);
-			/*
-			 * A failed roam: rwnx_rx_sm_disconnect_ind() does not
-			 * report the old AP's disconnection when it is part of a
-			 * reassociation, so cfg80211 still holds that link. A
-			 * failed reassociation leaves cfg80211 believing it is
-			 * still connected, with ssid_len cleared, and from then
-			 * on every connect gets -EALREADY and every disconnect
-			 * is a no-op, until the module is reloaded. The firmware
-			 * has left the old AP: say so.
-			 */
+			/* ssid_len can turn a firmware success into a local failure. */
 #if LINUX_VERSION_CODE >= KERNEL_VERSION(6, 1, 0)
-			if (wdev->connected)
+			if (fw_connect_failed && wdev->connected)
 #else
-			if (wdev->current_bss)
+			if (fw_connect_failed && wdev->current_bss)
 #endif
-				cfg80211_disconnected(dev,
-						      WLAN_REASON_UNSPECIFIED,
-						      NULL, 0, true,
+				cfg80211_disconnected(dev, WLAN_REASON_UNSPECIFIED,
+						      NULL, 0,
+#if LINUX_VERSION_CODE >= KERNEL_VERSION(4, 2, 0)
+						      true,
+#endif
 						      GFP_ATOMIC);
 		}
 		rwnx_hw->connect_req_ts = 0;
