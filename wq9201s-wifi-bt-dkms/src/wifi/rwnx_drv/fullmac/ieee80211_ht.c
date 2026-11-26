@@ -107,6 +107,9 @@ struct ieee80211_rx_ampdu *alloc_rx_ampdu(struct rwnx_hw *rwnx_hw,
 {
 	struct rwnx_sta *sta = &rwnx_hw->sta_table[sta_idx];
 	struct ieee80211_rx_ampdu *rx_ampdu = sta->rx_ampdu[tid];
+	const size_t lock_start = offsetof(struct ieee80211_rx_ampdu,
+					   rxa_qframes_lock);
+	const size_t lock_end = lock_start + sizeof(rx_ampdu->rxa_qframes_lock);
 
 	WQ_DBG_MAC(DM_IEEE80211, DL_INF, sta,
 		   "alloc_rx_ampdu, sta_idx:%d, tid:%d\n", sta_idx, tid);
@@ -133,13 +136,8 @@ struct ieee80211_rx_ampdu *alloc_rx_ampdu(struct rwnx_hw *rwnx_hw,
 	 * the struct is allocated: the rx path takes it on any TID, with or
 	 * without a block ack session.
 	 */
-	memset(rx_ampdu, 0,
-	       offsetof(struct ieee80211_rx_ampdu, rxa_qframes_lock));
-	memset((char *)rx_ampdu +
-		       offsetofend(struct ieee80211_rx_ampdu, rxa_qframes_lock),
-	       0,
-	       sizeof(*rx_ampdu) -
-		       offsetofend(struct ieee80211_rx_ampdu, rxa_qframes_lock));
+	memset(rx_ampdu, 0, lock_start);
+	memset((char *)rx_ampdu + lock_end, 0, sizeof(*rx_ampdu) - lock_end);
 	rx_ampdu->rwnx_hw = rwnx_hw;
 	rx_ampdu->ni = sta;
 	rx_ampdu->tid = tid;
