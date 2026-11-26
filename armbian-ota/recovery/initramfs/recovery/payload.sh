@@ -216,6 +216,14 @@ write_raw_boot_itb() {
         return 1
     }
 
+    # A raw boot partition carries no filesystem; PARTNAME=boot also matches
+    # ext4 boot partitions (label-probe failure can route one here).
+    fs_type="$(blkid -s TYPE -o value "${target}" 2>/dev/null || true)"
+    [ -z "${fs_type}" ] || {
+        log "ERROR: refusing to write boot.itb to ${target}: filesystem present (${fs_type})"
+        return 1
+    }
+
     if ! ota_is_fit_image "${image}"; then
         log "ERROR: refusing to write invalid FIT image: ${image}"
         return 1
@@ -470,9 +478,10 @@ ota_apply_boot() {
             log "ERROR: boot.itb payload but ${BOOT_DEV} is an ext4 boot partition; refusing to overwrite the filesystem"
             return 1
         fi
-        # Same fail-closed rule as recovery_raw_boot_dev: no disk anchor,
-        # no dd target -- an unscoped PARTNAME=boot match can hit another disk.
-        if [ -z "$(fw_env_boot_disk || true)" ]; then
+        # Same fail-closed rule as recovery_raw_boot_dev: pass ROOT_DEV as
+        # the anchor so the parent-disk fallback applies, not cmdline tokens
+        # only -- no disk anchor, no dd target.
+        if [ -z "$(fw_env_boot_disk "${ROOT_DEV:-}" || true)" ]; then
             log "ERROR: boot.itb present but no boot-disk anchor (armbian.bootdev tokens); refusing unscoped PARTNAME=boot match"
             return 1
         fi

@@ -319,6 +319,13 @@ run_campaign() {
         campaign_fail "payload structure incomplete in ${OTA_DIR}"
     fi
 
+    # Layout pairing, same window: an itb-only payload on an ext4-boot
+    # device would only fail inside ota_apply_boot, after the rootfs is
+    # already overwritten and the retry ladder would rewrite it again.
+    if [ "${HAS_BOOT_ITB:-0}" -eq 1 ] && [ "${HAS_BOOT_PART:-0}" -eq 1 ]; then
+        campaign_fail "boot.itb payload but device exposes an ext4 boot partition"
+    fi
+
     state_set "ROOTFS_TOUCHED" "1" ||
         campaign_fail "cannot persist ROOTFS_TOUCHED"
 
