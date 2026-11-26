@@ -6,20 +6,24 @@
 # Deterministic tree hash: every file's sha256 in sorted path order; the
 # payload-id file itself is excluded so the ID never hashes its container.
 ota_payload_tree_hash() {
-    local tree_dir="$1"
+    local tree_dir="$1" listing
 
-    (
-        cd "${tree_dir}" || exit 1
+    # The substitution captures the pipeline's real exit status; without it
+    # a partial sha256sum pass would still digest into a "valid" ID.
+    listing="$(
+        cd "${tree_dir}" 2>/dev/null || exit 1
         find . -type f ! -name payload-id -print0 | LC_ALL=C sort -z |
-            xargs -0 -r sha256sum
-    ) | awk '{print $1"  "substr($2,3)}' | sha256sum | awk '{print $1}'
+            xargs -0 -r sha256sum 2>/dev/null || exit 1
+    )" || return 1
+    printf '%s\n' "${listing}" | awk '{print $1"  "substr($2,3)}' | sha256sum | awk '{print $1}'
 }
 
 ota_compute_payload_id() { # $1 = rootfs tar, $2 = boot staging tree
     local root_sha boot_sha
 
-    root_sha="$(sha256sum "$1" | awk '{print $1}')"
-    boot_sha="$(ota_payload_tree_hash "$2")"
+    root_sha="$(sha256sum "$1" 2>/dev/null)" || return 1
+    root_sha="${root_sha%% *}"
+    boot_sha="$(ota_payload_tree_hash "$2")" || return 1
 
     printf 'armbian-ota-payload-v2|R=%s|B=%s|HAS_ROOTFS=1\n' \
         "${root_sha}" "${boot_sha}" |

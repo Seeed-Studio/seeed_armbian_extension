@@ -711,7 +711,7 @@ function ota_create_payload_archives_impl() {
 
     # 3) identity: marker into the staged boot tree, then seal boot.tar
     payload_id="$(ota_compute_payload_id \
-        "${ota_temp_dir}/rootfs.${OTA_PAYLOAD_TAR_SUFFIX}" "${boot_stage}")"
+        "${ota_temp_dir}/rootfs.${OTA_PAYLOAD_TAR_SUFFIX}" "${boot_stage}")" || return 1
     printf '%s\n' "${payload_id}" > "${boot_stage}/payload-id"
     OTA_RECOVERY_PAYLOAD_ID="${payload_id}"
 
@@ -776,9 +776,9 @@ function ota_finalize_payload_package() {
     manifest_mode="$(ota_get_manifest_mode)"
     mkdir -p "${DEST}/images/${BOARD}/ota/"
 
-    ota_write_package_env "${ota_temp_dir}" "${manifest_mode}"
-    ota_stage_payload_env "${ota_temp_dir}" "${manifest_mode}"
-    ota_write_version_file "${ota_temp_dir}" "${base_image_name}"
+    ota_write_package_env "${ota_temp_dir}" "${manifest_mode}" || return 1
+    ota_stage_payload_env "${ota_temp_dir}" "${manifest_mode}" || return 1
+    ota_write_version_file "${ota_temp_dir}" "${base_image_name}" || return 1
 
     if ota_payload_encryption_enabled; then
         ota_write_signed_manifest "${ota_temp_dir}" "${OTA_PAYLOAD_ENC_IV}" "${manifest_mode}" || {
