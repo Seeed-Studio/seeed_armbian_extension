@@ -491,7 +491,7 @@ ota_apply_boot() {
             log "ERROR: boot.itb present but no boot-disk anchor (armbian.bootdev tokens); refusing unscoped PARTNAME=boot match"
             return 1
         fi
-        RAW_BOOT_DEV="$(find_raw_boot_dev || true)"
+        RAW_BOOT_DEV="$(find_raw_boot_dev "${ROOT_DEV:-}" || true)"
         if [ -z "${RAW_BOOT_DEV}" ]; then
             log "ERROR: boot.itb present but no PARTNAME=boot raw boot partition found"
             return 1

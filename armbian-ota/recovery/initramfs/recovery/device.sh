@@ -65,10 +65,12 @@ get_partname_for_dev() {
 
 find_raw_boot_dev() {
     local disk devname partname uevent
+    local anchor="${1:-}"
 
     # Cloned disks each carry a PARTNAME=boot partition; boot.itb must land on
     # the disk U-Boot booted from, so restrict the scan to its partitions.
-    disk="$(fw_env_boot_disk || true)"
+    # Anchor mirrors the ota_apply_boot guard (same disk resolution).
+    disk="$(fw_env_boot_disk "${anchor}" || true)"
     for uevent in /sys/class/block/*/uevent; do
         [ -f "${uevent}" ] || continue
         devname="$(sed -n 's/^DEVNAME=//p' "${uevent}" | head -n1)"
