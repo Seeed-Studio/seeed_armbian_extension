@@ -107,6 +107,9 @@ struct ieee80211_rx_ampdu *alloc_rx_ampdu(struct rwnx_hw *rwnx_hw,
 {
 	struct rwnx_sta *sta = &rwnx_hw->sta_table[sta_idx];
 	struct ieee80211_rx_ampdu *rx_ampdu = sta->rx_ampdu[tid];
+	const size_t lock_start = offsetof(struct ieee80211_rx_ampdu,
+					   rxa_qframes_lock);
+	const size_t lock_end = lock_start + sizeof(rx_ampdu->rxa_qframes_lock);
 
 	WQ_DBG_MAC(DM_IEEE80211, DL_INF, sta,
 		   "alloc_rx_ampdu, sta_idx:%d, tid:%d\n", sta_idx, tid);
@@ -128,7 +131,13 @@ struct ieee80211_rx_ampdu *alloc_rx_ampdu(struct rwnx_hw *rwnx_hw,
 		del_timer_sync(&rx_ampdu->rx_reorder_timer);
 	}
 
-	memset(rx_ampdu, 0, sizeof(struct ieee80211_rx_ampdu));
+	/*
+	 * Everything but rxa_qframes_lock, which is initialised once, where
+	 * the struct is allocated: the rx path takes it on any TID, with or
+	 * without a block ack session.
+	 */
+	memset(rx_ampdu, 0, lock_start);
+	memset((char *)rx_ampdu + lock_end, 0, sizeof(*rx_ampdu) - lock_end);
 	rx_ampdu->rwnx_hw = rwnx_hw;
 	rx_ampdu->ni = sta;
 	rx_ampdu->tid = tid;
@@ -1271,10 +1280,6 @@ int ht_recv_action_ba_addba_request(struct rwnx_hw *rwnx_hw, uint8_t sta_idx,
 	rap = alloc_rx_ampdu(
 		rwnx_hw, sta_idx,
 		tid); //alloc_rx_ampdu() reuses existed rap or allocates a new one
-	if (rap != NULL) {
-		spin_lock_init(&rap->rxa_qframes_lock);
-	}
-
 	if (rap) {
 		spin_lock_bh(&rap->rxa_qframes_lock);
 		ampdu_rx_start(sta_idx, tid, rap, bufsiz, baseqctl);

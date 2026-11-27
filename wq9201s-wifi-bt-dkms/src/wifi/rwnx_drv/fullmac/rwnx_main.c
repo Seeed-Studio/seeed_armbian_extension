@@ -7269,6 +7269,7 @@ static int wq_hw_vif_sta_table_init(struct rwnx_hw *rwnx_hw, u8 max_vif_nb,
 					__func__);
 				goto err_rx_ampdu;
 			}
+			spin_lock_init(&rx_ampdu->rxa_qframes_lock);
 			sta_table->rx_ampdu[j] = rx_ampdu;
 		}
 	}
