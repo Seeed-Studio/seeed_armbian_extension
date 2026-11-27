@@ -101,6 +101,7 @@ void ieee80211_ht_init(void)
 
 void ieee80211_rx_reorder_timeout(struct timer_list *callback_timer);
 void ampdu_reorder_timeout_task(struct work_struct *work);
+static void ampdu_rx_purge(struct ieee80211_rx_ampdu *rap);
 
 struct ieee80211_rx_ampdu *alloc_rx_ampdu(struct rwnx_hw *rwnx_hw,
 					  uint8_t sta_idx, uint8_t tid)
@@ -126,10 +127,18 @@ struct ieee80211_rx_ampdu *alloc_rx_ampdu(struct rwnx_hw *rwnx_hw,
     }
 */
 
-	/* Avoid of Timer expiring while clearing ieee80211_rx_ampdu. */
+	/* Stop RX and BAR before draining the old session timer. */
+	spin_lock_bh(&rx_ampdu->rxa_qframes_lock);
+	rx_ampdu->rxa_flags &= ~(IEEE80211_AGGR_XCHGPEND | IEEE80211_AGGR_RUNNING);
+	spin_unlock_bh(&rx_ampdu->rxa_qframes_lock);
+
 	if (NULL != rx_ampdu->rx_reorder_timer.function) {
 		del_timer_sync(&rx_ampdu->rx_reorder_timer);
 	}
+
+	spin_lock_bh(&rx_ampdu->rxa_qframes_lock);
+	/* Purge using the old BA window before clearing the slot pointers. */
+	ampdu_rx_purge(rx_ampdu);
 
 	/*
 	 * Everything but rxa_qframes_lock, which is initialised once, where
@@ -143,6 +152,7 @@ struct ieee80211_rx_ampdu *alloc_rx_ampdu(struct rwnx_hw *rwnx_hw,
 	rx_ampdu->tid = tid;
 	timer_setup(&rx_ampdu->rx_reorder_timer, ieee80211_rx_reorder_timeout,
 		    0);
+	spin_unlock_bh(&rx_ampdu->rxa_qframes_lock);
 	//INIT_WORK(&rx_ampdu->flush_task_work, ampdu_reorder_timeout_task);
 
 	return rx_ampdu;
