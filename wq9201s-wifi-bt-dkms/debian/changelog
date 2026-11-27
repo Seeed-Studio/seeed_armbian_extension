@@ -1,3 +1,9 @@
+wq9201s-wifi-bt-dkms (2.2.3.94-3) stable; urgency=medium
+
+  * fix roaming and rx reorder issues (#57, #58, #59)
+
+ -- Seeed Studio <techsupport@seeed.cc>  Fri, 27 Nov 2026 12:31:10 +0800
+
 wq9201s-wifi-bt-dkms (2.2.3.94-2) stable; urgency=medium
 
   * Add Linux 6.12 (vendor-next) support:
