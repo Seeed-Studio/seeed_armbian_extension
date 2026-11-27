@@ -79,12 +79,12 @@ recovery_check_space() {
     local backup_est=0
 
     if [ "${want_backup}" = "yes" ]; then
-        local lower_used boot_used raw_dev fit_sz
+        local lower_used boot_used raw_dev part_sz
         lower_used="$(du -sb /media/root-ro 2>/dev/null | awk '{print $1}')"
         raw_dev="$(recovery_raw_boot_dev || true)"
-        if [ -n "${raw_dev}" ] && fit_sz="$(ota_fit_size_bytes "${raw_dev}" 2>/dev/null)"; then
-            # raw-FIT layout: the backup stages exactly the FIT bytes
-            boot_used="${fit_sz}"
+        if [ -n "${raw_dev}" ] && part_sz="$(blockdev --getsize64 "${raw_dev}" 2>/dev/null)" && [ -n "${part_sz}" ]; then
+            # raw-FIT layout: the backup captures the whole raw boot partition
+            boot_used="${part_sz}"
         else
             boot_used="$(du -sb /boot 2>/dev/null | awk '{print $1}')"
         fi
@@ -221,7 +221,7 @@ recovery_create_backup() {
     local boot_mnt="/boot"
     local work="${OTA_STAGING_DIR}/backup.$$"
     local lower_dev board release kernel version root_tar boot_tree payload_id
-    local raw_boot_dev fit_size
+    local raw_boot_dev boot_part_bytes
 
     recovery_require_transaction_store
     [ -d "${lower_mnt}" ] || error_exit "Backup source ${lower_mnt} missing (overlayroot lower not mounted)"
@@ -274,19 +274,23 @@ recovery_create_backup() {
     mkdir -p "${boot_tree}"
     raw_boot_dev="$(recovery_raw_boot_dev || true)"
     if [ -n "${raw_boot_dev}" ]; then
-        fit_size="$(ota_fit_size_bytes "${raw_boot_dev}")" ||
+        # Whole-partition capture: external-data FITs carry their blobs past
+        # the FDT totalsize, so a header-sized read stages a truncated FIT.
+        [ "$(dd if="${raw_boot_dev}" bs=4 count=1 status=none |
+                od -An -tx1 | tr -d ' \n')" = "d00dfeed" ] ||
             _backup_fail "Backup: no FIT header on raw boot partition ${raw_boot_dev}"
-        [ "${fit_size}" -gt 0 ] ||
-            _backup_fail "Backup: zero FIT totalsize on ${raw_boot_dev} (corrupt header)"
-        log_info "Reading FIT (${fit_size} bytes) from ${raw_boot_dev} -> boot.itb"
-        dd if="${raw_boot_dev}" of="${work}/boot.itb" \
-            bs=512 count=$(( (fit_size + 511) / 512 )) status=none ||
-            _backup_fail "Backup: failed to read FIT from ${raw_boot_dev}"
-        truncate -s "${fit_size}" "${work}/boot.itb" ||
-            _backup_fail "Backup: failed to trim boot.itb to FIT size"
+        boot_part_bytes="$(blockdev --getsize64 "${raw_boot_dev}" 2>/dev/null)" ||
+            _backup_fail "Backup: cannot size raw boot partition ${raw_boot_dev}"
+        [ "${boot_part_bytes}" -gt 0 ] ||
+            _backup_fail "Backup: zero-sized raw boot partition ${raw_boot_dev}"
+        log_info "Capturing raw boot partition (${boot_part_bytes} bytes) from ${raw_boot_dev} -> boot.itb"
+        dd if="${raw_boot_dev}" of="${work}/boot.itb" bs=4M iflag=fullblock status=none ||
+            _backup_fail "Backup: failed to read raw boot partition ${raw_boot_dev}"
+        [ "$(wc -c < "${work}/boot.itb")" -eq "${boot_part_bytes}" ] ||
+            _backup_fail "Backup: boot.itb short read on ${raw_boot_dev}"
         # Read-back: boot.sha256 is self-consistent, so without this a
         # corrupted dd read would publish a "verified" bad backup.
-        ota_fit_readback_verify "${raw_boot_dev}" "${fit_size}" \
+        ota_fit_readback_verify "${raw_boot_dev}" "${boot_part_bytes}" \
             "$(sha256sum "${work}/boot.itb" | awk '{print $1}')" "${OTA_STAGING_DIR}" ||
             _backup_fail "Backup: FIT readback does not match ${raw_boot_dev}"
         ln "${work}/boot.itb" "${boot_tree}/boot.itb" ||

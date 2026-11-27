@@ -712,17 +712,6 @@ ota_raw_boot_part() {
     return 1
 }
 
-# Exact FIT size from the FDT header (magic + 4-byte big-endian totalsize);
-# reading the whole partition would stage stale padding into backups.
-ota_fit_size_bytes() {
-    local dev="$1" header
-
-    header="$(dd if="${dev}" bs=8 count=1 2>/dev/null | od -An -tx1 | tr -d ' \n')"
-    [ "${#header}" -ge 16 ] || return 1
-    [ "${header:0:8}" = "d00dfeed" ] || return 1
-    printf '%d' "0x${header:8:8}" 2>/dev/null || return 1
-}
-
 # ===== Encrypted payload: signature verification + decryption =====
 
 # Read a key=value field from the payload manifest.
