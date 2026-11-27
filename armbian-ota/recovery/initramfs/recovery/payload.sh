@@ -266,8 +266,14 @@ write_raw_boot_itb() {
 # Needs a separate boot partition. Returns 0 rebuilt, 1 fallback, 2 fatal.
 ota_reformat_rootfs() {
     if [ "${HAS_BOOT_PART:-0}" -ne 1 ]; then
-        log "mkfs path skipped: no separate boot partition, /boot stays on rootfs"
-        return 1
+        # raw-FIT layouts boot from the raw boot partition, so the rootfs
+        # /boot carries no boot chain and mkfs is safe.
+        boot_mode="$(cat "${ROOT_MNT}/usr/share/armbian-ota/boot-mode" 2>/dev/null || true)"
+        if [ "${boot_mode}" != "raw-fit" ]; then
+            log "mkfs path skipped: no separate boot partition, /boot stays on rootfs"
+            return 1
+        fi
+        log "raw-fit layout: rootfs /boot not boot-critical, mkfs allowed"
     fi
 
     if ! command -v mkfs.ext4 >/dev/null 2>&1; then
