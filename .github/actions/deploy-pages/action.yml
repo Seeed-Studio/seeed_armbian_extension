@@ -95,6 +95,7 @@ runs:
         python3 .github/scripts/deploy-images-page.py data
 
         cp .github/assets/images-page.template.html images.html
+        cp .github/assets/dl-page.template.html dl-page.html
 
         # Tripwires: the template must carry no placeholders, and the
         # page must actually load the data bundle.
@@ -104,8 +105,14 @@ runs:
         fi
         grep -q 'fetch("data.json"' images.html \
           || { echo "::error::page does not fetch data.json — template mismatch?"; exit 1; }
+        if grep -q '\$PAGE_' dl-page.html; then
+          echo "::error::dl template still holds \$PAGE_ placeholders"
+          exit 1
+        fi
+        grep -q 'fetch(' dl-page.html \
+          || { echo "::error::dl page does not load data — template mismatch?"; exit 1; }
         python3 -c 'import json; d = json.load(open("data.json")); assert d["repo"] and "slots" in d and "manifests" in d and "releases" in d'
-        echo "=== index.html $(wc -c < images.html) bytes + data.json $(wc -c < data.json) bytes ==="
+        echo "=== index.html $(wc -c < images.html) bytes + data.json $(wc -c < data.json) bytes + dl/index.html $(wc -c < dl-page.html) bytes ==="
 
     - name: Resolve the gh-pages parent
       if: steps.gate.outputs.skip != 'true'
@@ -180,11 +187,13 @@ runs:
             print(f"blob {path}: {sha}")
             return sha
 
-        # Root = shell + data bundle; no base_tree, so the push replaces the whole tree.
+        # Root = shell + data bundle + dl/ page; no base_tree, so the push replaces the whole tree.
         entries = [{"path": "index.html", "mode": "100644", "type": "blob",
                     "sha": put_blob("images.html", "index.html")},
                    {"path": "data.json", "mode": "100644", "type": "blob",
-                    "sha": put_blob("data.json", "data.json")}]
+                    "sha": put_blob("data.json", "data.json")},
+                   {"path": "dl/index.html", "mode": "100644", "type": "blob",
+                    "sha": put_blob("dl-page.html", "dl/index.html")}]
 
         tree = gh("--method", "POST", f"repos/{repo}/git/trees", "--input", "-",
                   "--jq", ".sha",

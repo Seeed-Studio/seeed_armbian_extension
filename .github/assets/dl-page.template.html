@@ -1,0 +1,1349 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Armbian Image Downloader</title>
+<style>
+:root{--cfg-input-w:640px;
+        
+  --bg:#f4f5f7; --card:#fff; --ink:#1c2333; --muted:#6b7280; --line:#e5e7eb;
+  --accent:#e0662a; --accent-soft:rgba(224,102,42,.10);
+  --chip:#eef1f6; --mono:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;
+}
+*{box-sizing:border-box}
+body{margin:0;background:var(--bg);color:var(--ink);
+     font:14px/1.5 system-ui,-apple-system,"Segoe UI","Noto Sans CJK SC",sans-serif}
+button{font:inherit}
+
+/* ---- 顶栏 ---- */
+#topbar{position:sticky;top:0;z-index:20;background:#171d2b;color:#fff;
+        display:flex;align-items:center;gap:16px;padding:10px 20px;flex-wrap:wrap}
+#topbar .brand{font-weight:700;font-size:16px;white-space:nowrap}
+
+main{max-width:940px;margin:0 auto;padding:16px 20px 40px}
+section.card{background:var(--card);border:1px solid var(--line);border-radius:12px;
+             padding:16px 18px;margin-bottom:16px;box-shadow:0 1px 2px rgba(16,24,40,.04)}
+h2{display:flex;align-items:center;gap:10px;font-size:15px;margin:0 0 14px}
+h2 .step{width:22px;height:22px;border-radius:50%;background:var(--accent);color:#fff;
+         font-style:normal;font-size:12px;font-weight:700;display:grid;place-items:center;flex:none}
+h2 .sub{color:var(--muted);font-weight:400;font-size:12px}
+h2 .spacer{margin-left:auto}
+
+/* ---- 数据源 ---- */
+.cfg-row{display:flex;align-items:center;gap:6px;margin-top:9px}
+#btn-aria2-push{display:none}
+body.aria2-on #btn-aria2-push{display:inline-block}
+.cfg-k{width:58px;flex:none;font-size:13px;font-weight:600}
+.cfg-v{display:flex;align-items:center;gap:6px;min-width:0;flex:1;flex-wrap:wrap}
+.cfg-time{font-size:12px;color:var(--muted)}
+.cfg-sep{border-top:1px solid var(--line);padding-top:10px;margin-top:10px}
+.cfg-ind{padding-left:64px}
+/* 复用输入框组件: 所有 Setup editbox 同宽同风格 */
+.cfg-input{font-family:var(--mono);font-size:12px;border:1px solid var(--line);
+           border-radius:8px;padding:8px 10px;color:var(--ink);width:var(--cfg-input-w);box-sizing:border-box}
+.cfg-input:focus{outline:2px solid var(--accent-soft);border-color:var(--accent)}
+.cfg-input.fill{width:auto;flex:1;min-width:200px} /* 单框行填满, 与 Aria2 双框等总宽 */
+.cfg-ind input:not(.cfg-input){flex:1;min-width:200px;font-size:12px;border:1px solid var(--line);
+               border-radius:8px;padding:8px 10px;color:var(--ink)}
+.cfg-ind input:focus{outline:2px solid var(--accent-soft);border-color:var(--accent)}
+.cfg-ind .btn{padding:8px 14px;white-space:nowrap;flex:none}
+.stat{font-size:11px;font-weight:600;padding:3px 10px;border-radius:6px;
+       border:1px solid transparent;white-space:nowrap;line-height:1.3}
+.stat.ok{color:#2c7a1f;background:#eef7e6;border-color:#c8dfa8}
+.stat.err{color:#c0392b;background:#fdecec;border-color:#f0c4bd}
+.conc span{font-size:12px;color:var(--ink)} /* 与 All/None 按钮文字风格一致 */
+#dl-conc{border:1px solid var(--line);border-radius:8px;padding:7px 6px;font-size:12px;
+         background:#fff;color:var(--ink);cursor:pointer}
+
+/* ---- slot 单选 ---- */
+.pills{display:grid;grid-template-columns:repeat(3,1fr);gap:10px}
+.pill{border:1.5px solid var(--line);border-radius:10px;padding:10px 14px;cursor:pointer;
+      background:#fff;display:flex;gap:10px;align-items:flex-start}
+.pill:hover{border-color:#c8cdd6}
+.pill:has(input:checked){border-color:var(--accent);background:#fff8f3;
+                         box-shadow:0 0 0 3px var(--accent-soft)}
+.pill input{accent-color:var(--accent);margin-top:3px;flex:none}
+.pill .t{font-weight:600}
+.pill .m{color:var(--muted);font-size:12px;margin-top:2px;word-break:break-all}
+.slottag{display:inline-block;padding:1px 11px;border-radius:999px;font-size:12px;
+            font-weight:600;border:1px solid;line-height:1.7;margin-right:2px}
+.slottag.st{color:#8dc215;border-color:rgba(141,194,21,.55);background:rgba(141,194,21,.12)}
+.slottag.pre{color:#ffbc44;border-color:rgba(255,188,68,.55);background:rgba(255,188,68,.12)}
+.slottag.prev{color:#b9cdd4;border-color:rgba(185,205,212,.45);background:rgba(185,205,212,.08)}
+.slottagid{font-family:var(--mono);font-weight:600;font-size:13px;color:var(--ink);margin-left:6px}
+
+/* ---- board 单选卡片 ---- */
+.cards{display:grid;grid-template-columns:repeat(3,1fr);gap:10px}
+.cardpick{border:1.5px solid var(--line);border-radius:10px;padding:14px;cursor:pointer;
+          background:#fff;display:flex;gap:10px;align-items:flex-start}
+.cardpick:hover{border-color:#c8cdd6}
+.cardpick:has(input:checked){border-color:var(--accent);background:#fff8f3;
+                             box-shadow:0 0 0 3px var(--accent-soft)}
+.cardpick input{accent-color:var(--accent);margin-top:3px;flex:none}
+.cardpick .t{font-family:var(--mono);font-weight:600;font-size:13px;word-break:break-all}
+.cardpick .m{color:var(--muted);font-size:12px;margin-top:2px}
+
+/* ---- 镜像类型多选 ---- */
+.btn{border:1px solid var(--line);background:#fff;border-radius:8px;padding:6px 12px;
+     cursor:pointer;font-size:12px;color:var(--ink)}
+.btn:hover{border-color:#c8cdd6;background:#fafbfc}
+.btn.primary{background:var(--accent);border-color:var(--accent);color:#fff}
+.btn.primary:hover{background:#c9551d}
+.btn.green{background:#16a34a;border-color:#16a34a;color:#fff}
+.btn.green:hover{background:#15803d}
+#btn-download,#btn-aria2-push{min-width:118px}
+.btn:disabled{opacity:.45;cursor:not-allowed}
+/* ---- 镜像类型多选: secgroup → modebox 层级 (对齐官方下载页) ---- */
+.secgroup{border:1px solid rgba(141,194,21,.45);border-radius:12px;padding:12px 12px 14px;
+          position:relative;background:rgba(141,194,21,.03);margin-top:16px}
+.secgroup:first-child{margin-top:6px}
+.ghead{display:flex;align-items:center;gap:8px;padding:0 2px 10px;cursor:pointer;
+       user-select:none;font-size:12px;color:var(--muted)}
+.secgroup .glabel{font-size:11px;font-weight:600;letter-spacing:1px;padding:0 8px;
+                  border-radius:4px;background:#8dc215;color:#fff}
+.secgroup.secure{border-color:rgba(217,58,58,.35);background:rgba(217,58,58,.025)}
+.secgroup.secure .glabel{background:#c0392b}
+.modeboxes{display:grid;grid-template-columns:1fr 1fr .78fr;gap:10px;align-items:stretch}
+@media (max-width:900px){.modeboxes,.pills,.cards{grid-template-columns:1fr}}
+.modebox{border:1px solid #c5d2da;border-radius:10px;padding:0 10px 6px}
+.modebox h3{font-size:13px;font-weight:700;color:#03353f;margin:0 -10px 8px;
+             padding:8px 14px 7px;background:rgba(3,53,63,.05);border-bottom:1px solid #c5d2da;
+             border-radius:9px 9px 0 0;letter-spacing:.3px;display:flex;align-items:center;gap:8px}
+.secgroup .modebox h3{background:rgba(141,194,21,.10);border-bottom-color:rgba(141,194,21,.30)}
+.secgroup.secure .modebox h3{background:rgba(217,58,58,.07);border-bottom-color:rgba(217,58,58,.25)}
+.modebox h3{cursor:pointer;user-select:none}
+.modebox h3:hover{filter:brightness(.97)}
+.modebox h3 .gc{margin-left:auto;font-weight:400;color:#7b8fa0;font-size:12px}
+.boxsub{color:#9db0ba;font-weight:400;font-size:12px}
+.modebox.loader h3{background:rgba(14,165,183,.16);border-bottom-color:rgba(14,165,183,.40)}
+.secgroup.secure .modebox.loader h3{background:rgba(217,58,58,.16);border-bottom-color:rgba(217,58,58,.45)}
+.lrows{display:flex;flex-direction:column;gap:4px;padding:8px 0}
+.row{display:flex;flex-direction:column;gap:7px;padding:9px 0}
+.row:not(:last-child){border-bottom:1px solid #d7dee5}
+.row-head{display:flex;align-items:baseline;gap:6px}
+.row-title{font-weight:700;font-size:14px;color:#51707c}
+.row-meta{color:#7b8fa0;font-size:12.5px}
+.row-links{display:flex;flex-wrap:wrap;align-items:center}
+.grp{display:inline-flex;align-items:center;gap:8px}
+.grp+.grp{margin-left:10px;padding-left:12px;border-left:1px solid #d7dee5}
+.trow{display:inline-flex;gap:8px;align-items:center;padding:4px 8px;border-radius:8px;cursor:pointer}
+.trow:hover{background:var(--chip)}
+input[type=checkbox],input[type=radio]{accent-color:var(--accent);width:16px;height:16px;flex:none}
+.cnt{color:var(--muted);font-size:12px;white-space:nowrap}
+
+/* ---- 文件清单 ---- */
+#file-filter{border:1px solid var(--line);border-radius:8px;padding:7px 10px;font-size:13px;
+             width:240px;max-width:100%}
+#file-filter:focus{outline:2px solid var(--accent-soft);border-color:var(--accent)}
+#files-wrap{overflow:auto;max-height:460px;border:1px solid var(--line);border-radius:10px}
+table{border-collapse:collapse;width:100%;background:#fff}
+th{position:sticky;top:0;background:var(--chip);text-align:left;font-size:12px;color:var(--muted);
+   padding:8px 12px;border-bottom:1px solid var(--line);z-index:1}
+td{padding:7px 12px;border-bottom:1px solid #f0f1f4;vertical-align:top}
+td.path{font-family:var(--mono);font-size:12px;word-break:break-all;max-width:560px}
+td.path a{color:var(--accent);text-decoration:none}
+td.path a:hover{text-decoration:underline}
+td.size{white-space:nowrap;color:var(--muted);font-size:12px;text-align:right}
+td.act{white-space:nowrap;text-align:right}
+td.act button{border:none;background:none;cursor:pointer;color:var(--muted);font-size:13px;padding:2px 6px;border-radius:6px}
+td.act button:hover{background:var(--chip);color:var(--ink)}
+.empty{padding:28px;text-align:center;color:var(--muted)}
+
+/* ---- 底部操作栏 / 提示 ---- */
+.sel-actions{display:flex;align-items:center;gap:8px;flex-wrap:wrap;margin-top:12px;
+               border-top:1px solid var(--line);padding-top:12px}
+.sel-actions .sum{margin-right:auto;color:var(--muted);font-size:13px}
+.sel-actions .sum b{color:var(--ink)}
+#toast{position:fixed;left:50%;bottom:76px;transform:translateX(-50%);z-index:30;
+       background:#171d2b;color:#fff;border-radius:99px;padding:9px 18px;font-size:13px;
+       box-shadow:0 6px 20px rgba(0,0,0,.25);max-width:90vw}
+#banner{background:#fef2f2;border:1px solid #fecaca;color:#991b1b;border-radius:10px;
+        padding:12px 14px;margin-bottom:16px}
+/* ---- Downloads 任务列表 ---- */
+#dl-tasks{max-height:340px;overflow:auto}
+.dl-empty{padding:18px;text-align:center;color:var(--muted);font-size:13px}
+.task{padding:8px 2px 9px}
+.task + .task{border-top:1px solid var(--line)}
+.t-head{display:flex;align-items:center;gap:8px;min-width:0}
+.t-icon{flex:none;width:18px;text-align:center;font-size:13px;color:var(--muted)}
+.task.done .t-icon{color:#1a9e4b;font-weight:700}
+.t-icon:has(svg){color:#26a269} /* aria2 logo 官方绿 */
+.t-name{flex:1;min-width:0;font-family:var(--mono);font-size:11px;word-break:break-all;
+        overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.t-stat{flex:none;color:var(--muted);font-size:11px;white-space:nowrap}
+.t-x{border:none;background:none;cursor:pointer;color:var(--muted);font-size:12px;
+     padding:2px 5px;border-radius:4px;flex:none}
+.t-x:hover{color:#c0392b;background:#fdecec}
+.t-bar{height:5px;background:var(--chip);border-radius:3px;overflow:hidden;margin-top:5px}
+.t-bar i{display:block;height:100%;width:0;background:var(--accent);border-radius:3px}
+.task.done .t-bar i{background:#1a9e4b}
+.loading{padding:40px;text-align:center;color:var(--muted)}
+</style>
+</head>
+<body>
+
+<header id="topbar">
+  <span class="brand">📦 Armbian Image Downloader</span>
+</header>
+
+<main>
+  <div id="banner" hidden><span id="banner-text"></span></div>
+
+  <section class="card">
+    <h2><i class="step">1</i>Setup</h2>
+    <div class="cfg-row"><span class="cfg-k">Download</span>
+      <span class="cfg-v"><span class="cfg-time" id="dl-root-stat"></span></span>
+    </div>
+    <div class="cfg-row cfg-ind">
+      <input id="dl-root" class="cfg-input fill" type="text" spellcheck="false" placeholder="~/Downloads">
+    </div>
+    <div class="cfg-row cfg-sep"><span class="cfg-k">Source</span>
+      <span class="cfg-v"><span class="stat err" id="src-stat">Failed</span>
+        <span class="cfg-time" id="refresh-time"></span></span>
+    </div>
+    <div class="cfg-row cfg-ind">
+      <input id="src-input" class="cfg-input fill" type="url" spellcheck="false" placeholder="data.json URL">
+    </div>
+    <div class="cfg-row cfg-sep" id="row-aria2"><span class="cfg-k">Aria2</span>
+      <span class="cfg-v"><span class="stat err" id="aria2-stat">Disconnected</span></span>
+    </div>
+    <div class="cfg-row cfg-ind" id="row-aria2-in">
+      <input id="aria2-url" class="cfg-input" style="width:auto;flex:2" type="url" spellcheck="false" placeholder="http://127.0.0.1:6800/jsonrpc">
+      <input id="aria2-token" class="cfg-input" style="width:auto;flex:1" type="password" placeholder="RPC secret" autocomplete="off">
+    </div>
+  </section>
+
+  <section class="card">
+    <h2><i class="step">2</i>Select Slot <span class="sub">single</span></h2>
+    <div id="slots" class="pills"><div class="loading">Loading…</div></div>
+  </section>
+
+  <section class="card">
+    <h2><i class="step">3</i>Select Board <span class="sub">single</span></h2>
+    <div id="boards" class="cards"><div class="empty">Select a slot first</div></div>
+  </section>
+
+  <section class="card">
+    <h2><i class="step">4</i>Select Image Types <span class="sub">multiple</span>
+      <span class="spacer"></span>
+      <button id="type-all" class="btn">All</button>
+      <button id="type-none" class="btn">None</button>
+    </h2>
+    <div id="types"><div class="empty">Select a board first</div></div>
+  </section>
+
+  <section class="card">
+    <h2><i class="step">5</i>Selected <span class="sub" id="files-sub"></span>
+      <span class="spacer"></span>
+      <input id="file-filter" type="search" placeholder="Filter filenames…">
+    </h2>
+    <div id="files-wrap"><div class="empty">-</div></div>
+    <div class="sel-actions">
+      <span class="sum" id="sum">Nothing selected</span>
+      <button id="btn-copy-paths" class="btn" disabled>Copy Paths</button>
+      <button id="btn-copy-urls" class="btn" disabled>Copy URLs</button>
+      <button id="btn-curl" class="btn" disabled>Copy curl Script</button>
+      <button id="btn-export" class="btn" disabled>Export JSON</button>
+      <button id="btn-aria2-push" class="btn green" disabled>Push to aria2</button>
+      <button id="btn-download" class="btn primary" disabled>Add to Downloads</button>
+    </div>
+  </section>
+  <section class="card" id="dl-list-card">
+    <h2><i class="step">6</i>Downloads <span class="sub" id="dl-summary"></span>
+      <span class="spacer"></span>
+      <label class="conc" title="Concurrent downloads"><span>Parallel</span>
+        <select id="dl-conc">
+          <option value="1">1</option>
+          <option value="2" selected>2</option>
+          <option value="3">3</option>
+          <option value="4">4</option>
+          <option value="5">5</option>
+          <option value="6">6</option>
+          <option value="7">7</option>
+          <option value="8">8</option>
+        </select>
+      </label>
+      <button id="dl-clear" class="btn">Clear</button>
+    </h2>
+    <div id="dl-tasks"><div class="dl-empty">No download tasks</div></div>
+  </section>
+
+</main>
+</div>
+
+<div id="toast" hidden></div>
+
+
+<script>
+'use strict';
+// 默认数据源 = 本页所在站点去掉 dl/ 后的上级目录(与 images 页同源); fork 部署自动跟随 owner
+const DEFAULT_URL = new URL(location.pathname.replace(/(\/|^)dl(\/index\.html)?\/?$/, '')
+  .replace(/\/+$/, '') + '/', location).href;
+const SLOT_ORDER = ['stable', 'pre-release', 'history'];
+const CAT_ORDER = ['recovery', 'ab', 'loaders'];
+const CAT_LABEL = {recovery: 'Recovery', ab: 'A/B', loaders: 'Loader'};
+const KIND_ORDER = ['image', 'ota'];
+const KIND_LABEL = {image: 'Image', ota: 'OTA'};
+const FLAVOR_ORDER = ['minimal', 'desktop'];
+const LOADER_ORDER = ['maskrom', 'spi'];
+const LOADER_LABEL = {maskrom: 'Maskrom', spi: 'SPI Flash'};
+
+const state = {
+  url: null, meta: null, data: null,
+  tag: null, board: null, checked: new Set(), filter: '',
+  dlConc: 2, // 同时下载的文件数
+};
+
+const $ = s => document.querySelector(s);
+function el(tag, cls, text) {
+  const e = document.createElement(tag);
+  if (cls) e.className = cls;
+  if (text !== undefined) e.textContent = text;
+  return e;
+}
+function human(b) {
+  if (b == null) return '-';
+  const u = ['B', 'KiB', 'MiB', 'GiB', 'TiB'];
+  let i = 0;
+  while (b >= 1024 && i < u.length - 1) { b /= 1024; i++; }
+  return b.toFixed(b >= 100 || i === 0 ? 0 : 1) + ' ' + u[i];
+}
+function fmtDate(iso) {
+  return iso ? new Date(iso).toLocaleString('en-GB', {hour12: false}) : '';
+}
+// 数据源地址归一化: 不带 data.json 的目录地址自动拼接 (已显式以 .json 结尾则不改)
+function normalizeDataUrl(u) {
+  u = u.trim();
+  if (/\.json(\?|#|$)/i.test(u)) return u;
+  return u.replace(/\/+$/, '') + '/data.json';
+}
+
+/* ---------- 数据推导 (与 fetch_imgs.py 的 classify 保持一致) ---------- */
+
+function classify(parts) {
+  const fname = parts[parts.length - 1], cat = parts[2];
+  if (cat === 'loaders') { // 拆成 maskrom / spi 两个条目, 对齐官方页 Loader 框
+    const stem = fname.replace(/\.sha256$/, '').replace(/\.xz$/, '');
+    const it = /spi/.test(stem) ? 'spi' : (/maskrom/.test(stem) ? 'maskrom' : stem);
+    return [cat, it, '-'];
+  }
+  const kind = (parts.length === 5 && parts[3] === 'ota') ? 'ota' : 'image';
+  const flavor = fname.includes('desktop') ? 'desktop' : 'minimal';
+  return [cat, flavor, kind];
+}
+function manifest() {
+  return (state.data.manifests || {})[state.tag] || {files: {}, sizes: {}};
+}
+function slotList() {
+  // [{name, tag}] — stable/pre-release 各一项, history 展开
+  const out = [];
+  const slots = state.data.slots || {};
+  const names = Object.keys(slots).sort((a, b) =>
+    (SLOT_ORDER.indexOf(a) + 1 || 99) - (SLOT_ORDER.indexOf(b) + 1 || 99));
+  for (const name of names) {
+    const v = slots[name];
+    if (Array.isArray(v)) v.forEach((t, i) => out.push({name: name + '[' + i + ']', tag: t}));
+    else if (v) out.push({name, tag: v});
+  }
+  return out;
+}
+function boardList(files) {
+  return [...new Set(Object.keys(files).map(p => p.split('/')[0]))].sort();
+}
+// [{key, variant, cat, flavor, kind, count}] 按固定顺序
+function typeRows(files, board) {
+  const cnt = new Map();
+  for (const p of Object.keys(files)) {
+    const parts = p.split('/');
+    if (parts[0] !== board) continue;
+    const [cat, flavor, kind] = classify(parts);
+    const key = [parts[1], cat, flavor, kind].join('|');
+    cnt.set(key, (cnt.get(key) || 0) + 1);
+  }
+  const rows = [...cnt.entries()].map(([key, n]) => {
+    const [variant, cat, flavor, kind] = key.split('|');
+    return {key, variant, cat, flavor, kind, count: n};
+  });
+  const vi = v => v === 'plain' ? 0 : 1;
+  const ci = c => CAT_ORDER.indexOf(c);
+  const fi = r => r.cat === 'loaders' ? LOADER_ORDER.indexOf(r.flavor) : FLAVOR_ORDER.indexOf(r.flavor);
+  const ki = k => KIND_ORDER.indexOf(k);
+  rows.sort((a, b) => vi(a.variant) - vi(b.variant) || ci(a.cat) - ci(b.cat)
+                     || fi(a) - fi(b) || ki(a.kind) - ki(b.kind));
+  return rows;
+}
+function selectedFiles() { // 已添加到 Downloads 任务的文件不再出现在 Selected
+  const m = manifest(), out = [];
+  const inDl = new Set(state.dlTasks.map(t => t.name));
+  for (const [p, url] of Object.entries(m.files || {})) {
+    const parts = p.split('/');
+    if (parts[0] !== state.board) continue;
+    const [cat, flavor, kind] = classify(parts);
+    if (!state.checked.has([parts[1], cat, flavor, kind].join('|'))) continue;
+    if (!inDl.has(p)) out.push({path: p, url, size: (m.sizes || {})[p]});
+  }
+  out.sort((a, b) => a.path < b.path ? -1 : 1);
+  return state.filter
+    ? out.filter(f => f.path.toLowerCase().includes(state.filter)) : out;
+}
+
+/* ---------- 渲染 ---------- */
+
+function renderMeta() {
+  $('#refresh-time').textContent = state.meta ? fmtDate(state.meta.fetched_at) : '';
+  const stat = $('#src-stat');
+  if (state.meta) {
+    stat.textContent = 'Updated'; stat.className = 'stat ok';
+    notifyState('srcOk', true, 'Data source updated');
+  }
+  $('#src-input').value = state.url;
+}
+
+function renderSlots() {
+  const box = $('#slots');
+  box.textContent = '';
+  const rels = {};
+  for (const r of (state.data.releases || [])) rels[r.tag_name] = r;
+  for (const s of slotList()) {
+    const m = (state.data.manifests || {})[s.tag] || {};
+    const n = Object.keys(m.files || {}).length;
+    const label = el('label', 'pill');
+    const input = el('input'); input.type = 'radio'; input.name = 'slot';
+    input.checked = s.tag === state.tag;
+    input.addEventListener('change', () => { state.tag = s.tag; ensureSelection(); renderAll(); });
+    const body = el('div');
+    // slot 名做成 label 样式, 配色对齐官方页: stable 绿 / pre-release 琥珀 / history 灰
+    const slotCls = s.name === 'stable' ? 'st' : (s.name === 'pre-release' ? 'pre' : 'prev');
+    const t = el('div', 't');
+    t.append(el('span', 'slottag ' + slotCls, s.name), el('span', 'slottagid', s.tag));
+    const meta = el('div', 'm', [fmtDate(m.created), n + ' files'].filter(Boolean).join(' · '));
+    body.append(t, meta);
+    label.append(input, body);
+    box.append(label);
+  }
+}
+
+function renderBoards() {
+  const box = $('#boards');
+  box.textContent = '';
+  const files = manifest().files || {};
+  const boards = boardList(files);
+  if (!boards.length) { box.append(el('div', 'empty', 'No files in this slot')); return; }
+  for (const b of boards) {
+    const n = Object.keys(files).filter(p => p.split('/')[0] === b).length;
+    const variants = [...new Set(Object.keys(files)
+      .filter(p => p.split('/')[0] === b).map(p => p.split('/')[1]))].sort().join(' / ');
+    const label = el('label', 'cardpick');
+    const input = el('input'); input.type = 'radio'; input.name = 'board';
+    input.checked = b === state.board;
+    input.addEventListener('change', () => { state.board = b; ensureSelection(); renderAll(); });
+    const body = el('div');
+    body.append(el('div', 't', b), el('div', 'm', n + ' files · ' + variants));
+    label.append(input, body);
+    box.append(label);
+  }
+}
+
+function pruneChecks() { // 剔除当前 board 下已不存在的勾选
+  const avail = new Set(typeRows(manifest().files || {}, state.board).map(r => r.key));
+  for (const k of [...state.checked]) if (!avail.has(k)) state.checked.delete(k);
+}
+function ensureSelection() { // 换 slot/board 后: board 归位 + 剔除失效勾选
+  const boards = boardList(manifest().files || {});
+  if (!boards.includes(state.board)) state.board = boards[0] || null;
+  pruneChecks();
+}
+
+function renderTypes() {
+  const box = $('#types');
+  box.textContent = '';
+  if (!state.board) { box.append(el('div', 'empty', 'Select a board first')); return; }
+  const rows = typeRows(manifest().files || {}, state.board);
+  if (!rows.length) { box.append(el('div', 'empty', 'No files for this board')); return; }
+
+  const sumCnt = rs => rs.reduce((s, r) => s + r.count, 0);
+  const nSel = rs => rs.filter(r => state.checked.has(r.key)).length;
+  const toggleRows = rs => {
+    const all = rs.every(r => state.checked.has(r.key));
+    rs.forEach(r => all ? state.checked.delete(r.key) : state.checked.add(r.key));
+    renderTypes(); renderFiles();
+  };
+  // 组级三态 checkbox; 阻止冒泡, 点击语义由 change 处理
+  const triInput = rs => {
+    const cb = el('input'); cb.type = 'checkbox';
+    cb.addEventListener('click', e => e.stopPropagation());
+    cb.addEventListener('change', () => toggleRows(rs));
+    cb.checked = nSel(rs) === rs.length;
+    cb.indeterminate = nSel(rs) > 0 && nSel(rs) < rs.length;
+    return cb;
+  };
+  const leafInput = r => {
+    const input = el('input'); input.type = 'checkbox';
+    input.checked = state.checked.has(r.key);
+    input.addEventListener('change', () => {
+      input.checked ? state.checked.add(r.key) : state.checked.delete(r.key);
+      renderTypes(); renderFiles();
+    });
+    return input;
+  };
+  const leafLabel = (r, txt) => {
+    const label = el('label', 'trow');
+    label.append(leafInput(r), el('span', null, txt));
+    return label;
+  };
+
+  // 层级: secgroup(plain/secure) -> modebox(Recovery/A-B/Loader)
+  const variants = [...new Set(rows.map(r => r.variant))]
+    .sort((a, b) => (a === 'plain' ? 0 : 1) - (b === 'plain' ? 0 : 1));
+  for (const variant of variants) {
+    const vrows = rows.filter(r => r.variant === variant);
+    const group = el('div', 'secgroup' + (variant === 'secure' ? ' secure' : ''));
+    const ghead = el('label', 'ghead'); // 复选框在最前, 后跟 PLAIN/SECURE 标签, 右侧计数
+    ghead.append(triInput(vrows),
+                 el('span', 'glabel', variant === 'secure' ? 'SECURE' : 'PLAIN'),
+                 el('span', 'gc', nSel(vrows) + '/' + vrows.length));
+    group.append(ghead);
+
+    const inner = el('div', 'modeboxes');
+    const cats = [...new Set(vrows.map(r => r.cat))]
+      .sort((a, b) => CAT_ORDER.indexOf(a) - CAT_ORDER.indexOf(b));
+    for (const cat of cats) {
+      const crows = vrows.filter(r => r.cat === cat);
+      if (cat === 'loaders') { // 常显(无折叠), 青色标题带与其他 modebox 区分
+        const mb = el('div', 'modebox loader');
+        const h3 = el('h3');
+        h3.addEventListener('click', () => toggleRows(crows));
+        h3.append(triInput(crows),
+                  el('span', null, CAT_LABEL[cat]),
+                  
+                  el('span', 'gc', nSel(crows) + '/' + crows.length));
+        mb.append(h3);
+        const lrows = el('div', 'lrows');
+        for (const r of crows)
+          lrows.append(leafLabel(r, LOADER_LABEL[r.flavor] || r.flavor));
+        mb.append(lrows);
+        inner.append(mb);
+        continue;
+      }
+      const mb = el('div', 'modebox');
+      const h3 = el('h3');
+      h3.addEventListener('click', () => toggleRows(crows));
+      h3.append(triInput(crows),
+                el('span', null, CAT_LABEL[cat] || cat),
+                el('span', 'boxsub', ' · ' + sumCnt(crows) + ' files'),
+                el('span', 'gc', nSel(crows) + '/' + crows.length));
+      mb.append(h3);
+      for (const fl of FLAVOR_ORDER) {
+        const frows = crows.filter(r => r.flavor === fl);
+        if (!frows.length) continue;
+        const row = el('div', 'row');
+        const head = el('div', 'row-head');
+        head.append(el('span', 'row-title', fl),
+                    el('span', 'row-meta', sumCnt(frows) + ' files'));
+        const links = el('div', 'row-links');
+        for (const kind of KIND_ORDER) {
+          const r = frows.find(x => x.kind === kind);
+          if (!r) continue;
+          const grp = el('span', 'grp');
+          grp.append(leafLabel(r, KIND_LABEL[kind]), el('span', 'cnt', r.count + ''));
+          links.append(grp);
+        }
+        row.append(head, links);
+        mb.append(row);
+      }
+      inner.append(mb);
+    }
+    group.append(inner);
+    box.append(group);
+  }
+}
+
+function renderFiles() {
+  const wrap = $('#files-wrap');
+  wrap.textContent = '';
+  const files = selectedFiles();
+  const total = files.reduce((s, f) => s + (f.size || 0), 0);
+  $('#files-sub').textContent = files.length
+    ? files.length + ' files · ' + human(total) : '0 files';
+  const bar = files.length ? 'Selected <b>' + files.length + '</b> files · ' + human(total) : 'Nothing selected';
+  $('#sum').innerHTML = bar; // 仅内部拼接, 无外部数据
+  for (const id of ['#btn-copy-paths', '#btn-copy-urls', '#btn-curl',
+                    '#btn-export', '#btn-aria2-push', '#btn-download'])
+    $(id).disabled = !files.length;
+  if (!files.length) {
+    const msg = state.checked.size
+      ? 'All selected files are already in Downloads' : 'No matching files — check image types or adjust the filter';
+    wrap.append(el('div', 'empty', msg));
+    return;
+  }
+  const table = el('table');
+  const thead = el('thead');
+  const hr = el('tr');
+  ['File (click to download)', 'Size', ''].forEach((t, i) => {
+    const th = el('th', i === 1 ? 'size' : (i === 2 ? 'act' : null), t);
+    th.style.textAlign = i === 0 ? 'left' : 'right';
+    hr.append(th);
+  });
+  thead.append(hr); table.append(thead);
+  const tbody = el('tbody');
+  for (const f of files) {
+    const tr = el('tr');
+    const td1 = el('td', 'path');
+    const a = el('a', null, f.path); a.href = f.url; a.target = '_blank'; a.rel = 'noopener';
+    td1.append(a);
+    const td2 = el('td', 'size', human(f.size));
+    const td3 = el('td', 'act');
+    const cp = el('button', null, '⧉'); cp.title = 'Copy this file URL';
+    cp.addEventListener('click', () => copyText(f.url, 'URL copied'));
+    td3.append(cp);
+    tr.append(td1, td2, td3);
+    tbody.append(tr);
+  }
+  table.append(tbody);
+  wrap.append(table);
+}
+
+function renderAll() { renderSlots(); renderBoards(); renderTypes(); renderFiles(); }
+
+/* ---------- 动作 ---------- */
+
+let toastTimer = null;
+function notifyState(key, ok, msg) { // 状态迁移通知: 首次判定静默(失败除外), 之后变化才弹
+  const prev = state[key];
+  state[key] = ok;
+  if (prev === ok) return;
+  if (prev == null && ok) return; // 首次成功不打扰
+  toast(msg);
+}
+
+function toast(msg) {
+  const t = $('#toast');
+  t.textContent = msg; t.hidden = false;
+  clearTimeout(toastTimer);
+  toastTimer = setTimeout(() => { t.hidden = true; }, 2600);
+}
+function copyText(text, okMsg) {
+  const done = () => toast(okMsg || 'Copied');
+  if (navigator.clipboard && window.isSecureContext) {
+    navigator.clipboard.writeText(text).then(done, () => fallbackCopy(text, done));
+  } else fallbackCopy(text, done);
+}
+function fallbackCopy(text, done) {
+  const ta = document.createElement('textarea');
+  ta.value = text; ta.style.position = 'fixed'; ta.style.opacity = '0';
+  document.body.appendChild(ta); ta.select();
+  try { document.execCommand('copy'); done(); } catch (e) { toast('Copy failed'); }
+  ta.remove();
+}
+
+function curlScript(files) {
+  const tag = state.tag;
+  const lines = ['# ' + tag + ' / ' + state.board + ' — ' + files.length + ' files',
+                 '# Run from the target root; tree: tag/board/variant/category/[ota/]; rerun to resume'];
+  const dirs = [...new Set(files.map(f => tag + '/' + f.path.split('/').slice(0, -1).join('/')))].sort();
+  dirs.forEach(d => lines.push("mkdir -p '" + d + "'"));
+  files.forEach(f => lines.push("curl -fL --retry 3 -C - -o '" + tag + '/' + f.path + "' '" + f.url + "'"));
+  return lines.join('\n');
+}
+function aria2Entries(files, base) { // 目录树: base + tag/板卡/变体/类目/[ota/]
+  const tag = state.tag;
+  return files.map(f => {
+    const segs = f.path.split('/');
+    return {url: f.url, dir: base + tag + '/' + segs.slice(0, -1).join('/'),
+            out: segs[segs.length - 1]};
+  });
+}
+async function aria2Rpc(method, params) { // 直连 JSON-RPC(aria2 需 rpc-allow-origin-all=true)
+  const endpoint = $('#aria2-url').value.trim() || 'http://127.0.0.1:6800/jsonrpc';
+  const token = $('#aria2-token').value.trim();
+  const resp = await fetch(endpoint, {method: 'POST', headers: {'Content-Type': 'application/json'},
+    body: JSON.stringify({jsonrpc: '2.0', id: 'imgs-web', method,
+                          params: [...(token ? ['token:' + token] : []), ...params]})});
+  return resp.json();
+}
+async function aria2Known() { // aria2 现存任务: keys=指纹, done=已完成, paused=已暂停, gids=指纹→gid
+  const keys = new Set(), done = new Set(), paused = new Set(), gids = new Map();
+  const collect = ds => (ds || []).forEach(d => {
+    if (d.status === 'removed') return; // 已删除残留结果: 挂回无意义, 视为不存在
+    const fin = d.status === 'complete';
+    const add = k => { keys.add(k); if (fin) done.add(k);
+                       if (d.status === 'paused') paused.add(k);
+                       if (d.gid) gids.set(k, d.gid); };
+    for (const f of (d.files || [])) {
+      add((f.path || '').replace(/\/+$/, ''));
+      for (const u of (f.uris || [])) add(u.uri);
+    }
+  });
+  for (const m of ['tellActive', 'tellWaiting', 'tellStopped']) {
+    try { collect((await aria2Rpc('aria2.' + m, [0, 1000])).result); } catch (e) {}
+  }
+  return {keys, done, paused, gids};
+}
+async function aria2Push(files, pickDir) {
+  localStorage.setItem('aria2-url', $('#aria2-url').value.trim()); // 存原始输入: 清空即回退自动检测
+  localStorage.setItem('aria2-token', $('#aria2-token').value.trim());
+  // 相对 dir 会按 aria2 守护进程 CWD 解析(不可靠), 用指定目录/全局下载根拼绝对路径
+  const base = (pickDir || await aria2GlobalDir() || '').replace(/\/+$/, '') + '/';
+  const entries = aria2Entries(files, base);
+  // 三分类: done=aria2 已完成(不推送, 页面标记 done); skip=已在队列(不推送); 其余推送
+  const {keys: known, done, paused, gids: gidMap} = await aria2Known();
+  const cls = entries.map(e => {
+    const k = (e.dir + '/' + e.out).replace(/\/+$/, '');
+    if (done.has(k) || done.has(e.url)) return 'done';
+    if (known.has(k) || known.has(e.url)) return 'skip';
+    return 'push';
+  });
+  const fresh = entries.filter((_, i) => cls[i] === 'push');
+  const freshFiles = files.filter((_, i) => cls[i] === 'push');
+  const nDone = cls.filter(c => c === 'done').length;
+  const nSkip = cls.filter(c => c === 'skip').length;
+  if (nDone) { toast(nDone + ' already complete, marked done'); dlTaskAddDone(files.filter((_, i) => cls[i] === 'done')); }
+  if (nSkip) { // 已在 aria2 队列: 不推送, 但带真实 gid 登记到列表(✕/pause 可直接操作)
+    toast(nSkip + ' already in aria2, attached to Downloads');
+    const sf = files.filter((_, i) => cls[i] === 'skip');
+    const se = entries.filter((_, i) => cls[i] === 'skip');
+    dlTaskAddAria2(sf, se.map(e => gidMap.get((e.dir + '/' + e.out).replace(/\/+$/, '')) || gidMap.get(e.url)));
+    se.forEach(e => { // 挂回的 paused 任务恢复下载
+      const k = (e.dir + '/' + e.out).replace(/\/+$/, '');
+      if (paused.has(k) || paused.has(e.url)) aria2UnpauseTask(gidMap.get(k) || gidMap.get(e.url));
+    });
+  }
+  if (!fresh.length) return;
+  toast('Pushing ' + fresh.length + ' tasks to aria2');
+  const gids = []; let ok = 0; const errs = [];
+  for (const e of fresh) {
+    try {
+      const j = await aria2Rpc('aria2.addUri', [[e.url], {dir: e.dir, out: e.out, continue: true,
+        'auto-file-renaming': false, // 已存在文件报错而非改名重下
+        'max-tries': 8, 'retry-wait': 5}]);
+      if (j.error) throw new Error(j.error.message || 'rpc error');
+      gids.push(j.result); ok++;
+    } catch (er) { errs.push(e.out + ': ' + er.message); gids.push(null); }
+  }
+  if (errs.length) toast('Pushed ' + ok + ' tasks, ' + errs.length + ' failed: ' + errs[0]);
+  else toast('Pushed ' + ok + ' tasks to ' + base + state.tag);
+  dlTaskAddAria2(freshFiles, gids);
+}
+
+function dlTaskAddRows(files, mk) { // 批量登记任务行: mk(f,i) 给出差异字段(status/gid/root/note)
+  const box = $('#dl-tasks');
+  if (box.querySelector('.dl-empty')) box.textContent = '';
+  files.forEach((f, i) => {
+    const segs = [state.tag, ...f.path.split('/').map(safeSeg)];
+    const t = Object.assign({id: ++state.dlSeq, segs, name: segs.slice(1).join('/'), url: f.url,
+      expected: f.size || 0, root: null, got: 0, total: f.size || 0, speed: 0, spT: 0, spB: 0}, mk(f, i));
+    state.dlTasks.push(t);
+    box.append(dlTaskRow(t));
+    dlTaskPaint(t);
+  });
+  dlTaskRender();
+  renderFiles();
+}
+function dlTaskAddDone(files) { // aria2 已完成: 不推送, 直接登记 done 行
+  dlTaskAddRows(files, f => ({status: 'done', note: 'already complete (aria2)', got: f.size || 0}));
+}
+function dlTaskAddAria2(files, gids) { // aria2 任务(含挂回): 登记列表, ✕ 可移除
+  dlTaskAddRows(files, (f, i) => ({status: 'aria2', gid: gids && gids[i]}));
+}
+async function aria2GlobalDir() { // aria2 全局下载根(绝对路径)
+  try { return ((await aria2Rpc('aria2.getGlobalOption', [])).result || {}).dir || ''; }
+  catch (e) { return ''; }
+}
+async function aria2Check() {
+  // 连通性检测: 状态标签 + 连接迁移通知(connected/disconnected)
+  // 飞行中被跳过(输入变化)时记脏标, 完成后用最新输入重查
+  if (state.aria2Checking) { state.aria2Dirty = true; return; }
+  state.aria2Checking = true;
+  try { await aria2CheckInner(); }
+  finally {
+    state.aria2Checking = false;
+    if (state.aria2Dirty) { state.aria2Dirty = false; aria2Check(); }
+  }
+}
+async function aria2CheckInner() {
+  const stat = $('#aria2-stat');
+  const endpoint = $('#aria2-url').value.trim();
+  if (!endpoint) { stat.textContent = 'Disconnected'; stat.className = 'stat err';
+    document.body.classList.remove('aria2-on'); return; }
+  try {
+    const err = ((await aria2Rpc('aria2.getVersion', [])).error || {}).message;
+    if (err) throw new Error(err);
+    stat.textContent = 'Connected';
+    stat.className = 'stat ok';
+    document.body.classList.add('aria2-on');
+    notifyState('aria2Ok', true, 'aria2 connected');
+  } catch (e) {
+    stat.textContent = 'Disconnected';
+    stat.className = 'stat err';
+    document.body.classList.remove('aria2-on');
+    notifyState('aria2Ok', false, 'aria2 disconnected');
+  }
+}
+function exportJson(files) {
+  const obj = {
+    source: state.url, slot_tag: state.tag, board: state.board,
+    types: [...state.checked],
+    files: files.map(f => ({path: f.path, url: f.url, size: f.size})),
+  };
+  const blob = new Blob([JSON.stringify(obj, null, 2)], {type: 'application/json'});
+  const a = document.createElement('a');
+  a.href = URL.createObjectURL(blob);
+  a.download = 'imgs-' + state.tag + '-' + state.board + '.json';
+  document.body.appendChild(a); a.click(); a.remove();
+  setTimeout(() => URL.revokeObjectURL(a.href), 5000);
+}
+function downloadIframe(files) {
+  const total = files.reduce((s, f) => s + (f.size || 0), 0);
+  toast('Downloading ' + files.length + ' files via browser, ' + human(total) + ' total');
+  files.forEach((f, i) => setTimeout(() => {
+    // 隐藏 iframe 触发下载: a[target=_blank] 在 setTimeout 里脱离用户手势,
+    // 第二个起会被弹窗拦截(实测只下载一个); iframe 导航不受弹窗拦截,
+    // 也不会残留空白标签页. 1s 间隔避免 SharePoint 直链兑换竞态.
+    const iframe = document.createElement('iframe');
+    iframe.style.display = 'none';
+    iframe.src = f.url;
+    document.body.appendChild(iframe);
+    setTimeout(() => iframe.remove(), 10 * 60 * 1000); // 浏览器接管下载后再清理
+  }, i * 1000));
+}
+
+/* ---------- 结构化下载: File System Access API, 目录树 <tag>/<board>/<sec>/<cat>/[ota/]<file> ---------- */
+
+function safeSeg(s) { // 路径段清洗: 防路径穿越
+  return s.replace(/[\/\\\0]/g, '_').replace(/^\.+$/, '_') || '_';
+}
+
+const idbKv = (mode, k, v) => new Promise((res, rej) => { // 轻量 KV(IndexedDB), 存目录句柄
+  const rq = indexedDB.open('imgs-web', 1);
+  rq.onupgradeneeded = () => rq.result.createObjectStore('kv');
+  rq.onsuccess = () => {
+    try {
+      const tx = rq.result.transaction('kv', mode);
+      const op = mode === 'readwrite' ? tx.objectStore('kv').put(v, k) : tx.objectStore('kv').get(k);
+      op.onsuccess = () => res(op.result);
+      op.onerror = () => rej(op.error);
+    } catch (e) { rej(e); } // 同步异常(如句柄不可克隆)也要落地 Promise
+  };
+  rq.onerror = () => rej(rq.error);
+});
+async function pickRootDir() { // 仅首次弹窗选择; 句柄记忆(IDB), 权限吊销时才重选
+  state.dlHandleReady = true;
+  const okOrPrompt = async h => { // granted 直用; denied 提示并不再弹选择器; prompt 一键确认
+    const p = await h.queryPermission({mode: 'readwrite'});
+    if (p === 'granted') return h;
+    if (p === 'denied') {
+      toast('Folder access blocked for ' + h.name + ', check site permissions');
+      throw new Error('permission denied');
+    }
+    if (await h.requestPermission({mode: 'readwrite'}) === 'granted') return h;
+    return null;
+  };
+  if (state.dlRootHandle) {
+    const r = await okOrPrompt(state.dlRootHandle);
+    if (r) return r;
+    // 授权被拒/取消: 彻底丢弃句柄(内存+IDB), 避免下次重复 requestPermission 被 Chrome 节流(停顿数秒)
+    state.dlRootHandle = null;
+    try { await idbKv('readwrite', 'dlRoot', null); } catch (e) {}
+  }
+  if (!state.dlHandleReady) { // 预热未完成(极少数快速点击)才现场读 IDB
+    try { state.dlRootHandle = (await idbKv('readonly', 'dlRoot')) || null; } catch (e) {}
+  }
+  if (state.dlRootHandle) {
+    const r = await okOrPrompt(state.dlRootHandle);
+    if (r) return r;
+    // 授权被拒/取消: 彻底丢弃句柄(内存+IDB), 避免下次重复 requestPermission 被 Chrome 节流(停顿数秒)
+    state.dlRootHandle = null;
+    try { await idbKv('readwrite', 'dlRoot', null); } catch (e) {}
+  }
+  // startIn 只认固定位置或已授权句柄: 优先上次句柄, 否则按 Setup-Download 中的已知目录名定位
+  const WELL = [['downloads', 'downloads'], ['documents', 'documents'], ['desktop', 'desktop'],
+                ['pictures', 'pictures'], ['music', 'music'], ['videos', 'videos']];
+  let startIn = state.dlRootHandle || 'downloads';
+  const dv = ($('#dl-root').value.trim() || '~/Downloads').toLowerCase();
+  for (const [name, token] of WELL)
+    if (dv === '~/' + name || dv.includes('/' + name + '/')) { startIn = token; break; }
+  let root = await window.showDirectoryPicker({mode: 'readwrite', startIn});
+  const pickedName = root.name;
+  // 所选目录 ≠ Download 配置的末级目录时, 自动进入/创建该子目录作为真实下载根
+  const want = ($('#dl-root').value.trim() || '~/Downloads').replace(/\/+$/, '').split('/').pop();
+  const WELLN = ['downloads', 'download', 'downloadsfolder'];
+  let sub = '';
+  if (want && !WELLN.includes(want.toLowerCase()) && root.name !== want) {
+    try {
+      root = await root.getDirectoryHandle(want, {create: true});
+      sub = want;
+      toast('Download root set to ' + want);
+    } catch (e) {}
+  }
+  state.dlRootHandle = root;
+  $('#dl-root-stat').textContent = root.name; // 当前生效的目录名
+  // 回写 Download 路径(浏览器拿不到绝对路径; 以选择器起始目录为锚点推断父级, 尽力同步)
+  { const cur = $('#dl-root').value.trim();
+    if (cur.startsWith('~') && pickedName) {
+      const WELLNAME = {downloads: 'Downloads', documents: 'Documents', desktop: 'Desktop',
+                        pictures: 'Pictures', music: 'Music', videos: 'Videos'};
+      const anchor = typeof startIn === 'string' ? (WELLNAME[startIn] || startIn) : null;
+      let nv;
+      if (anchor && pickedName.toLowerCase() === anchor.toLowerCase()) {
+        // 选中的就是起始目录本身: 路径 = <锚点>[/<自动下钻子目录>]
+        nv = '~/' + anchor + (sub ? '/' + sub : '');
+      } else if (anchor) {
+        // 起始目录里进入了子目录: 路径 = <锚点>/<所选子目录>[/<下钻>]
+        nv = '~/' + anchor + '/' + pickedName + (sub ? '/' + sub : '');
+      } else {
+        const segs = cur.replace(/\/+$/, '').split('/');
+        segs[segs.length - 1] = pickedName;
+        nv = segs.join('/') + (sub ? '/' + sub : '');
+      }
+      if (nv !== cur) { $('#dl-root').value = nv; localStorage.setItem('dl-root', nv); }
+    } }
+  try { await idbKv('readwrite', 'dlRoot', root); } catch (e) {}
+  return root;
+}
+
+async function writeFileBody(fh, resp, from, onChunk) {
+  // from>0: 断点续传, 在原文件 seek 位置续写; 中止/出错 abort 丢弃本次改动
+  const w = await fh.createWritable({keepExistingData: from > 0});
+  const reader = resp.body.getReader();
+  try {
+    if (from > 0) await w.seek(from);
+    while (true) {
+      const {done, value} = await reader.read();
+      if (done) break;
+      await w.write(value);
+      onChunk && onChunk(value.length);
+    }
+    await w.close();
+  } catch (e) {
+    // 尽力提交已写入的有效前缀(分块完整, 是合法的字节前缀), 下次 Range 从更大偏移续传;
+    // 提交本身失败(如磁盘满)才整体丢弃本次改动
+    try { await w.close(); } catch (e2) { try { await w.abort(); } catch (e3) {} }
+    throw e;
+  }
+}
+
+/* ---------- 浏览器下载任务列表: 常驻面板, 动态并发调度 ---------- */
+
+state.dlTasks = []; // {id, segs, name, url, expected, root, status, got, total, speed, spT, spB, err, fctrl, row:{...}}
+state.dlActive = 0;
+state.dlLastLaunch = 0;
+state.dlSeq = 0;
+
+function dlTaskRender() { // 空态/汇总 + 持久化
+  const box = $('#dl-tasks');
+  if (!state.dlTasks.length && !box.querySelector('.dl-empty'))
+    box.textContent = '', box.append(el('div', 'dl-empty', 'No download tasks'));
+  const done = state.dlTasks.filter(t => t.status === 'done').length;
+  const act = state.dlTasks.filter(t => t.status === 'active').length;
+  $('#dl-summary').textContent = state.dlTasks.length
+    ? act + ' active · ' + done + '/' + state.dlTasks.length + ' done' : '';
+  dlTaskSave();
+}
+
+function dlTaskSave() { // 任务列表持久化(localStorage), 刷新后恢复
+  try {
+    localStorage.setItem('dl-tasks', JSON.stringify(state.dlTasks.map(t => ({
+      segs: t.segs, name: t.name, url: t.url, expected: t.expected,
+      status: t.status === 'active' ? 'paused' : t.status, // 刷新时进行中 → 暂停
+      got: t.got, total: t.total, note: t.note, err: t.err, gid: t.gid, paused: t.paused,
+    }))));
+  } catch (e) {}
+}
+
+function dlTaskRestore() { // 刷新后恢复任务行(root 待续传时重选)
+  let saved = [];
+  try { saved = JSON.parse(localStorage.getItem('dl-tasks') || '[]'); } catch (e) {}
+  if (!saved.length) return;
+  $('#dl-tasks').textContent = '';
+  for (const t of saved) {
+    t.root = null; t.speed = 0; t.spT = 0; t.spB = t.got || 0; t.id = ++state.dlSeq;
+    state.dlTasks.push(t);
+    $('#dl-tasks').append(dlTaskRow(t));
+    dlTaskPaint(t);
+  }
+  dlTaskRender();
+}
+
+function dlTaskRow(t) {
+  const row = el('div', 'task' + (t.status === 'done' ? ' done' : ''));
+  const head = el('div', 't-head');
+  const icon = el('span', 't-icon');
+  const name = el('span', 't-name', t.name);
+  const stat = el('span', 't-stat');
+  const x = el('button', 't-x', '✕');
+  x.title = 'Remove task and delete downloaded file';
+  x.addEventListener('click', () => dlTaskRemove(t));
+  head.append(icon, name, stat, x);
+  const bar = el('div', 't-bar');
+  const fill = el('i');
+  bar.append(fill);
+  row.append(head, bar);
+  icon.addEventListener('click', async () => {
+    if (t.status === 'aria2' && t.gid) { // aria2 任务: 图标 = pause/unpause 切换
+      if (t.paused) await aria2UnpauseTask(t.gid); else await aria2PauseTask(t.gid);
+      t.paused = !t.paused;
+      dlTaskPaint(t);
+      return;
+    }
+    if (t.status !== 'aria2' && !t.root && t.status !== 'done') dlTaskResume();
+  });
+  t.row = {el: row, icon, stat, fill};
+  return row;
+}
+
+const ARIA2_ICON = '<svg viewBox="0 0 16 16" width="13" height="13" style="vertical-align:-2px" '
+  + 'xmlns="http://www.w3.org/2000/svg" fill="currentColor" aria-label="aria2">'
+  + '<path d="M8 1.6 14.6 13.4h-2.9L8 6.9 4.3 13.4H1.4Z"/>'
+  + '<path d="M8 10.2l1.7 3.2H6.3Z"/></svg>';
+function dlTaskIcon(t) {
+  if (t.status === 'aria2') return ARIA2_ICON;
+  const resumable = !t.root && t.status !== 'done';
+  if (resumable) return '▶';
+  return t.status === 'done' ? '✔' : t.status === 'active' ? '⏬' : t.status === 'error' ? '⚠'
+       : t.status === 'cancelled' ? '⏹' : '…';
+}
+
+async function dlTaskResume() { // 恢复任务: 重选目录后续传
+  try { const root = await pickRootDir();
+    for (const x of state.dlTasks) if (!x.root) x.root = root;
+  } catch (e) { return; } // 用户取消选择
+  for (const x of state.dlTasks)
+    if (x.status === 'paused' || x.status === 'cancelled' || x.status === 'error') x.status = 'queued';
+  dlTaskRender();
+  dlPump();
+}
+
+function dlTaskPaint(t) {
+  if (!t.row) return;
+  t.row.el.className = 'task' + (t.status === 'done' ? ' done' : '');
+  if (t.status === 'aria2') t.row.icon.innerHTML = dlTaskIcon(t); // SVG logo
+  else t.row.icon.textContent = dlTaskIcon(t);
+  if (t.status === 'active')
+    t.row.stat.textContent = human(t.got) + (t.total ? ' / ' + human(t.total) : '')
+      + (t.speed > 0 ? ' · ' + human(t.speed) + '/s' : '');
+  else if (t.status === 'done')
+    t.row.stat.textContent = t.note || (t.total ? human(t.total) : 'done');
+  else if (t.status === 'error')
+    t.row.stat.textContent = t.err || 'failed';
+  else if (t.status === 'cancelled')
+    t.row.stat.textContent = t.root ? 'cancelled' : 'cancelled — click ▶ to resume';
+  else if (t.status === 'paused')
+    t.row.stat.textContent = 'paused — click ▶ to resume';
+  else if (t.status === 'aria2')
+    t.row.stat.textContent = t.paused ? 'aria2 · paused' : 'aria2';
+  if (t.total) t.row.fill.style.width = (t.got / t.total * 100).toFixed(1) + '%';
+}
+
+setInterval(() => { // 补位调度: 完成过快(<启动间隔)时周期性补发排队任务
+  if (state.dlActive < (state.dlConc || 2) && state.dlTasks.some(t => t.status === 'queued'))
+    dlPump();
+}, 500);
+setInterval(() => { // 速度采样 + 活动行重绘(500ms)
+  const now = Date.now();
+  for (const t of state.dlTasks) {
+    if (t.status !== 'active') continue;
+    const dt = (now - t.spT) / 1000;
+    if (dt >= 0.45) {
+      const v = (t.got - t.spB) / dt;
+      t.speed = t.speed ? t.speed * 0.6 + v * 0.4 : v;
+      t.spT = now; t.spB = t.got;
+    }
+    dlTaskPaint(t);
+  }
+  if (state.dlTasks.some(t => t.status === 'active')) dlTaskSave();
+}, 500);
+
+async function aria2Gid(methods, gid) { // 对 gid 依次尝试多个 RPC 方法(失败静默)
+  if (!gid) return;
+  for (const m of methods) { try { await aria2Rpc(m, [gid]); } catch (e) {} }
+}
+async function aria2RemoveTask(gid) { // 从 aria2 移除任务(活动+历史记录)
+  await aria2Gid(['aria2.remove', 'aria2.forceRemove', 'aria2.removeDownloadResult'], gid);
+}
+async function aria2PauseTask(gid) { // 暂停, 任务保留在 aria2 列表(可 unpause 恢复)
+  await aria2Gid(['aria2.pause', 'aria2.forcePause'], gid);
+}
+async function aria2UnpauseTask(gid) {
+  await aria2Gid(['aria2.unpause'], gid);
+}
+
+const waitAbort = () => new Promise(r => setTimeout(r, 350)); // 等 writable.abort 落地, 否则 .crswap 残留
+async function dlTaskRemove(t) { // 删除任务 + 删除已下载文件(含 Chrome .crswap 残留)
+  if (t.fctrl) { t.fctrl.abort(); await waitAbort(); }
+  if (t.status === 'aria2') await aria2RemoveTask(t.gid);
+  if (t.root && t.segs) {
+    try {
+      let dir = t.root;
+      for (const sg of t.segs.slice(0, -1)) dir = await dir.getDirectoryHandle(sg);
+      const name = t.segs[t.segs.length - 1];
+      for (const n of [name, name + '.crswap']) { // 目标文件 + Chrome 写入过程的交换文件
+        try { await dir.removeEntry(n); } catch (e) {}
+      }
+    } catch (e) { /* 目录不存在等 */ }
+  }
+  state.dlTasks = state.dlTasks.filter(x => x !== t);
+  if (t.row) t.row.el.remove();
+  dlTaskRender();
+  renderFiles();
+}
+
+async function dlTaskRun(t) {
+  t.status = 'active';
+  t.spT = Date.now(); t.spB = 0;
+  state.dlActive++;
+  dlTaskPaint(t); dlTaskRender();
+  const fctrl = new AbortController();
+  t.fctrl = fctrl;
+  try {
+    let dir = t.root;
+    for (const sg of t.segs.slice(0, -1)) dir = await dir.getDirectoryHandle(sg, {create: true});
+    const fh = await dir.getFileHandle(t.segs[t.segs.length - 1], {create: true});
+    let have = 0;
+    try { have = (await fh.getFile()).size; } catch (e) {}
+    if (t.expected && have >= t.expected) { // 已完整: 标记完成
+      t.got = t.total = t.expected;
+      t.note = 'skipped (already complete)';
+      t.status = 'done';
+    } else {
+      const headers = (t.expected && have > 0) ? {Range: 'bytes=' + have + '-'} : undefined;
+      const src = t.url;
+      const resp = await fetch(src, {signal: fctrl.signal, headers});
+      if (!resp.body || (resp.status !== 200 && resp.status !== 206))
+        throw new Error('HTTP ' + resp.status);
+      const from = resp.status === 206 ? have : 0;
+      t.got = from;
+      const clen = +(resp.headers.get('Content-Length') || 0);
+      t.total = (from + clen) || t.expected;
+      await writeFileBody(fh, resp, from, n => { t.got += n; });
+      t.status = 'done';
+    }
+  } catch (e) {
+    if (fctrl.signal.aborted) t.status = 'cancelled';
+    else { t.status = 'error'; t.err = String(e.message || e).slice(0, 80); }
+  }
+  t.fctrl = null;
+  state.dlActive--;
+  dlTaskPaint(t); dlTaskRender();
+  dlPump();
+}
+
+function dlPump() { // 动态并发调度: 按标题栏 Parallel 值补位, 启动间隔≥400ms 避直链竞态
+  const conc = state.dlConc || 2;
+  const now = Date.now();
+  for (const t of state.dlTasks) {
+    if (state.dlActive >= conc) break;
+    if (t.status !== 'queued' || !t.root) continue;
+    if (now - state.dlLastLaunch < 400) break;
+    state.dlLastLaunch = now;
+    dlTaskRun(t);
+  }
+}
+
+async function downloadStructured(files) {
+  const tag = state.tag;
+  const root = await pickRootDir();
+  try { await root.getDirectoryHandle(tag, {create: true}); } // 探测: 句柄指向的目录已不存在时提前失败
+  catch (e) {
+    state.dlRootHandle = null;
+    try { await idbKv('readwrite', 'dlRoot', null); } catch (e2) {}
+    throw e; // 交给 downloadAll 的 NotFoundError 分支清句柄重选
+  }
+  dlTaskAddRows(files, () => ({status: 'queued', root}));
+  dlPump();
+  toast('Queued ' + files.length + ' tasks under ' + tag);
+}
+
+async function downloadAll(files, _retry) { // Add to Downloads: 结构化浏览器下载, 失败回退 iframe
+  if (window.showDirectoryPicker) {
+    // 目录树 <root>/<tag>/<board>/<variant>/<cat>/[ota/]<file>; 直连远端(SharePoint 直链带 ACAO:*)
+    try {
+      await downloadStructured(files);
+      return;
+    } catch (e) {
+      if (e && e.name === 'NotFoundError' && !_retry) { // 记忆的目录已被删/移走: 清掉重来
+        state.dlRootHandle = null;
+        try { await idbKv('readwrite', 'dlRoot', null); } catch (e2) {}
+        toast('Remembered folder missing, select again');
+        return downloadAll(files, true);
+      }
+      if (e && e.name === 'AbortError') { // 仅首次选择时取消; Chrome 拒绝系统目录时也会走到这
+        toast('Select a subfolder of Downloads, not Downloads itself');
+        return;
+      }
+      console.warn('structured download failed, falling back:', e);
+      toast('Download failed: ' + e.message + ', falling back to browser downloads');
+    }
+  } else {
+    toast('Directory picker unavailable, using browser downloads');
+  }
+  downloadIframe(files);
+}
+
+/* ---------- 加载 ---------- */
+
+function showError(msg) {
+  $('#banner-text').textContent = msg;
+  $('#banner').hidden = false;
+}
+async function loadData(refresh) {
+  $('#banner').hidden = true;
+  try {
+    const u = new URL(normalizeDataUrl(state.url), location.href);
+    if (refresh) u.searchParams.set('t', Date.now()); // 缓存穿透
+    const resp = await fetch(u);
+    if (!resp.ok) throw new Error('HTTP ' + resp.status);
+    state.data = await resp.json();
+    state.meta = {url: u.href, cached: false, fetched_at: new Date().toISOString()};
+    const slots = slotList();
+    if (!slots.length) throw new Error('no slots in data source');
+    if (!slots.some(s => s.tag === state.tag)) state.tag = slots[0].tag;
+    ensureSelection();
+    renderAll(); renderMeta();
+    return true;
+  } catch (e) {
+    showError('Failed to fetch data: ' + e.message
+      + (state.data ? ' (current data kept)'
+                    : (location.protocol === 'file:' ? ' (opened as file://, serve over http://)' : '')));
+    const stat = $('#src-stat');
+    stat.textContent = 'Failed';
+    stat.className = 'stat err';
+    notifyState('srcOk', false, 'Data source failed: ' + e.message);
+    ['#slots', '#boards', '#types', '#files-wrap'].forEach(x => { $(x).textContent = ''; });
+    state.checked.clear();
+    $('#files-sub').textContent = '';
+    $('#sum').innerHTML = 'Nothing selected';
+    ['#btn-copy-paths', '#btn-copy-urls', '#btn-curl', '#btn-export', '#btn-aria2-push', '#btn-download']
+      .forEach(id => { $(id).disabled = true; });
+    return false;
+  }
+}
+
+const applySource = async () => { // 回车/失焦即应用(原 Update 按钮逻辑)
+  const v = $('#src-input').value.trim();
+  if (!v || v === state.url) return;
+  if (!/^https?:\/\//i.test(v)) { toast('Data source must be an http(s) URL'); return; }
+  state.url = v;
+  const u = new URL(location);
+  u.searchParams.set('url', v);
+  history.replaceState(null, '', u); // 地址栏固化 ?url=, 不整页跳转
+  toast('Fetching data');
+  if (await loadData(true)) toast('Data refreshed, ' + fmtDate(state.meta.fetched_at));
+};
+$('#src-input').addEventListener('keydown', e => { if (e.key === 'Enter') applySource(); });
+$('#src-input').addEventListener('change', applySource);
+$('#type-all').addEventListener('click', () => {
+  typeRows(manifest().files || {}, state.board).forEach(r => state.checked.add(r.key));
+  renderTypes(); renderFiles();
+});
+$('#type-none').addEventListener('click', () => { state.checked.clear(); renderTypes(); renderFiles(); });
+$('#file-filter').addEventListener('input', e => { state.filter = e.target.value.trim().toLowerCase(); renderFiles(); });
+$('#btn-copy-paths').addEventListener('click', () => copyText(selectedFiles().map(f => f.path).join('\n'), 'Paths copied'));
+$('#btn-copy-urls').addEventListener('click', () => copyText(selectedFiles().map(f => f.url).join('\n'), 'URLs copied'));
+$('#btn-curl').addEventListener('click', () => copyText(curlScript(selectedFiles()), 'curl script copied'));
+async function dlRootAbs() { // Setup-Download 路径 → 绝对路径(~ 借 aria2 下载根推算 home)
+  const v = $('#dl-root').value.trim().replace(/\/+$/, '');
+  if (v && v.startsWith('~')) {
+    const g = await aria2GlobalDir();
+    if (g) return g.replace(/\/[^/]+$/, '') + v.slice(1); // 下载根的上级 ≈ home
+  }
+  return v;
+}
+$('#btn-aria2-push').addEventListener('click', async () => { // 无弹窗, 复用 Setup-Download 路径
+  const files = selectedFiles();
+  if (!files.length) return;
+  aria2Push(files, (await dlRootAbs()) || undefined);
+});
+// RPC 配置: 先用上次手动输入(如有), 否则自动从 aria2 配置文件提取; 随后连通性检测
+(async () => { // 预热: 校验并缓存记住的目录句柄 — 失效提前清除, 有效则点击时零等待
+  await new Promise(r => setTimeout(r, 1200)); // 等环境检测与首屏渲染完成
+  let h = null;
+  try { h = (await idbKv('readonly', 'dlRoot')) || null; } catch (e) {}
+  if (!h) { state.dlHandleReady = true; return; }
+  try {
+    if (await h.queryPermission({mode: 'readwrite'}) !== 'granted') {
+      state.dlRootHandle = h; // 权限待确认也先缓存(点击时一键授权)
+      state.dlHandleReady = true; return;
+    }
+    const probe = await h.getDirectoryHandle('.probe', {create: true}); // 真实读写探测
+    await h.removeEntry('.probe');
+    state.dlRootHandle = h; // 有效句柄入内存
+  } catch (e) {
+    state.dlRootHandle = null;
+    try { await idbKv('readwrite', 'dlRoot', null); } catch (e2) {}
+    console.info('cleared stale download dir handle:', e && e.name);
+  }
+  state.dlHandleReady = true;
+})();
+
+const q = new URLSearchParams(location.search).get('url');
+state.url = q || DEFAULT_URL; // 默认自家镜像基址
+loadData();
+
+// aria2 初始配置: localStorage 记忆优先, 无记忆则静默探测默认端口
+// (任何 HTTP 响应=已安装; 连接被拒=未装)
+(async () => {
+  const fill = (u, t) => { if (u != null) $('#aria2-url').value = u; if (t != null) $('#aria2-token').value = t; };
+  const saved = localStorage.getItem('aria2-url') || '';
+  fill(saved, localStorage.getItem('aria2-token') || '');
+  if (!saved) { // 探测默认端口, 在跑则预填地址
+    const ctrl = new AbortController();
+    const timer = setTimeout(() => ctrl.abort(), 2000);
+    const probe = 'http://127.0.0.1:6800/jsonrpc';
+    try {
+      await fetch(probe, {method: 'POST', signal: ctrl.signal,
+        headers: {'Content-Type': 'application/json'},
+        body: JSON.stringify({jsonrpc: '2.0', id: 'imgs-web', method: 'aria2.getVersion', params: []})});
+      fill(probe, null);
+    } catch (e) {} // 未运行 → 留空, 显示 Disconnected
+    clearTimeout(timer);
+  }
+  aria2Check();
+})();
+// aria2 RPC 地址与密钥: 改动即存 localStorage(跨会话记忆), 手动输入优先于配置文件自动检测
+const aria2Persist = () => {
+  localStorage.setItem('aria2-url', $('#aria2-url').value.trim());
+  localStorage.setItem('aria2-token', $('#aria2-token').value.trim());
+};
+$('#aria2-url').addEventListener('change', () => { aria2Persist(); aria2Check(); });
+$('#aria2-token').addEventListener('change', () => { aria2Persist(); aria2Check(); });
+$('#btn-export').addEventListener('click', () => exportJson(selectedFiles()));
+$('#btn-download').addEventListener('click', () => downloadAll(selectedFiles()));
+// Download 地址(下载根偏好): localStorage 持久化, 静态 Push 预填优先使用
+{ const v = localStorage.getItem('dl-root');
+   if (!v || v === '~/Downloads/armbian') localStorage.setItem('dl-root', '~/Downloads'); }
+$('#dl-root').value = localStorage.getItem('dl-root') || '~/Downloads';
+$('#dl-root').addEventListener('change', () => {
+  const v = $('#dl-root').value.trim();
+  localStorage.setItem('dl-root', v);
+  if (v) toast('Download path: ' + v);
+});
+
+dlTaskRestore();
+setInterval(() => { // aria2 健康巡检: 状态变化时通知
+  if ($('#aria2-url').value.trim()) aria2Check();
+}, 30000);
+$('#dl-clear').addEventListener('click', async () => { // 只停不删: aria2 pause / 本地 abort(留断点); 列表清空
+  const locals = [];
+  for (const t of [...state.dlTasks]) {
+    if (t.status === 'aria2') { if (t.gid) await aria2PauseTask(t.gid); }
+    else if (t.fctrl) { t.fctrl.abort(); locals.push(t); }
+  }
+  if (locals.length) await waitAbort();
+  state.dlTasks = [];
+  $('#dl-tasks').textContent = '';
+  dlTaskRender();
+  renderFiles();
+});
+
+const concSel = $('#dl-conc');
+concSel.value = localStorage.getItem('dl-conc') || '2';
+concSel.addEventListener('change', () => {
+  state.dlConc = +concSel.value;
+  localStorage.setItem('dl-conc', concSel.value);
+});
+state.dlConc = +concSel.value || 2;
+
+</script>
+</body>
+</html>

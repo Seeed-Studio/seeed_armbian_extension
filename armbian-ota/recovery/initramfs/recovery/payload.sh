@@ -266,8 +266,14 @@ write_raw_boot_itb() {
 # Needs a separate boot partition. Returns 0 rebuilt, 1 fallback, 2 fatal.
 ota_reformat_rootfs() {
     if [ "${HAS_BOOT_PART:-0}" -ne 1 ]; then
-        log "mkfs path skipped: no separate boot partition, /boot stays on rootfs"
-        return 1
+        # raw-FIT layouts boot from the raw boot partition, so the rootfs
+        # /boot carries no boot chain and mkfs is safe.
+        boot_mode="$(cat "${ROOT_MNT}/usr/share/armbian-ota/boot-mode" 2>/dev/null || true)"
+        if [ "${boot_mode}" != "raw-fit" ]; then
+            log "mkfs path skipped: no separate boot partition, /boot stays on rootfs"
+            return 1
+        fi
+        log "raw-fit layout: rootfs /boot not boot-critical, mkfs allowed"
     fi
 
     if ! command -v mkfs.ext4 >/dev/null 2>&1; then
@@ -485,7 +491,7 @@ ota_apply_boot() {
             log "ERROR: boot.itb present but no boot-disk anchor (armbian.bootdev tokens); refusing unscoped PARTNAME=boot match"
             return 1
         fi
-        RAW_BOOT_DEV="$(find_raw_boot_dev || true)"
+        RAW_BOOT_DEV="$(find_raw_boot_dev "${ROOT_DEV:-}" || true)"
         if [ -z "${RAW_BOOT_DEV}" ]; then
             log "ERROR: boot.itb present but no PARTNAME=boot raw boot partition found"
             return 1

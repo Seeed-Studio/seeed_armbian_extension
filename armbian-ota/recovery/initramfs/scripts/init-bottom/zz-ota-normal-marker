@@ -31,12 +31,19 @@ case " $(cat /proc/cmdline 2>/dev/null) " in
 esac
 
 ota_env_boot_rebuild() {
-    . /usr/share/armbian-ota/fwenv.sh 2>/dev/null || return 0
-    . /usr/share/armbian-ota/find-userdata.sh 2>/dev/null || return 0
+    # Abandoned probes must announce themselves: the rebuild silently
+    # no-opped for four batches because guards exited without a trace.
+    . /usr/share/armbian-ota/fwenv.sh 2>/dev/null ||
+        { echo "armbian-ota: env rebuild skipped: fwenv.sh unavailable" >&2; return 0; }
+    . /usr/share/armbian-ota/find-userdata.sh 2>/dev/null ||
+        { echo "armbian-ota: env rebuild skipped: find-userdata.sh unavailable" >&2; return 0; }
 
     # Anchor on the overlay lower root (mapper or raw partition alike).
-    lower_src="$(awk '$2 == "/media/root-ro" { print $1; exit }' /proc/mounts 2>/dev/null | sed 's~\[.*\]~~')"
-    [ -n "${lower_src}" ] || return 0
+    # Suffix match: initramfs-tools overlayroot mounts the lower under
+    # $rootmnt (/root/media/root-ro), not the bare /media/root-ro.
+    lower_src="$(awk '$2 ~ /media\/root-ro$/ { print $1; exit }' /proc/mounts 2>/dev/null | sed 's~\[.*\]~~')"
+    [ -n "${lower_src}" ] ||
+        { echo "armbian-ota: env rebuild skipped: no overlay lower mount" >&2; return 0; }
 
     # Encrypted roots carry no LABEL=armbi_root; the fs rescue branch must
     # point at the unlocked mapper, like 99-ota-apply / recovery_arm_env.
@@ -44,14 +51,18 @@ ota_env_boot_rebuild() {
         /dev/mapper/*) OTA_RESCUE_ROOT_DEFAULT="/dev/mapper/armbian-root" ;;
     esac
 
-    raw_part="$(find_user_data__raw_partition_of "${lower_src}" 2>/dev/null)" || return 0
-    [ -n "${raw_part}" ] || return 0
+    raw_part="$(find_user_data__raw_partition_of "${lower_src}" 2>/dev/null)" || raw_part=""
+    [ -n "${raw_part}" ] ||
+        { echo "armbian-ota: env rebuild skipped: lower root unresolvable (${lower_src})" >&2; return 0; }
 
-    disk="$(find_user_data__parent_disk "${raw_part}" 2>/dev/null)" || return 0
-    [ -n "${disk}" ] && [ -b "${disk}" ] || return 0
+    disk="$(find_user_data__parent_disk "${raw_part}" 2>/dev/null)" || disk=""
+    [ -n "${disk}" ] && [ -b "${disk}" ] ||
+        { echo "armbian-ota: env rebuild skipped: parent disk unresolvable (${raw_part})" >&2; return 0; }
 
-    fw_env_write_config "${disk}" 2>/dev/null || return 0
+    fw_env_write_config "${disk}" 2>/dev/null ||
+        { echo "armbian-ota: env rebuild skipped: fw_env.config write failed (${disk})" >&2; return 0; }
 
+    # A readable env needs no rebuild; the quiet exit here is the healthy path.
     fw_env_crc_bad || return 0
 
     # Mirror 99-ota-apply's state-aware CRC rebuild: a pending transaction
